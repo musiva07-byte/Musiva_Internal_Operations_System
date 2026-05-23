@@ -3,10 +3,13 @@
   publish = ".next"
 
 [build.environment]
-  NODE_VERSION = "22"
+  NODE_VERSION = "22.13.1"
   NETLIFY_NEXT_SKEW_PROTECTION = "true"
 
 [dev]
   command = "npm run dev"
   port = 3000
   targetPort = 3000
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
