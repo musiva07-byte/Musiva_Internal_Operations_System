@@ -47,8 +47,8 @@ export function LogoutButton({ className, variant = "button" }: LogoutButtonProp
 
   return (
     <Button className={className} disabled={isSigningOut} onClick={handleLogout} type="button" variant="outline">
-      <LogOut aria-hidden className="mr-2 h-4 w-4" />
-      {isSigningOut ? "Signing out..." : "Logout"}
+      <LogOut aria-hidden className="h-4 w-4 sm:mr-2" />
+      <span>{isSigningOut ? "Signing out..." : "Logout"}</span>
     </Button>
   );
 }

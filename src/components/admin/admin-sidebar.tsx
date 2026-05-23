@@ -18,7 +18,7 @@ import {
 import { LogoutButton } from "@/components/admin/logout-button";
 import { cn } from "@/lib/utils";
 
-const navigationGroups = [
+export const navigationGroups = [
   {
     label: "Daily work",
     items: [
@@ -79,7 +79,7 @@ export function AdminSidebar() {
                     className="flex min-h-10 cursor-not-allowed items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground/70"
                     title="Planned for a later phase"
                   >
-                    <Icon aria-hidden className="h-4 w-4" />
+                    <Icon aria-hidden className="h-4 w-4 shrink-0" />
                     <span>{item.name}</span>
                   </div>
                 );
@@ -96,7 +96,7 @@ export function AdminSidebar() {
                       : "text-musiva-ink hover:bg-musiva-ivory hover:text-musiva-plum",
                   )}
                 >
-                  <Icon aria-hidden className="h-4 w-4" />
+                  <Icon aria-hidden className="h-4 w-4 shrink-0" />
                   <span>{item.name}</span>
                 </Link>
               );
