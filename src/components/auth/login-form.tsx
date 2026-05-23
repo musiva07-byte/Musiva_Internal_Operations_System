@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { LockKeyhole, Mail } from "lucide-react";
+import { LoaderCircle, LockKeyhole, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -38,9 +38,9 @@ export function LoginForm() {
       email,
       password,
     });
-    setIsSubmitting(false);
 
     if (signInError) {
+      setIsSubmitting(false);
       setError(signInError.message);
       return;
     }
@@ -74,6 +74,7 @@ export function LoginForm() {
                 id="email"
                 autoComplete="email"
                 className="pl-10"
+                disabled={isSubmitting}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="staff@musiva.com"
                 required
@@ -94,6 +95,7 @@ export function LoginForm() {
                 id="password"
                 autoComplete="current-password"
                 className="pl-10"
+                disabled={isSubmitting}
                 onChange={(event) => setPassword(event.target.value)}
                 required
                 type="password"
@@ -104,8 +106,15 @@ export function LoginForm() {
 
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-          <Button className="w-full" disabled={isSubmitting} type="submit">
-            {isSubmitting ? "Signing in..." : "Sign in to operations"}
+          <Button aria-busy={isSubmitting} className="w-full" disabled={isSubmitting} type="submit">
+            {isSubmitting ? (
+              <>
+                <LoaderCircle aria-hidden className="mr-2 h-4 w-4 animate-spin" />
+                Opening dashboard...
+              </>
+            ) : (
+              "Sign in to operations"
+            )}
           </Button>
         </form>
       </CardContent>
