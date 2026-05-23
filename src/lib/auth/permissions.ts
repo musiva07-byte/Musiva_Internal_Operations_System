@@ -1,0 +1,101 @@
+import { STAFF_ROLES, type StaffRole } from "@/lib/constants";
+
+const roleRank: Record<StaffRole, number> = {
+  [STAFF_ROLES.owner]: 100,
+  [STAFF_ROLES.manager]: 70,
+  [STAFF_ROLES.accountant]: 50,
+  [STAFF_ROLES.inventoryStaff]: 40,
+  [STAFF_ROLES.salesStaff]: 30,
+  [STAFF_ROLES.deliveryCoordinator]: 20,
+};
+
+export function hasRoleAtLeast(userRole: StaffRole | null | undefined, requiredRole: StaffRole) {
+  if (!userRole) {
+    return false;
+  }
+
+  return roleRank[userRole] >= roleRank[requiredRole];
+}
+
+export function canAccessAdmin(userRole: StaffRole | null | undefined) {
+  return Boolean(userRole && userRole in roleRank);
+}
+
+export function canManageProducts(userRole: StaffRole | null | undefined) {
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.inventoryStaff
+  );
+}
+
+export function canAdjustInventory(userRole: StaffRole | null | undefined) {
+  return canManageProducts(userRole);
+}
+
+export function canManageCustomers(userRole: StaffRole | null | undefined) {
+  return Boolean(userRole && userRole in roleRank);
+}
+
+export function canManageOrders(userRole: StaffRole | null | undefined) {
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.salesStaff
+  );
+}
+
+export function canManageDeliveries(userRole: StaffRole | null | undefined) {
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.deliveryCoordinator ||
+    userRole === STAFF_ROLES.salesStaff
+  );
+}
+
+export function canProcessReturns(userRole: StaffRole | null | undefined) {
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.salesStaff ||
+    userRole === STAFF_ROLES.inventoryStaff
+  );
+}
+
+export function canManageSuppliers(userRole: StaffRole | null | undefined) {
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.inventoryStaff
+  );
+}
+
+export function canManagePurchases(userRole: StaffRole | null | undefined) {
+  return canManageSuppliers(userRole);
+}
+
+export function canManageExpenses(userRole: StaffRole | null | undefined) {
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.accountant
+  );
+}
+
+export function canViewReports(userRole: StaffRole | null | undefined) {
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.accountant ||
+    userRole === STAFF_ROLES.inventoryStaff
+  );
+}
+
+export function canManageStaff(userRole: StaffRole | null | undefined) {
+  return userRole === STAFF_ROLES.owner;
+}
+
+export function canUpdateSettings(userRole: StaffRole | null | undefined) {
+  return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
+}
