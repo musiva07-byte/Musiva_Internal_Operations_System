@@ -7,9 +7,10 @@ import {
   CircleDollarSign,
   PackageCheck,
   PackagePlus,
+  Plus,
+  Printer,
   ShoppingBag,
   Truck,
-  UserPlus,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,31 +58,38 @@ export default async function DashboardPage() {
   ];
   const quickActions = [
     {
-      title: "Create order",
-      helper: "Sell items, save customer, deduct stock.",
+      title: "New sale",
+      helper: "Create an order, save customer details, deduct stock.",
       href: "/admin/orders/new",
       icon: ShoppingBag,
       primary: true,
     },
     {
-      title: "Add stock",
-      helper: "Receive new quantity for a variant.",
+      title: "Receive stock",
+      helper: "Add newly received items to available stock.",
       href: "/admin/inventory/stock-entry",
       icon: PackagePlus,
       primary: false,
     },
     {
-      title: "Delivery queue",
-      helper: "Print labels and update statuses.",
-      href: "/admin/deliveries",
-      icon: Truck,
+      title: "Add product",
+      helper: "Create a new product with colors and sizes.",
+      href: "/admin/products/new",
+      icon: Plus,
       primary: false,
     },
     {
-      title: "New customer",
-      helper: "Save Bahrain contact and address.",
-      href: "/admin/customers/new",
-      icon: UserPlus,
+      title: "Print delivery label",
+      helper: "Open the delivery queue and print labels.",
+      href: "/admin/deliveries",
+      icon: Printer,
+      primary: false,
+    },
+    {
+      title: "View low stock",
+      helper: "See variants running low and take action.",
+      href: "/admin/inventory?stockStatus=low_stock",
+      icon: Truck,
       primary: false,
     },
   ];
@@ -144,7 +152,7 @@ export default async function DashboardPage() {
             </Link>
           </Button>
         </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {quickActions.map((action) => {
             const Icon = action.icon;
             return (

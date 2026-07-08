@@ -1,10 +1,8 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Scissors } from "lucide-react";
 import { InvoiceTemplate } from "@/components/print/invoice-template";
 import { LabelTemplate } from "@/components/print/label-template";
-import { PrintButton } from "@/components/print/print-button";
+import { PrintToolbar } from "@/components/print/print-toolbar";
 import { getOrder } from "@/lib/services/order.service";
 
 type PrintCombinedPageProps = {
@@ -19,25 +17,35 @@ export default async function PrintCombinedPage({ params }: PrintCombinedPagePro
     notFound();
   }
 
+  // Only show label-only link when the order has a delivery (not walk-in/pickup)
+  const isDeliveryOrder = order.fulfilment_method === "delivery";
+
   return (
     <main className="min-h-screen bg-musiva-ivory py-6">
-      <div className="no-print mx-auto flex w-[210mm] items-center justify-between">
-        <Button asChild variant="outline">
-          <Link href={`/admin/orders/${order.id}`}>
-            <ArrowLeft aria-hidden className="mr-2 h-4 w-4" />
-            Back to order
-          </Link>
-        </Button>
-        <PrintButton />
-      </div>
-      <section className="print-combined-page">
+      <PrintToolbar
+        orderId={order.id}
+        showLabelOnly={isDeliveryOrder}
+        showReceiptOnly
+      />
+
+      {/* A4 portrait — exact 210mm × 297mm, two equal halves */}
+      <div className="print-combined-page">
+        {/* Top half: Delivery label */}
         <div className="print-half">
           <LabelTemplate compact order={order} />
         </div>
+
+        {/* CUT HERE divider */}
+        <div aria-hidden className="print-cut-here">
+          <Scissors aria-hidden />
+          <span>Cut here</span>
+        </div>
+
+        {/* Bottom half: Customer receipt */}
         <div className="print-half">
           <InvoiceTemplate compact order={order} />
         </div>
-      </section>
+      </div>
     </main>
   );
 }

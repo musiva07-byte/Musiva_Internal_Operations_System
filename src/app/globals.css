@@ -3,26 +3,83 @@
 @tailwind utilities;
 
 :root {
-  --background: 320 38% 97%;
-  --foreground: 0 0% 12%;
+  --background: 20 38% 97%;
+  --foreground: 348 14% 16%;
   --card: 0 0% 100%;
-  --card-foreground: 0 0% 12%;
+  --card-foreground: 348 14% 16%;
   --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 12%;
-  --primary: 319 49% 49%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 319 45% 76%;
-  --secondary-foreground: 0 0% 12%;
-  --muted: 317 25% 93%;
-  --muted-foreground: 291 6% 42%;
-  --accent: 319 49% 49%;
-  --accent-foreground: 48 100% 99%;
-  --destructive: 0 74% 42%;
-  --destructive-foreground: 48 100% 99%;
-  --border: 319 24% 89%;
-  --input: 319 24% 89%;
-  --ring: 319 49% 49%;
-  --radius: 0.5rem;
+  --popover-foreground: 348 14% 16%;
+  --primary: 350 24% 49%;
+  --primary-foreground: 20 40% 98%;
+  --secondary: 10 30% 93%;
+  --secondary-foreground: 348 22% 30%;
+  --muted: 10 24% 94%;
+  --muted-foreground: 345 9% 42%;
+  --accent: 14 31% 66%;
+  --accent-foreground: 348 18% 22%;
+  --destructive: 357 36% 47%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 10 22% 88%;
+  --input: 10 19% 81%;
+  --ring: 350 24% 49%;
+  --radius: 0.8rem;
+
+  --brand-mauve: #9b5f68;
+  --brand-mauve-dark: #854e58;
+  --brand-mauve-soft: #e7d2d5;
+  --brand-rose-deep: #5a353b;
+  --brand-text: #2e2325;
+  --brand-text-muted: #746267;
+  --brand-warm-rose: #a96f77;
+  --brand-ivory: #fbf7f5;
+  --brand-blush: #f3e7e5;
+  --brand-card: #ffffff;
+  --brand-card-secondary: #f8f1ef;
+  --brand-champagne: #c79a87;
+  --brand-rose-gold: #b77c70;
+  --brand-metallic-soft: #d9b5a8;
+  --brand-border: #e7d8d5;
+  --brand-input: #d8c4c1;
+  --brand-sidebar: #f6ecea;
+  --brand-sidebar-active: #e9d5d3;
+  --brand-sidebar-active-text: #6f4048;
+  --status-success: #4f7a63;
+  --status-warning: #a8753a;
+  --status-warning-foreground: #7a4f22;
+  --status-danger: #a34d52;
+  --status-info: #6d758e;
+
+  --brand-mauve-hsl: 350 24% 49%;
+  --brand-mauve-dark-hsl: 349 26% 41%;
+  --brand-mauve-soft-hsl: 351 30% 86%;
+  --brand-rose-deep-hsl: 350 26% 28%;
+  --brand-text-hsl: 348 14% 16%;
+  --brand-text-muted-hsl: 343 8% 42%;
+  --brand-ivory-hsl: 20 38% 97%;
+  --brand-blush-hsl: 10 33% 93%;
+  --brand-card-hsl: 0 0% 100%;
+  --brand-card-secondary-hsl: 13 39% 95%;
+  --brand-champagne-hsl: 19 37% 65%;
+  --brand-rose-gold-hsl: 10 30% 58%;
+  --brand-metallic-soft-hsl: 16 33% 75%;
+  --brand-border-hsl: 10 24% 87%;
+  --brand-sidebar-hsl: 10 40% 94%;
+  --brand-sidebar-active-hsl: 5 31% 87%;
+  --brand-sidebar-active-text-hsl: 350 27% 34%;
+  --status-success-hsl: 148 21% 39%;
+  --status-warning-hsl: 32 49% 44%;
+  --status-warning-foreground-hsl: 31 56% 31%;
+  --status-danger-hsl: 357 36% 47%;
+  --status-info-hsl: 226 13% 49%;
+
+  --chart-1: #9b5f68;
+  --chart-2: #c79a87;
+  --chart-3: #b77c70;
+  --chart-4: #d9b5a8;
+  --chart-5: #6d758e;
+  --chart-6: #4f7a63;
+
+  --font-display: "Cormorant Garamond", "Playfair Display", Georgia, serif;
 }
 
 * {
@@ -36,13 +93,14 @@ html {
 body {
   min-height: 100vh;
   background:
-    radial-gradient(circle at top left, rgba(188, 64, 141, 0.12), transparent 32rem),
+    radial-gradient(circle at top left, rgb(231 210 213 / 0.62), transparent 34rem),
     hsl(var(--background));
   color: hsl(var(--foreground));
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 ::selection {
-  background: rgba(216, 180, 106, 0.35);
+  background: rgb(199 154 135 / 0.35);
 }
 
 .print-page {
@@ -52,10 +110,10 @@ body {
 
 .print-sheet {
   margin: 24px auto;
-  background: #ffffff;
-  color: #1f1f1f;
+  background: var(--brand-card);
+  color: var(--brand-text);
   padding: 16mm;
-  box-shadow: 0 18px 60px rgba(31, 31, 31, 0.08);
+  box-shadow: 0 18px 60px rgb(90 53 59 / 0.09);
 }
 
 .print-header {
@@ -63,7 +121,7 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
-  border-bottom: 2px solid #e8dce5;
+  border-bottom: 2px solid var(--brand-rose-gold);
   padding-bottom: 18px;
 }
 
@@ -80,8 +138,8 @@ body {
 }
 
 .print-table th {
-  border-bottom: 2px solid #bc408d;
-  color: #6f6470;
+  border-bottom: 2px solid var(--brand-mauve);
+  color: var(--brand-text-muted);
   font-size: 11px;
   padding: 10px 8px;
   text-align: left;
@@ -89,48 +147,78 @@ body {
 }
 
 .print-table td {
-  border-bottom: 1px solid #e8dce5;
+  border-bottom: 1px solid var(--brand-border);
   padding: 10px 8px;
   vertical-align: top;
 }
 
 .print-combined-page {
   width: 210mm;
-  min-height: 297mm;
+  height: 297mm;
   margin: 24px auto;
-  background: #ffffff;
-  color: #1f1f1f;
-  box-shadow: 0 18px 60px rgba(31, 31, 31, 0.08);
+  background: var(--brand-card);
+  color: var(--brand-text);
+  box-shadow: 0 18px 60px rgb(90 53 59 / 0.09);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .print-half {
-  min-height: 148.5mm;
-  padding: 10mm;
+  height: 148.5mm;
+  overflow: hidden;
+  padding: 8mm 10mm;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
-.print-half + .print-half {
-  border-top: 2px dashed #bc408d;
+.print-cut-here {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--brand-text-muted);
+  border-top: 1.5px dashed var(--brand-mauve);
+  padding: 2px 10mm;
+  flex-shrink: 0;
+  background: var(--brand-card);
+}
+
+.print-cut-here svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.5;
 }
 
 .print-label-compact,
 .print-invoice-compact {
-  color: #1f1f1f;
+  color: var(--brand-text);
 }
 
 .print-label-compact .print-header,
 .print-invoice-compact .print-header {
-  padding-bottom: 10px;
+  padding-bottom: 8px;
 }
 
 .print-invoice-compact .print-table th,
 .print-invoice-compact .print-table td {
-  padding: 5px 6px;
+  padding: 4px 6px;
 }
 
 @media print {
   body {
     margin: 0;
-    background: #ffffff;
+    background: var(--brand-card);
+    /* Remove decorative gradient for print */
+    background-image: none;
+  }
+
+  .print-cut-here {
+    /* Print keeps the dashed line; hide the SVG scissors icon for cleaner grayscale output */
+    border-top-color: #666;
   }
 
   .no-print {
@@ -149,7 +237,7 @@ body {
   }
 
   @page {
-    size: A4;
+    size: A4 portrait;
     margin: 0;
   }
 }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_METHODS, PAYMENT_STATUSES } from "@/lib/constants";
+import { FULFILMENT_METHODS, ORDER_SOURCES, ORDER_STATUSES, PAYMENT_METHODS, PAYMENT_STATUSES } from "@/lib/constants";
 import { customerSchema } from "./customer.schema";
 
 const optionalText = z.preprocess(
@@ -21,9 +21,27 @@ export const orderItemSchema = z.object({
   discount: money.default(0),
 });
 
+export const deliveryAddressSchema = z.object({
+  customerAddressId: optionalUuid,
+  governorate: z.string().min(1, "Governorate is required for delivery."),
+  area: optionalText,
+  block: optionalText,
+  road: optionalText,
+  building: optionalText,
+  flat: optionalText,
+  landmark: optionalText,
+  deliveryNotes: optionalText,
+});
+
 export const createOrderSchema = z.object({
   customerId: optionalUuid,
   customer: customerSchema,
+  fulfilmentMethod: z.enum([
+    FULFILMENT_METHODS.walkIn,
+    FULFILMENT_METHODS.customerPickup,
+    FULFILMENT_METHODS.delivery,
+  ]).default(FULFILMENT_METHODS.walkIn),
+  deliveryAddress: deliveryAddressSchema.nullable().optional(),
   orderSource: z.enum([
     ORDER_SOURCES.instagram,
     ORDER_SOURCES.whatsapp,
@@ -36,13 +54,16 @@ export const createOrderSchema = z.object({
   orderStatus: z.enum([
     ORDER_STATUSES.new,
     ORDER_STATUSES.confirmed,
+    ORDER_STATUSES.inFulfilment,
+    ORDER_STATUSES.completed,
+    ORDER_STATUSES.cancelled,
+    ORDER_STATUSES.returned,
+    ORDER_STATUSES.exchangeRequested,
+    // Legacy values — kept for existing data compatibility
     ORDER_STATUSES.packed,
     ORDER_STATUSES.readyForPickup,
     ORDER_STATUSES.outForDelivery,
     ORDER_STATUSES.delivered,
-    ORDER_STATUSES.cancelled,
-    ORDER_STATUSES.returned,
-    ORDER_STATUSES.exchangeRequested,
   ]),
   paymentStatus: z.enum([
     PAYMENT_STATUSES.unpaid,
@@ -62,7 +83,6 @@ export const createOrderSchema = z.object({
     ])
     .nullable()
     .optional(),
-  deliveryRequired: z.coerce.boolean().default(false),
   deliveryDate: optionalText,
   deliveryTimeSlot: optionalText,
   deliveryCharge: money.default(0),
@@ -81,6 +101,7 @@ export const updateOrderSchema = z.object({
   notes: optionalText,
 });
 
+export type DeliveryAddressInput = z.infer<typeof deliveryAddressSchema>;
 export type OrderItemInput = z.infer<typeof orderItemSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;

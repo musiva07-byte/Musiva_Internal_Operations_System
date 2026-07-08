@@ -6,7 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { StockBadge } from "@/components/products/stock-badge";
+import { ProductImageWidget } from "@/components/products/product-image-widget";
 import { getProduct } from "@/lib/services/product.service";
+import { getProductImage } from "@/lib/services/product-image.service";
+import { getCurrentAuthState } from "@/lib/auth/session";
+import { canManageProducts } from "@/lib/auth/permissions";
 import { formatBhd } from "@/lib/formatters/currency";
 import { titleize } from "@/lib/formatters/labels";
 
@@ -16,21 +20,33 @@ type ProductDetailPageProps = {
 
 export default async function ProductDetailPage({ params }: ProductDetailPageProps) {
   const { id } = await params;
-  const product = await getProduct(id);
+  const [product, image, auth] = await Promise.all([
+    getProduct(id),
+    getProductImage(id),
+    getCurrentAuthState(),
+  ]);
 
   if (!product) {
     notFound();
   }
 
   const totalStock = product.variants.reduce((sum, variant) => sum + variant.stock_quantity, 0);
+  const canEdit = canManageProducts(auth.profile?.role ?? null);
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">{product.sku}</p>
-          <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{product.name}</h1>
-          <p className="mt-2 text-sm text-muted-foreground">{product.category?.name ?? "Uncategorized"}</p>
+      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+        <div className="flex gap-5">
+          <ProductImageWidget
+            canEdit={canEdit}
+            currentUrl={image?.url ?? null}
+            productId={product.id}
+          />
+          <div>
+            <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">{product.sku}</p>
+            <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{product.name}</h1>
+            <p className="mt-2 text-sm text-muted-foreground">{product.category?.name ?? "Uncategorized"}</p>
+          </div>
         </div>
         <Button asChild>
           <Link href={`/admin/products/${product.id}/edit`}>

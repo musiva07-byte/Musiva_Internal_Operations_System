@@ -19,19 +19,52 @@ const optionalMoney = z.preprocess(
 const money = z.coerce.number().min(0).multipleOf(0.001);
 const stockQuantity = z.coerce.number().int().min(0);
 
-export const productVariantSchema = z.object({
-  id: z.string().uuid().optional(),
-  variantSku: z.string().trim().min(1, "Variant SKU is required."),
-  barcode: optionalText,
-  color: z.string().trim().min(1, "Color is required."),
-  size: z.string().trim().min(1, "Size is required."),
-  costPrice: money,
-  sellingPrice: money,
-  discountPrice: optionalMoney,
-  stockQuantity,
-  minimumStock: stockQuantity,
-  status: z.enum([PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.archived]),
-});
+export const productVariantSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    variantSku: z.string().trim().min(1, "Variant SKU is required."),
+    barcode: optionalText,
+    color: z.string().trim().min(1, "Color is required."),
+    size: z.string().trim().min(1, "Size is required."),
+    /** @deprecated Use regularSellingPriceBhd */
+    costPrice: money,
+    /** @deprecated Use regularSellingPriceBhd */
+    sellingPrice: money,
+    /** @deprecated Use discountPriceBhd */
+    discountPrice: optionalMoney,
+    // Phase 11 pricing fields
+    regularSellingPriceBhd: money,
+    discountPriceBhd: optionalMoney,
+    discountStartAt: z.preprocess(
+      (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+      z.string().datetime({ offset: true }).nullable().optional(),
+    ),
+    discountEndAt: z.preprocess(
+      (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+      z.string().datetime({ offset: true }).nullable().optional(),
+    ),
+    stockQuantity,
+    minimumStock: stockQuantity,
+    status: z.enum([PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.archived, PRODUCT_STATUSES.draft]),
+  })
+  .refine(
+    (v) =>
+      v.discountPriceBhd === null ||
+      v.discountPriceBhd === undefined ||
+      v.discountPriceBhd < v.regularSellingPriceBhd,
+    {
+      message: "Discount price must be lower than the regular selling price.",
+      path: ["discountPriceBhd"],
+    },
+  )
+  .refine(
+    (v) =>
+      !(v.discountEndAt && v.discountStartAt && v.discountEndAt <= v.discountStartAt),
+    {
+      message: "Discount end date must be after the start date.",
+      path: ["discountEndAt"],
+    },
+  );
 
 export const productImageSchema = z.object({
   id: z.string().uuid().optional(),
@@ -51,7 +84,7 @@ export const productSchema = z.object({
   description: optionalText,
   material: optionalText,
   careInstructions: optionalText,
-  status: z.enum([PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.archived]),
+  status: z.enum([PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.archived, PRODUCT_STATUSES.draft]),
   variants: z.array(productVariantSchema).min(1, "Add at least one color and size variant."),
   images: z.array(productImageSchema).default([]),
 });

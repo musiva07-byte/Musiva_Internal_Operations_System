@@ -1,4 +1,4 @@
-import { ProductForm } from "@/components/products/product-form";
+import { ProductWizard } from "@/components/products/product-wizard";
 import { listCategories } from "@/lib/services/product.service";
 
 export default async function NewProductPage() {
@@ -10,10 +10,10 @@ export default async function NewProductPage() {
         <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Products</p>
         <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">New product</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Create the product shell and its color/size variants. Opening stock is logged as a stock movement.
+          Add a new product in three steps: basic details, colors and sizes, then pricing and stock.
         </p>
       </header>
-      <ProductForm categories={categories} />
+      <ProductWizard categories={categories} />
     </div>
   );
 }

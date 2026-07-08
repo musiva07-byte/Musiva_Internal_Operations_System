@@ -31,10 +31,14 @@ const emptyVariant = {
   costPrice: 0,
   sellingPrice: 0,
   discountPrice: null,
+  regularSellingPriceBhd: 0,
+  discountPriceBhd: null,
+  discountStartAt: null,
+  discountEndAt: null,
   stockQuantity: 0,
   minimumStock: 1,
   status: PRODUCT_STATUSES.active,
-};
+} as const;
 
 function mapProduct(product?: ProductWithRelations): ProductInput {
   if (!product) {
@@ -71,9 +75,15 @@ function mapProduct(product?: ProductWithRelations): ProductInput {
       costPrice: Number(variant.cost_price),
       sellingPrice: Number(variant.selling_price),
       discountPrice: variant.discount_price === null ? null : Number(variant.discount_price),
+      regularSellingPriceBhd: Number(variant.regular_selling_price_bhd ?? variant.selling_price),
+      discountPriceBhd: variant.discount_price_bhd === null ? null : Number(variant.discount_price_bhd),
+      discountStartAt: variant.discount_start_at ?? null,
+      discountEndAt: variant.discount_end_at ?? null,
       stockQuantity: variant.stock_quantity,
       minimumStock: variant.minimum_stock,
-      status: variant.status,
+      status: (["active", "inactive", "archived", "draft"].includes(variant.status)
+        ? variant.status
+        : "active") as "active" | "inactive" | "archived" | "draft",
     })),
     images: product.images.map((image) => ({
       id: image.id,

@@ -5,9 +5,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pagination } from "@/components/products/pagination";
+import { CustomerRowActions } from "@/components/customers/customer-row-actions";
 import { listCustomers } from "@/lib/services/customer.service";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatDate } from "@/lib/formatters/date";
+import { formatBahrainPhone } from "@/lib/utils/phone";
 
 type CustomersPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -68,12 +70,13 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
               <TableHead>Orders</TableHead>
               <TableHead>Total spending</TableHead>
               <TableHead>Last order</TableHead>
+              <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {customers.data.length === 0 ? (
               <TableRow>
-                <TableCell className="h-28 text-center text-muted-foreground" colSpan={6}>
+                <TableCell className="h-28 text-center text-muted-foreground" colSpan={7}>
                   No customers found.
                 </TableCell>
               </TableRow>
@@ -86,11 +89,14 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
                     </Link>
                     <p className="mt-1 text-xs text-muted-foreground">{customer.email ?? "No email"}</p>
                   </TableCell>
-                  <TableCell>{customer.mobile}</TableCell>
+                  <TableCell>{formatBahrainPhone(customer.mobile_normalized) || customer.mobile}</TableCell>
                   <TableCell>{customer.governorate ?? "-"}</TableCell>
                   <TableCell>{customer.order_count}</TableCell>
                   <TableCell>{formatBhd(customer.total_spending)}</TableCell>
                   <TableCell>{customer.last_order_at ? formatDate(customer.last_order_at) : "-"}</TableCell>
+                  <TableCell>
+                    <CustomerRowActions customer={customer} />
+                  </TableCell>
                 </TableRow>
               ))
             )}

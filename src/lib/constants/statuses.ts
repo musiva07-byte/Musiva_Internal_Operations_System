@@ -1,13 +1,16 @@
 export const ORDER_STATUSES = {
   new: "new",
   confirmed: "confirmed",
+  inFulfilment: "in_fulfilment",
+  completed: "completed",
+  cancelled: "cancelled",
+  returned: "returned",
+  exchangeRequested: "exchange_requested",
+  // Legacy values — kept for existing data compatibility
   packed: "packed",
   readyForPickup: "ready_for_pickup",
   outForDelivery: "out_for_delivery",
   delivered: "delivered",
-  cancelled: "cancelled",
-  returned: "returned",
-  exchangeRequested: "exchange_requested",
 } as const;
 
 export const ORDER_SOURCES = {
@@ -28,6 +31,7 @@ export const INVENTORY_STATUSES = {
 } as const;
 
 export const PRODUCT_STATUSES = {
+  draft: "draft",
   active: "active",
   inactive: "inactive",
   archived: "archived",
@@ -54,6 +58,9 @@ export const DELIVERY_STATUSES = {
   outForDelivery: "out_for_delivery",
   delivered: "delivered",
   failed: "failed",
+  returnedToStore: "returned_to_store",
+  cancelled: "cancelled",
+  // Legacy value — kept for existing data compatibility
   returned: "returned",
 } as const;
 
@@ -104,9 +111,23 @@ export const RETURN_ITEM_ACTIONS = {
 export const PURCHASE_STATUSES = {
   draft: "draft",
   ordered: "ordered",
+  inTransit: "in_transit",
   partiallyReceived: "partially_received",
   received: "received",
   cancelled: "cancelled",
+} as const;
+
+export const PRICING_STATUSES = {
+  regular: "regular",
+  discountScheduled: "discount_scheduled",
+  onSale: "on_sale",
+  discountEnded: "discount_ended",
+} as const;
+
+export const STOCK_STATUSES = {
+  inStock: "in_stock",
+  lowStock: "low_stock",
+  outOfStock: "out_of_stock",
 } as const;
 
 export const PURCHASE_PAYMENT_STATUSES = {
@@ -114,6 +135,88 @@ export const PURCHASE_PAYMENT_STATUSES = {
   partial: "partial",
   paid: "paid",
 } as const;
+
+/**
+ * Controlled delivery state machine.
+ * The Postgres function advance_delivery_status() enforces these
+ * transitions server-side; this mirrors them for client-side display.
+ */
+export const DELIVERY_NEXT_STATUSES: Record<string, string[]> = {
+  pending:          ["packed", "cancelled"],
+  packed:           ["ready_for_pickup", "cancelled"],
+  ready_for_pickup: ["with_courier", "out_for_delivery", "cancelled"],
+  with_courier:     ["out_for_delivery", "failed", "returned_to_store", "cancelled"],
+  out_for_delivery: ["delivered", "failed", "returned_to_store"],
+  delivered:        [],
+  failed:           ["with_courier", "returned_to_store", "cancelled"],
+  returned_to_store: [],
+  cancelled:        [],
+  returned:         [],   // legacy terminal
+};
+
+/**
+ * Controlled order state machine — simplified.
+ *
+ * DELIVERY orders:  new → in_fulfilment (via confirmOrderHandoff which creates the delivery)
+ * WALK-IN orders:   new → confirmed → completed
+ *
+ * Fulfilment stages (packed / ready_for_pickup / out_for_delivery / delivered)
+ * are no longer manually driven from the Orders side. They belong to Deliveries.
+ * Legacy values are listed here only so existing rows don't break validation.
+ */
+export const ORDER_NEXT_STATUSES: Record<string, string[]> = {
+  new:               ["confirmed", "in_fulfilment"],  // confirmed=walk-in, in_fulfilment=delivery
+  confirmed:         ["completed"],                    // walk-in: direct completion
+  in_fulfilment:     [],                               // managed exclusively by delivery service
+  completed:         [],
+  cancelled:         [],
+  returned:          [],
+  exchange_requested: [],
+  // Legacy — kept so old rows are handled gracefully but no new transitions exposed
+  packed:            [],
+  ready_for_pickup:  [],
+  out_for_delivery:  [],
+  delivered:         [],
+};
+
+/** Statuses that require a written reason before transitioning. */
+export const ORDER_STATUSES_REQUIRING_REASON: string[] = ["cancelled"];
+
+/** Statuses where order is still actively being worked on. */
+export const ORDER_ACTIVE_STATUSES = new Set([
+  "new",
+  "confirmed",
+  "in_fulfilment",
+  // Legacy values treated as active
+  "packed",
+  "ready_for_pickup",
+  "out_for_delivery",
+]);
+
+/** Statuses that count as "completed" for tab/reporting purposes. */
+export const ORDER_COMPLETED_STATUSES = new Set([
+  "completed",
+  "delivered",  // legacy
+  "returned",
+]);
+
+export const DELIVERY_STATUSES_REQUIRING_REASON: string[] = [
+  "failed",
+  "returned_to_store",
+  "returned",  // legacy
+];
+
+export const FULFILMENT_METHODS = {
+  walkIn: "walk_in",
+  customerPickup: "customer_pickup",
+  delivery: "delivery",
+} as const;
+
+export const FULFILMENT_METHOD_LABELS: Record<string, string> = {
+  walk_in: "Walk-in",
+  customer_pickup: "Customer Pickup",
+  delivery: "Delivery",
+};
 
 export const EXPENSE_CATEGORIES = {
   productPurchase: "product_purchase",

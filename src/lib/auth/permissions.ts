@@ -99,3 +99,16 @@ export function canManageStaff(userRole: StaffRole | null | undefined) {
 export function canUpdateSettings(userRole: StaffRole | null | undefined) {
   return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
 }
+
+/** Cost data: supplier prices, converted costs, landed costs, average cost, gross profit, margin. */
+export function canViewCostData(userRole: StaffRole | null | undefined) {
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.accountant
+  );
+}
+
+export function canManageExchangeRates(userRole: StaffRole | null | undefined) {
+  return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
+}

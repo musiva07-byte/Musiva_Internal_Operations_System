@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Edit, FileText, Printer, Tags } from "lucide-react";
+import { Edit, ExternalLink, FileText, MessageCircle, Printer, Tags, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { OrderStatusBadge, PaymentStatusBadge } from "@/components/orders/status-badge";
 import { getOrder } from "@/lib/services/order.service";
 import { formatBhd } from "@/lib/formatters/currency";
+import { formatBahrainPhone } from "@/lib/utils/phone";
+import { buildWhatsAppMessage, buildWhatsAppUrl } from "@/lib/utils/whatsapp";
 import { formatDateTime } from "@/lib/formatters/date";
 import { titleize } from "@/lib/formatters/labels";
 
@@ -22,6 +24,20 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
     notFound();
   }
 
+  const isDelivery = order.fulfilment_method === "delivery";
+  const customerPhone =
+    formatBahrainPhone(order.customer.mobile_normalized) || order.customer.mobile;
+
+  // Pre-built WhatsApp message for the order (server-rendered, staff clicks to open)
+  const whatsappMessage = buildWhatsAppMessage({
+    customerName: order.customer.full_name,
+    orderNumber: order.order_number,
+    grandTotal: order.grand_total,
+    paymentStatus: order.payment_status,
+    deliveryStatus: order.delivery?.delivery_status ?? null,
+  });
+  const whatsappUrl = buildWhatsAppUrl(order.customer.mobile, whatsappMessage);
+
   return (
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
@@ -30,63 +46,133 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{order.order_number}</h1>
           <p className="mt-2 text-sm text-muted-foreground">{formatDateTime(order.created_at)}</p>
         </div>
+
         <div className="flex flex-wrap gap-2">
+          {/* Package Sheet — only for delivery orders */}
+          {isDelivery && (
+            <Button asChild>
+              <Link href={`/print/combined/${order.id}`} target="_blank" rel="noopener">
+                <Printer aria-hidden className="mr-2 h-4 w-4" />
+                Reprint Package Sheet
+                <ExternalLink aria-hidden className="ml-2 h-3.5 w-3.5 opacity-60" />
+              </Link>
+            </Button>
+          )}
+
+          {/* Receipt — always shown */}
           <Button asChild variant="outline">
-            <Link href={`/print/invoice/${order.id}`}>
+            <Link href={`/print/invoice/${order.id}`} target="_blank" rel="noopener">
               <FileText aria-hidden className="mr-2 h-4 w-4" />
-              Invoice
+              Print Receipt
+              <ExternalLink aria-hidden className="ml-2 h-3.5 w-3.5 opacity-60" />
             </Link>
           </Button>
+
+          {/* Label — only for delivery orders */}
+          {isDelivery && (
+            <Button asChild variant="outline">
+              <Link href={`/print/label/${order.id}`} target="_blank" rel="noopener">
+                <Tags aria-hidden className="mr-2 h-4 w-4" />
+                Print Label
+                <ExternalLink aria-hidden className="ml-2 h-3.5 w-3.5 opacity-60" />
+              </Link>
+            </Button>
+          )}
+
+          {/* Delivery — only for delivery orders */}
+          {isDelivery && order.delivery && (
+            <Button asChild variant="outline">
+              <Link href={`/admin/deliveries/${order.delivery.id}`}>
+                <Truck aria-hidden className="mr-2 h-4 w-4" />
+                Open Delivery
+              </Link>
+            </Button>
+          )}
+
+          {/* WhatsApp — always shown */}
           <Button asChild variant="outline">
-            <Link href={`/print/label/${order.id}`}>
-              <Tags aria-hidden className="mr-2 h-4 w-4" />
-              Label
-            </Link>
+            <a href={whatsappUrl} target="_blank" rel="noopener noreferrer">
+              <MessageCircle aria-hidden className="mr-2 h-4 w-4" />
+              WhatsApp
+            </a>
           </Button>
+
+          {/* Edit — always shown */}
           <Button asChild variant="outline">
-            <Link href={`/print/combined/${order.id}`}>
-              <Printer aria-hidden className="mr-2 h-4 w-4" />
-              Combined
-            </Link>
-          </Button>
-          <Button asChild>
             <Link href={`/admin/orders/${order.id}/edit`}>
               <Edit aria-hidden className="mr-2 h-4 w-4" />
-              Edit order
+              Edit
             </Link>
           </Button>
         </div>
       </header>
 
       <section className="grid gap-4 md:grid-cols-4">
-        <Card><CardHeader><CardTitle className="text-sm text-muted-foreground">Order status</CardTitle></CardHeader><CardContent><OrderStatusBadge status={order.order_status} /></CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-sm text-muted-foreground">Payment</CardTitle></CardHeader><CardContent><PaymentStatusBadge status={order.payment_status} /></CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-sm text-muted-foreground">Grand total</CardTitle></CardHeader><CardContent className="text-2xl font-semibold text-musiva-plum">{formatBhd(order.grand_total)}</CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-sm text-muted-foreground">Amount due</CardTitle></CardHeader><CardContent className="text-2xl font-semibold text-musiva-plum">{formatBhd(order.amount_due)}</CardContent></Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm text-muted-foreground">Order status</CardTitle></CardHeader>
+          <CardContent><OrderStatusBadge status={order.order_status} /></CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm text-muted-foreground">Payment</CardTitle></CardHeader>
+          <CardContent><PaymentStatusBadge status={order.payment_status} /></CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm text-muted-foreground">Grand total</CardTitle></CardHeader>
+          <CardContent className="text-2xl font-semibold text-musiva-plum">{formatBhd(order.grand_total)}</CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm text-muted-foreground">Amount due</CardTitle></CardHeader>
+          <CardContent className="text-2xl font-semibold text-musiva-plum">{formatBhd(order.amount_due)}</CardContent>
+        </Card>
       </section>
 
       <Card>
-        <CardHeader><CardTitle>Customer and delivery</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Customer</CardTitle></CardHeader>
         <CardContent className="grid gap-4 text-sm md:grid-cols-4">
-          <Info label="Customer" value={order.customer.full_name} />
-          <Info label="Mobile" value={order.customer.mobile} />
-          <Info label="Governorate" value={order.customer.governorate} />
-          <Info label="Area" value={order.customer.area} />
-          <Info label="Block" value={order.customer.block} />
-          <Info label="Road" value={order.customer.road} />
-          <Info label="Building" value={order.customer.building} />
-          <Info label="Flat" value={order.customer.flat} />
-          <Info label="Delivery notes" value={order.customer.delivery_notes} />
-          <Info label="Delivery status" value={order.delivery?.delivery_status ? titleize(order.delivery.delivery_status) : "No delivery"} />
+          <Info label="Name" value={order.customer.full_name} />
+          <Info label="Mobile" value={customerPhone} />
+          {order.customer.whatsapp && (
+            <Info label="WhatsApp" value={formatBahrainPhone(order.customer.whatsapp_normalized) || order.customer.whatsapp} />
+          )}
+          <Info
+            label="Fulfilment"
+            value={
+              order.fulfilment_method === "walk_in"
+                ? "Walk-in"
+                : order.fulfilment_method === "customer_pickup"
+                  ? "Customer Pickup"
+                  : "Delivery"
+            }
+          />
         </CardContent>
       </Card>
+
+      {isDelivery && (
+        <Card>
+          <CardHeader><CardTitle>Delivery address</CardTitle></CardHeader>
+          <CardContent className="grid gap-4 text-sm md:grid-cols-4">
+            <Info label="Governorate" value={order.delivery?.governorate ?? order.customer.governorate} />
+            <Info label="Area" value={order.delivery?.area ?? order.customer.area} />
+            <Info label="Block" value={order.delivery?.block ?? order.customer.block} />
+            <Info label="Road" value={order.delivery?.road ?? order.customer.road} />
+            <Info label="Building" value={order.delivery?.building ?? order.customer.building} />
+            <Info label="Flat" value={order.delivery?.flat ?? order.customer.flat} />
+            <Info label="Landmark" value={order.delivery?.landmark ?? order.customer.landmark} />
+            <Info label="Delivery notes" value={order.delivery?.delivery_note ?? order.customer.delivery_notes} />
+            <Info
+              label="Delivery status"
+              value={order.delivery?.delivery_status ? titleize(order.delivery.delivery_status) : "Pending"}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="shadow-soft">
         <CardHeader><CardTitle>Items</CardTitle></CardHeader>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Product snapshot</TableHead>
+              <TableHead>Product</TableHead>
               <TableHead>Variant</TableHead>
               <TableHead>Qty</TableHead>
               <TableHead>Unit price</TableHead>
@@ -98,7 +184,10 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
             {order.items.map((item) => (
               <TableRow key={item.id}>
                 <TableCell className="font-medium">{item.product_name_snapshot}</TableCell>
-                <TableCell>{item.color_snapshot} / {item.size_snapshot}<p className="text-xs text-muted-foreground">{item.variant_sku_snapshot}</p></TableCell>
+                <TableCell>
+                  {item.color_snapshot} / {item.size_snapshot}
+                  <p className="text-xs text-muted-foreground">{item.variant_sku_snapshot}</p>
+                </TableCell>
                 <TableCell>{item.quantity}</TableCell>
                 <TableCell>{formatBhd(item.unit_price)}</TableCell>
                 <TableCell>{formatBhd(item.discount)}</TableCell>
@@ -123,11 +212,11 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
   );
 }
 
-function Info({ label, value }: { label: string; value: string | null }) {
+function Info({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div>
       <p className="font-medium text-musiva-plum">{label}</p>
-      <p className="mt-1 text-muted-foreground">{value ?? "-"}</p>
+      <p className="mt-1 text-muted-foreground">{value ?? "—"}</p>
     </div>
   );
 }

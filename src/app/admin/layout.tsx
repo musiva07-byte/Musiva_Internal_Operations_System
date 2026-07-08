@@ -32,10 +32,10 @@ export default async function AdminLayout({
 
   return (
     <div className="min-h-screen bg-musiva-ivory text-musiva-ink">
-      <AdminSidebar />
+      <AdminSidebar role={profile.role} />
       <main className="min-h-screen lg:pl-72">
-        <div className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b bg-musiva-porcelain/95 px-4 py-4 backdrop-blur lg:hidden">
-          <MobileAdminNav />
+        <div className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b border-musiva-border bg-musiva-ivory/95 px-4 py-4 backdrop-blur lg:hidden">
+          <MobileAdminNav role={profile.role} />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-musiva-gold">
               Moosiva

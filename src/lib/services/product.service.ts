@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaffPermission } from "@/lib/auth/authorization";
 import { canManageProducts } from "@/lib/auth/permissions";
 import { PRODUCT_STATUSES, STOCK_MOVEMENT_TYPES } from "@/lib/constants";
+import { isDiscountActive } from "@/lib/pricing/calculations";
 import { productSchema, type ProductInput } from "@/lib/validations/product.schema";
 import { createAuditLog } from "./audit.service";
 import { serviceError, serviceSuccess, type ServiceResult } from "./service-result";
@@ -13,7 +14,7 @@ import type {
   ProductStatus,
   ProductVariantRow,
 } from "@/types/database";
-import type { PaginatedResult, ProductListItem, ProductWithRelations } from "@/types/app";
+import type { PaginatedResult, ProductListItem, ProductWithRelations, VariantQuick } from "@/types/app";
 
 const PAGE_SIZE = 10;
 
@@ -108,10 +109,20 @@ export async function listProducts(
   const data = rows.map<ProductListItem>((product) => {
     const variantRows = productVariants.filter((variant) => variant.product_id === product.id);
     const primaryImage = primaryImages.find((image) => image.product_id === product.id);
-    const activePrices = variantRows.map((variant) => Number(variant.selling_price)).filter((price) => price >= 0);
+    const activePrices = variantRows
+      .map((variant) => Number(variant.regular_selling_price_bhd ?? variant.selling_price))
+      .filter((price) => price >= 0);
     const lowStockCount = variantRows.filter(
       (variant) => variant.stock_quantity > 0 && variant.stock_quantity <= variant.minimum_stock,
     ).length;
+    const hasActiveDiscount = variantRows.some((variant) => isDiscountActive(variant));
+
+    const variantsQuick: VariantQuick[] = variantRows.map((v) => ({
+      id: v.id,
+      color: v.color,
+      size: v.size,
+      stock_quantity: v.stock_quantity,
+    }));
 
     return {
       ...product,
@@ -122,6 +133,8 @@ export async function listProducts(
       low_stock_count: lowStockCount,
       out_of_stock_count: variantRows.filter((variant) => variant.stock_quantity === 0).length,
       min_selling_price: activePrices.length ? Math.min(...activePrices) : null,
+      has_active_discount: hasActiveDiscount,
+      variants_quick: variantsQuick,
     };
   });
 
@@ -220,6 +233,12 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
         cost_price: variant.costPrice,
         selling_price: variant.sellingPrice,
         discount_price: variant.discountPrice ?? null,
+        regular_selling_price_bhd: variant.regularSellingPriceBhd ?? variant.sellingPrice,
+        discount_price_bhd: variant.discountPriceBhd ?? null,
+        discount_start_at: variant.discountStartAt ?? null,
+        discount_end_at: variant.discountEndAt ?? null,
+        latest_landed_cost_bhd: null,
+        average_landed_cost_bhd: null,
         stock_quantity: 0,
         minimum_stock: variant.minimumStock,
         status: variant.status,
@@ -322,6 +341,10 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
           cost_price: variant.costPrice,
           selling_price: variant.sellingPrice,
           discount_price: variant.discountPrice ?? null,
+          regular_selling_price_bhd: variant.regularSellingPriceBhd ?? variant.sellingPrice,
+          discount_price_bhd: variant.discountPriceBhd ?? null,
+          discount_start_at: variant.discountStartAt ?? null,
+          discount_end_at: variant.discountEndAt ?? null,
           minimum_stock: variant.minimumStock,
           status: variant.status,
         })
@@ -343,6 +366,12 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
           cost_price: variant.costPrice,
           selling_price: variant.sellingPrice,
           discount_price: variant.discountPrice ?? null,
+          regular_selling_price_bhd: variant.regularSellingPriceBhd ?? variant.sellingPrice,
+          discount_price_bhd: variant.discountPriceBhd ?? null,
+          discount_start_at: variant.discountStartAt ?? null,
+          discount_end_at: variant.discountEndAt ?? null,
+          latest_landed_cost_bhd: null,
+          average_landed_cost_bhd: null,
           stock_quantity: 0,
           minimum_stock: variant.minimumStock,
           status: variant.status,

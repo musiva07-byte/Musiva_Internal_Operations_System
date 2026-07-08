@@ -34,6 +34,8 @@ export const deliveryUpdateSchema = z.object({
     DELIVERY_STATUSES.outForDelivery,
     DELIVERY_STATUSES.delivered,
     DELIVERY_STATUSES.failed,
+    DELIVERY_STATUSES.returnedToStore,
+    DELIVERY_STATUSES.cancelled,
     DELIVERY_STATUSES.returned,
   ]),
 });

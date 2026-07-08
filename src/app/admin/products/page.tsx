@@ -1,12 +1,21 @@
 import Link from "next/link";
-import { Plus, Search } from "lucide-react";
+import { MoreHorizontal, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pagination } from "@/components/products/pagination";
+import { ProductThumbnail } from "@/components/products/product-thumbnail";
+import { QuickAddStockDialog } from "@/components/products/quick-add-stock-dialog";
 import { listCategories, listProducts } from "@/lib/services/product.service";
 import { formatBhd } from "@/lib/formatters/currency";
 import { titleize } from "@/lib/formatters/labels";
@@ -44,10 +53,10 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Products</p>
-          <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Product catalog</h1>
+          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Catalog</p>
+          <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Product Catalog</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Manage boutique products, categories, images, and color/size variants.
+            Manage product details, images, categories, pricing, and size/color options.
           </p>
         </div>
         <Button asChild>
@@ -69,6 +78,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
               <option value="all">All statuses</option>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
+              <option value="draft">Draft</option>
               <option value="archived">Archived</option>
             </Select>
             <Select defaultValue={categoryId} name="categoryId">
@@ -90,18 +100,20 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-[72px]">Image</TableHead>
               <TableHead>Product</TableHead>
               <TableHead>Category</TableHead>
-              <TableHead>Variants</TableHead>
-              <TableHead>Stock</TableHead>
+              <TableHead>Options</TableHead>
+              <TableHead>Total stock</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">From price</TableHead>
+              <TableHead className="w-12" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {products.data.length === 0 ? (
               <TableRow>
-                <TableCell className="h-28 text-center text-muted-foreground" colSpan={6}>
+                <TableCell className="h-28 text-center text-muted-foreground" colSpan={8}>
                   No products found.
                 </TableCell>
               </TableRow>
@@ -109,19 +121,31 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
               products.data.map((product) => (
                 <TableRow key={product.id}>
                   <TableCell>
-                    <Link className="font-medium text-musiva-plum hover:underline" href={`/admin/products/${product.id}`}>
+                    <ProductThumbnail name={product.name} url={product.primary_image_url} />
+                  </TableCell>
+                  <TableCell>
+                    <Link
+                      className="font-medium text-musiva-plum hover:underline"
+                      href={`/admin/products/${product.id}`}
+                    >
                       {product.name}
                     </Link>
                     <p className="mt-1 text-xs text-muted-foreground">{product.sku}</p>
                   </TableCell>
                   <TableCell>{product.category_name ?? "Uncategorized"}</TableCell>
-                  <TableCell>{product.variant_count}</TableCell>
                   <TableCell>
-                    <div className="flex flex-wrap gap-2">
+                    <span className="text-sm">
+                      {product.variant_count} option{product.variant_count !== 1 ? "s" : ""}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1.5">
                       <Badge variant={product.out_of_stock_count > 0 ? "danger" : "success"}>
                         {product.total_stock} units
                       </Badge>
-                      {product.low_stock_count > 0 ? <Badge variant="warning">Low {product.low_stock_count}</Badge> : null}
+                      {product.low_stock_count > 0 ? (
+                        <Badge variant="warning">Low {product.low_stock_count}</Badge>
+                      ) : null}
                     </div>
                   </TableCell>
                   <TableCell>
@@ -130,7 +154,61 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">
-                    {product.min_selling_price === null ? "-" : formatBhd(product.min_selling_price)}
+                    <div className="flex flex-col items-end gap-1">
+                      <span>
+                        {product.min_selling_price === null ? "—" : formatBhd(product.min_selling_price)}
+                      </span>
+                      {product.has_active_discount ? (
+                        <Badge className="text-[10px]" variant="warning">Sale</Badge>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          aria-label={`Actions for ${product.name}`}
+                          className="h-8 w-8"
+                          size="icon"
+                          variant="ghost"
+                        >
+                          <MoreHorizontal aria-hidden className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem asChild>
+                          <Link href={`/admin/products/${product.id}`}>View</Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem asChild>
+                          <Link href={`/admin/products/${product.id}/edit`}>Edit</Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem asChild>
+                          <Link href={`/admin/products/${product.id}`}>Manage image</Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem asChild={false} className="p-0">
+                          {product.variants_quick.length > 0 ? (
+                            <QuickAddStockDialog
+                              productName={product.name}
+                              variants={product.variants_quick}
+                            />
+                          ) : (
+                            <span className="flex w-full cursor-not-allowed items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
+                              Add stock
+                            </span>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem asChild>
+                          <Link
+                            className="text-destructive focus:text-destructive"
+                            href={`/admin/products/${product.id}/edit?archive=1`}
+                          >
+                            Archive
+                          </Link>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))

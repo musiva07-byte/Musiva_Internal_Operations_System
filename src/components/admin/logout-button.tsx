@@ -32,7 +32,7 @@ export function LogoutButton({ className, variant = "button" }: LogoutButtonProp
     return (
       <button
         className={cn(
-          "flex min-h-10 w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-musiva-ink transition-colors hover:bg-musiva-ivory hover:text-musiva-plum disabled:cursor-not-allowed disabled:opacity-60",
+          "flex min-h-10 w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-musiva-plum/85 transition-colors hover:bg-musiva-mauve-soft/45 hover:text-musiva-plum disabled:cursor-not-allowed disabled:opacity-60",
           className,
         )}
         disabled={isSigningOut}

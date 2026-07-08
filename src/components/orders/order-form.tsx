@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useFieldArray, useForm, useWatch } from "react-hook-form";
-import type { Resolver } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -42,7 +41,8 @@ export function OrderForm({ variants }: OrderFormProps) {
   const [formError, setFormError] = useState<string | null>(null);
 
   const form = useForm<CreateOrderInput>({
-    resolver: zodResolver(createOrderSchema) as Resolver<CreateOrderInput>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(createOrderSchema) as any,
     defaultValues: {
       customerId: null,
       customer: {
@@ -63,7 +63,8 @@ export function OrderForm({ variants }: OrderFormProps) {
       orderStatus: ORDER_STATUSES.new,
       paymentStatus: PAYMENT_STATUSES.unpaid,
       paymentMethod: PAYMENT_METHODS.benefitPay,
-      deliveryRequired: true,
+      fulfilmentMethod: "delivery" as const,
+      deliveryAddress: null,
       deliveryDate: null,
       deliveryTimeSlot: null,
       deliveryCharge: 0,

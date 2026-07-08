@@ -10,10 +10,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@hookform/resolvers": "latest",
+    "@radix-ui/react-dialog": "^1.1.18",
+    "@radix-ui/react-dropdown-menu": "^2.1.19",
     "@radix-ui/react-label": "latest",
     "@radix-ui/react-slot": "latest",
     "@supabase/ssr": "latest",
@@ -38,11 +42,13 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@vitest/ui": "^4.1.9",
     "autoprefixer": "latest",
     "eslint": "latest",
     "eslint-config-next": "latest",
     "postcss": "latest",
     "tailwindcss": "^3.4.17",
-    "typescript": "latest"
+    "typescript": "latest",
+    "vitest": "^4.1.9"
   }
 }

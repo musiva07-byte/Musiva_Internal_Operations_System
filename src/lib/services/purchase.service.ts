@@ -4,6 +4,7 @@ import { requireStaffPermission } from "@/lib/auth/authorization";
 import { canManagePurchases } from "@/lib/auth/permissions";
 import { PURCHASE_STATUSES } from "@/lib/constants";
 import { purchaseSchema, type PurchaseInput } from "@/lib/validations/purchase.schema";
+import { sumImportCosts } from "@/lib/pricing/calculations";
 import { createAuditLog } from "./audit.service";
 import { serviceError, serviceSuccess, type ServiceResult } from "./service-result";
 import type {
@@ -17,6 +18,7 @@ import type {
 import type {
   PaginatedResult,
   PurchasableVariantItem,
+  PurchaseItemWithVariant,
   PurchaseListItem,
   PurchaseWithRelations,
 } from "@/types/app";
@@ -178,7 +180,7 @@ export async function getPurchase(purchaseId: string): Promise<PurchaseWithRelat
   return {
     ...purchase,
     supplier,
-    items: itemRows.map((item) => ({
+    items: itemRows.map<PurchaseItemWithVariant>((item) => ({
       ...item,
       product_name: item.product_variants?.products?.name ?? "Product",
       variant_sku: item.product_variants?.variant_sku ?? "",
@@ -201,11 +203,25 @@ export async function createPurchase(input: PurchaseInput): Promise<ServiceResul
   }
 
   const purchaseInput = parsed.data;
+
+  // Subtotal = sum of (converted BHD cost × qty ordered) for all items
   const subtotal = purchaseInput.items.reduce(
-    (sum, item) => sum + item.quantityOrdered * item.costPrice,
+    (sum, item) => sum + item.convertedUnitCostBhd * item.quantityOrdered,
     0,
   );
-  const grandTotal = Math.max(0, subtotal - purchaseInput.discount + purchaseInput.shippingCost);
+
+  const totalImportCosts = sumImportCosts({
+    shippingCostBhd: purchaseInput.shippingCostBhd,
+    customsCostBhd: purchaseInput.customsCostBhd,
+    bankFeeBhd: purchaseInput.bankFeeBhd,
+    packagingCostBhd: purchaseInput.packagingCostBhd,
+    otherImportCostBhd: purchaseInput.otherImportCostBhd,
+  });
+
+  const grandTotal = Math.max(
+    0,
+    subtotal - purchaseInput.discount + totalImportCosts,
+  );
 
   const { data: purchase, error: purchaseError } = await auth.supabase
     .from("purchase_orders")
@@ -218,8 +234,16 @@ export async function createPurchase(input: PurchaseInput): Promise<ServiceResul
       payment_status: purchaseInput.paymentStatus,
       subtotal,
       discount: purchaseInput.discount,
-      shipping_cost: purchaseInput.shippingCost,
+      shipping_cost: purchaseInput.shippingCostBhd,
       grand_total: grandTotal,
+      purchase_currency: purchaseInput.purchaseCurrency,
+      exchange_rate_to_bhd: purchaseInput.exchangeRateToBhd,
+      exchange_rate_date: purchaseInput.exchangeRateDate,
+      exchange_rate_source: purchaseInput.exchangeRateSource,
+      customs_cost_bhd: purchaseInput.customsCostBhd,
+      bank_fee_bhd: purchaseInput.bankFeeBhd,
+      packaging_cost_bhd: purchaseInput.packagingCostBhd,
+      other_import_cost_bhd: purchaseInput.otherImportCostBhd,
       notes: purchaseInput.notes ?? null,
       created_by: auth.userId,
     })
@@ -236,8 +260,15 @@ export async function createPurchase(input: PurchaseInput): Promise<ServiceResul
       product_variant_id: item.productVariantId,
       quantity_ordered: item.quantityOrdered,
       quantity_received: item.quantityReceived,
-      cost_price: item.costPrice,
-      line_total: item.quantityOrdered * item.costPrice,
+      // Legacy fields (backward compat)
+      cost_price: item.landedUnitCostBhd,
+      line_total: item.landedUnitCostBhd * item.quantityOrdered,
+      // Phase 11 fields
+      supplier_unit_cost: item.supplierUnitCost,
+      supplier_currency: item.supplierCurrency,
+      converted_unit_cost_bhd: item.convertedUnitCostBhd,
+      allocated_import_cost_bhd: item.allocatedImportCostBhd,
+      landed_unit_cost_bhd: item.landedUnitCostBhd,
     })),
   );
 
@@ -253,6 +284,8 @@ export async function createPurchase(input: PurchaseInput): Promise<ServiceResul
     metadata: {
       purchase_number: purchase.purchase_number,
       supplier_id: purchase.supplier_id,
+      purchase_currency: purchaseInput.purchaseCurrency,
+      exchange_rate_to_bhd: purchaseInput.exchangeRateToBhd,
       item_count: purchaseInput.items.length,
       grand_total: grandTotal,
     },

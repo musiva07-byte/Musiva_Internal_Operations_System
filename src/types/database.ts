@@ -18,7 +18,7 @@ type InsertableCreated<Row> = Omit<Row, "id" | "created_at"> & {
   created_at?: string;
 };
 
-export type ProductStatus = "active" | "inactive" | "archived";
+export type ProductStatus = "draft" | "active" | "inactive" | "archived";
 export type StockMovementType =
   | "opening_stock"
   | "purchase_stock"
@@ -30,15 +30,19 @@ export type StockMovementType =
   | "cancelled_order_restore";
 export type OrderSource = "instagram" | "whatsapp" | "website" | "walk_in" | "tiktok" | "referral" | "other";
 export type OrderStatus =
+  // Current simplified statuses
   | "new"
   | "confirmed"
+  | "in_fulfilment"
+  | "completed"
+  | "cancelled"
+  | "returned"
+  | "exchange_requested"
+  // Legacy statuses — kept so existing DB rows remain valid; not exposed in new UI
   | "packed"
   | "ready_for_pickup"
   | "out_for_delivery"
-  | "delivered"
-  | "cancelled"
-  | "returned"
-  | "exchange_requested";
+  | "delivered";
 export type PaymentMethod = "cash" | "benefitpay" | "card" | "bank_transfer" | "payment_link" | "cash_on_delivery";
 export type PaymentStatus = "unpaid" | "paid" | "partial" | "cod" | "refunded";
 export type DeliveryStatus =
@@ -49,7 +53,9 @@ export type DeliveryStatus =
   | "out_for_delivery"
   | "delivered"
   | "failed"
-  | "returned";
+  | "returned_to_store"
+  | "cancelled"
+  | "returned";  // legacy — kept for existing rows
 export type ReturnType = "return" | "exchange";
 export type ReturnReason =
   | "size_issue"
@@ -67,7 +73,13 @@ export type ReturnItemAction =
   | "exchange"
   | "refund_only"
   | "no_stock_change";
-export type PurchaseStatus = "draft" | "ordered" | "partially_received" | "received" | "cancelled";
+export type PurchaseStatus =
+  | "draft"
+  | "ordered"
+  | "in_transit"
+  | "partially_received"
+  | "received"
+  | "cancelled";
 export type PurchasePaymentStatus = "unpaid" | "partial" | "paid";
 export type ExpenseCategory =
   | "product_purchase"
@@ -81,6 +93,9 @@ export type ExpenseCategory =
   | "miscellaneous";
 export type StaffRole = "owner" | "manager" | "sales_staff" | "inventory_staff" | "accountant" | "delivery_coordinator";
 export type StaffStatus = "active" | "inactive";
+export type PricingStatus = "regular" | "discount_scheduled" | "on_sale" | "discount_ended";
+export type StockStatus = "in_stock" | "low_stock" | "out_of_stock";
+export type FulfilmentMethod = "walk_in" | "customer_pickup" | "delivery";
 
 export type CategoryRow = {
   id: string;
@@ -114,9 +129,19 @@ export type ProductVariantRow = {
   barcode: string | null;
   color: string;
   size: string;
+  /** @deprecated Use regular_selling_price_bhd */
   cost_price: number;
+  /** @deprecated Use regular_selling_price_bhd */
   selling_price: number;
+  /** @deprecated Use discount_price_bhd */
   discount_price: number | null;
+  // New pricing fields (Phase 11)
+  regular_selling_price_bhd: number | null;
+  discount_price_bhd: number | null;
+  discount_start_at: string | null;
+  discount_end_at: string | null;
+  latest_landed_cost_bhd: number | null;
+  average_landed_cost_bhd: number | null;
   stock_quantity: number;
   minimum_stock: number;
   status: ProductStatus;
@@ -153,7 +178,9 @@ export type CustomerRow = {
   id: string;
   full_name: string;
   mobile: string;
+  mobile_normalized: string | null;
   whatsapp: string | null;
+  whatsapp_normalized: string | null;
   email: string | null;
   area: string | null;
   governorate: string | null;
@@ -167,6 +194,23 @@ export type CustomerRow = {
   updated_at: string;
 };
 
+export type CustomerAddressRow = {
+  id: string;
+  customer_id: string;
+  label: string;
+  governorate: string | null;
+  area: string | null;
+  block: string | null;
+  road: string | null;
+  building: string | null;
+  flat: string | null;
+  landmark: string | null;
+  delivery_notes: string | null;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export type OrderRow = {
   id: string;
   order_number: string;
@@ -175,6 +219,7 @@ export type OrderRow = {
   order_status: OrderStatus;
   payment_status: PaymentStatus;
   payment_method: PaymentMethod | null;
+  fulfilment_method: FulfilmentMethod;
   subtotal: number;
   discount_total: number;
   delivery_charge: number;
@@ -232,6 +277,35 @@ export type DeliveryRow = {
   courier_name: string | null;
   courier_phone: string | null;
   delivery_status: DeliveryStatus;
+  assigned_to_id: string | null;
+  assigned_at: string | null;
+  failure_reason: string | null;
+  failure_note: string | null;
+  cod_amount: number | null;
+  cod_collected: boolean;
+  cod_collected_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DeliveryStatusHistoryRow = {
+  id: string;
+  delivery_id: string;
+  from_status: DeliveryStatus | null;
+  to_status: DeliveryStatus;
+  reason: string | null;
+  note: string | null;
+  changed_by: string | null;
+  created_at: string;
+};
+
+export type DeliveryChargeRuleRow = {
+  id: string;
+  governorate: string | null;
+  area: string | null;
+  charge_bhd: number;
+  is_default: boolean;
+  notes: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -295,8 +369,18 @@ export type PurchaseOrderRow = {
   payment_status: PurchasePaymentStatus;
   subtotal: number;
   discount: number;
+  /** BHD shipping cost — same field as shipping_cost_bhd in application layer */
   shipping_cost: number;
   grand_total: number;
+  // Phase 11 fields
+  purchase_currency: string;
+  exchange_rate_to_bhd: number | null;
+  exchange_rate_date: string | null;
+  exchange_rate_source: string | null;
+  customs_cost_bhd: number;
+  bank_fee_bhd: number;
+  packaging_cost_bhd: number;
+  other_import_cost_bhd: number;
   notes: string | null;
   created_by: string | null;
   created_at: string;
@@ -309,8 +393,43 @@ export type PurchaseOrderItemRow = {
   product_variant_id: string;
   quantity_ordered: number;
   quantity_received: number;
+  /** @deprecated Use landed_unit_cost_bhd */
   cost_price: number;
+  /** @deprecated Use landed_unit_cost_bhd * quantity_ordered */
   line_total: number;
+  // Phase 11 fields
+  supplier_unit_cost: number | null;
+  supplier_currency: string | null;
+  converted_unit_cost_bhd: number | null;
+  allocated_import_cost_bhd: number;
+  landed_unit_cost_bhd: number | null;
+  created_at: string;
+};
+
+export type ExchangeRateRow = {
+  id: string;
+  base_currency: string;
+  quote_currency: string;
+  rate: number;
+  rate_date: string;
+  source: string;
+  is_manual: boolean;
+  created_at: string;
+};
+
+export type InventoryBatchRow = {
+  id: string;
+  purchase_order_item_id: string;
+  product_variant_id: string;
+  quantity_received: number;
+  quantity_remaining: number;
+  supplier_unit_cost: number | null;
+  supplier_currency: string | null;
+  exchange_rate_to_bhd: number | null;
+  converted_unit_cost_bhd: number | null;
+  allocated_import_cost_bhd: number;
+  landed_unit_cost_bhd: number | null;
+  received_at: string;
   created_at: string;
 };
 
@@ -387,6 +506,7 @@ export interface Database {
       product_images: TableDefinition<ProductImageRow, InsertableCreated<ProductImageRow>>;
       stock_movements: TableDefinition<StockMovementRow, InsertableCreated<StockMovementRow>>;
       customers: TableDefinition<CustomerRow, Insertable<CustomerRow>>;
+      customer_addresses: TableDefinition<CustomerAddressRow, Insertable<CustomerAddressRow>>;
       orders: TableDefinition<
         OrderRow,
         Omit<OrderRow, "id" | "order_number" | "created_at" | "updated_at"> & {
@@ -399,6 +519,8 @@ export interface Database {
       order_items: TableDefinition<OrderItemRow, InsertableCreated<OrderItemRow>>;
       payments: TableDefinition<PaymentRow, InsertableCreated<PaymentRow>>;
       deliveries: TableDefinition<DeliveryRow, Insertable<DeliveryRow>>;
+      delivery_status_history: TableDefinition<DeliveryStatusHistoryRow, InsertableCreated<DeliveryStatusHistoryRow>>;
+      delivery_charge_rules: TableDefinition<DeliveryChargeRuleRow, Insertable<DeliveryChargeRuleRow>>;
       audit_logs: TableDefinition<AuditLogRow, InsertableCreated<AuditLogRow>>;
       returns: TableDefinition<ReturnRow, Insertable<ReturnRow>>;
       return_items: TableDefinition<ReturnItemRow, InsertableCreated<ReturnItemRow>>;
@@ -413,6 +535,8 @@ export interface Database {
         }
       >;
       purchase_order_items: TableDefinition<PurchaseOrderItemRow, InsertableCreated<PurchaseOrderItemRow>>;
+      exchange_rates: TableDefinition<ExchangeRateRow, InsertableCreated<ExchangeRateRow>>;
+      inventory_batches: TableDefinition<InventoryBatchRow, InsertableCreated<InventoryBatchRow>>;
       expenses: TableDefinition<ExpenseRow, Insertable<ExpenseRow>>;
       roles: TableDefinition<RoleRow, Insertable<RoleRow>>;
       permissions: TableDefinition<PermissionRow, InsertableCreated<PermissionRow>>;
@@ -459,16 +583,48 @@ export interface Database {
         };
         Returns: PurchaseOrderRow;
       };
+      recalculate_average_landed_cost: {
+        Args: {
+          p_variant_id: string;
+        };
+        Returns: number | null;
+      };
+      advance_delivery_status: {
+        Args: {
+          p_delivery_id: string;
+          p_new_status: DeliveryStatus;
+          p_reason?: string | null;
+          p_note?: string | null;
+          p_collected_amt?: number | null;
+        };
+        Returns: DeliveryRow;
+      };
+      find_or_create_customer: {
+        Args: {
+          p_full_name: string;
+          p_mobile: string;
+          p_whatsapp?: string | null;
+          p_email?: string | null;
+        };
+        Returns: CustomerRow;
+      };
+      normalize_bahrain_phone: {
+        Args: { input: string };
+        Returns: string | null;
+      };
     };
     Enums: {
       product_status: ProductStatus;
       product_variant_status: ProductStatus;
+      pricing_status: PricingStatus;
+      stock_status: StockStatus;
       stock_movement_type: StockMovementType;
       order_source: OrderSource;
-      order_status: OrderStatus;
+      order_status: OrderStatus;         // includes legacy: packed, ready_for_pickup, out_for_delivery, delivered
       payment_method: PaymentMethod;
       payment_status: PaymentStatus;
-      delivery_status: DeliveryStatus;
+      delivery_status: DeliveryStatus;   // includes legacy: returned
+      fulfilment_method: FulfilmentMethod;
       return_type: ReturnType;
       return_reason: ReturnReason;
       return_condition: ReturnCondition;

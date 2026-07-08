@@ -50,9 +50,9 @@ export function LoginForm() {
   }
 
   return (
-    <Card className="border-musiva-champagne/70 bg-musiva-porcelain shadow-soft">
+    <Card className="border-musiva-champagne/55 bg-musiva-porcelain/95 shadow-soft backdrop-blur">
       <CardHeader>
-        <CardTitle className="text-xl text-musiva-plum">Sign in</CardTitle>
+        <CardTitle className="font-display text-2xl text-musiva-plum">Sign in</CardTitle>
       </CardHeader>
       <CardContent>
         {!hasSupabaseEnv ? (

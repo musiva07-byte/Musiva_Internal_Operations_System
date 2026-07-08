@@ -8,6 +8,11 @@ import {
   type StockAdjustmentInput,
   type StockEntryInput,
 } from "@/lib/validations/inventory.schema";
+import {
+  getActiveSellingPrice,
+  getPricingStatus,
+  getStockStatus,
+} from "@/lib/pricing/calculations";
 import { serviceError, serviceSuccess, type ServiceResult } from "./service-result";
 import type { InventoryVariantItem, PaginatedResult, StockMovementItem } from "@/types/app";
 import type { ProductVariantRow, StockMovementRow, StockMovementType } from "@/types/database";
@@ -82,12 +87,33 @@ export async function listInventoryVariants(
   const { data, count } = await query;
   const rows = (data ?? []) as unknown as VariantRelationRow[];
 
+  const productIds = [...new Set(rows.map((row) => row.product_id))];
+  const { data: images } = productIds.length
+    ? await supabase
+        .from("product_images")
+        .select("product_id, url")
+        .in("product_id", productIds)
+        .eq("is_primary", true)
+        .order("sort_order", { ascending: true })
+    : { data: [] as { product_id: string; url: string }[] };
+
+  const imageMap = new Map<string, string>();
+  for (const img of images ?? []) {
+    if (!imageMap.has(img.product_id)) {
+      imageMap.set(img.product_id, img.url);
+    }
+  }
+
   return {
     data: rows.map((row) => ({
       ...row,
       product_name: row.products?.name ?? "Unknown product",
       product_sku: row.products?.sku ?? "",
       category_name: row.products?.categories?.name ?? null,
+      primary_image_url: imageMap.get(row.product_id) ?? null,
+      stock_status: getStockStatus(row.stock_quantity, row.minimum_stock),
+      active_selling_price: getActiveSellingPrice(row),
+      pricing_status: getPricingStatus(row),
     })),
     count: count ?? 0,
     page,
