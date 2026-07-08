@@ -1,22 +1,16 @@
 import Link from "next/link";
-import { MoreHorizontal, Plus, Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pagination } from "@/components/products/pagination";
 import { ProductThumbnail } from "@/components/products/product-thumbnail";
-import { QuickAddStockDialog } from "@/components/products/quick-add-stock-dialog";
+import { ProductRowActions } from "@/components/products/product-row-actions";
 import { listCategories, listProducts } from "@/lib/services/product.service";
+import { getCurrentAuthState } from "@/lib/auth/session";
 import { formatBhd } from "@/lib/formatters/currency";
 import { titleize } from "@/lib/formatters/labels";
 
@@ -32,22 +26,30 @@ function getParam(params: Record<string, string | string[] | undefined>, key: st
 export default async function ProductsPage({ searchParams }: ProductsPageProps) {
   const params = await searchParams;
   const q = getParam(params, "q") ?? "";
-  const status = getParam(params, "status") ?? "all";
+  // Default is "" (active + inactive, archived excluded) — "all" shows everything
+  const status = getParam(params, "status") ?? "";
   const categoryId = getParam(params, "categoryId") ?? "all";
   const page = Number(getParam(params, "page") ?? 1);
-  const [categories, products] = await Promise.all([
+
+  const [categories, products, auth] = await Promise.all([
     listCategories(),
     listProducts({ q, status, categoryId, page }),
+    getCurrentAuthState(),
   ]);
+
+  const userRole = auth.profile?.role ?? null;
 
   const hrefForPage = (nextPage: number) => {
     const next = new URLSearchParams();
     if (q) next.set("q", q);
-    if (status !== "all") next.set("status", status);
+    if (status) next.set("status", status);
     if (categoryId !== "all") next.set("categoryId", categoryId);
     next.set("page", String(nextPage));
     return `/admin/products?${next.toString()}`;
   };
+
+  const showingArchived = status === "archived" || status === "all";
+  const isUnfilteredEmptyState = !q && !status && categoryId === "all";
 
   return (
     <div className="space-y-6">
@@ -69,17 +71,17 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
 
       <Card className="shadow-soft">
         <CardContent className="pt-6">
-          <form className="grid gap-3 md:grid-cols-[1fr_180px_220px_auto]">
+          <form className="grid gap-3 md:grid-cols-[1fr_200px_220px_auto]">
             <div className="relative">
               <Search aria-hidden className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input className="pl-10" defaultValue={q} name="q" placeholder="Search name, SKU, collection" />
             </div>
             <Select defaultValue={status} name="status">
-              <option value="all">All statuses</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="draft">Draft</option>
+              <option value="">Active &amp; Inactive</option>
+              <option value="active">Active only</option>
+              <option value="inactive">Inactive only</option>
               <option value="archived">Archived</option>
+              <option value="all">All statuses</option>
             </Select>
             <Select defaultValue={categoryId} name="categoryId">
               <option value="all">All categories</option>
@@ -93,6 +95,11 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
               Filter
             </Button>
           </form>
+          {showingArchived && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Showing archived products. Archived products are hidden from new sales and normal stock selection.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -111,15 +118,38 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
             </TableRow>
           </TableHeader>
           <TableBody>
-            {products.data.length === 0 ? (
+            {products.loadError ? (
               <TableRow>
                 <TableCell className="h-28 text-center text-muted-foreground" colSpan={8}>
-                  No products found.
+                  {products.loadError}
+                </TableCell>
+              </TableRow>
+            ) : products.data.length === 0 ? (
+              <TableRow>
+                <TableCell className="h-28 text-center text-muted-foreground" colSpan={8}>
+                  {isUnfilteredEmptyState ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <div>
+                        <p className="font-medium text-foreground">No products yet.</p>
+                        <p>Add your first product to start managing Moosiva stock.</p>
+                      </div>
+                      <Button asChild size="sm">
+                        <Link href="/admin/products/new">Add product</Link>
+                      </Button>
+                    </div>
+                  ) : status === "archived" ? (
+                    "No archived products."
+                  ) : (
+                    "No products found."
+                  )}
                 </TableCell>
               </TableRow>
             ) : (
               products.data.map((product) => (
-                <TableRow key={product.id}>
+                <TableRow
+                  key={product.id}
+                  className={product.status === "archived" ? "opacity-60" : undefined}
+                >
                   <TableCell>
                     <ProductThumbnail name={product.name} url={product.primary_image_url} />
                   </TableCell>
@@ -146,10 +176,21 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                       {product.low_stock_count > 0 ? (
                         <Badge variant="warning">Low {product.low_stock_count}</Badge>
                       ) : null}
+                      {product.status === "archived" && product.total_stock > 0 ? (
+                        <Badge variant="warning">Archived — stock remaining</Badge>
+                      ) : null}
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={product.status === "active" ? "success" : "secondary"}>
+                    <Badge
+                      variant={
+                        product.status === "active"
+                          ? "success"
+                          : product.status === "archived"
+                          ? "danger"
+                          : "secondary"
+                      }
+                    >
                       {titleize(product.status)}
                     </Badge>
                   </TableCell>
@@ -164,51 +205,13 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                     </div>
                   </TableCell>
                   <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          aria-label={`Actions for ${product.name}`}
-                          className="h-8 w-8"
-                          size="icon"
-                          variant="ghost"
-                        >
-                          <MoreHorizontal aria-hidden className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem asChild>
-                          <Link href={`/admin/products/${product.id}`}>View</Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem asChild>
-                          <Link href={`/admin/products/${product.id}/edit`}>Edit</Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem asChild>
-                          <Link href={`/admin/products/${product.id}`}>Manage image</Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem asChild={false} className="p-0">
-                          {product.variants_quick.length > 0 ? (
-                            <QuickAddStockDialog
-                              productName={product.name}
-                              variants={product.variants_quick}
-                            />
-                          ) : (
-                            <span className="flex w-full cursor-not-allowed items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
-                              Add stock
-                            </span>
-                          )}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem asChild>
-                          <Link
-                            className="text-destructive focus:text-destructive"
-                            href={`/admin/products/${product.id}/edit?archive=1`}
-                          >
-                            Archive
-                          </Link>
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <ProductRowActions
+                      productId={product.id}
+                      productName={product.name}
+                      productStatus={product.status}
+                      variantsQuick={product.variants_quick}
+                      userRole={userRole}
+                    />
                   </TableCell>
                 </TableRow>
               ))

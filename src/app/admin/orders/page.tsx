@@ -69,7 +69,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
         <Button asChild>
           <Link href="/admin/orders/new">
             <Plus aria-hidden className="mr-2 h-4 w-4" />
-            New order
+            New sale
           </Link>
         </Button>
       </header>

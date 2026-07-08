@@ -1,14 +1,17 @@
 import { subDays } from "date-fns";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DELIVERY_STATUSES, ORDER_STATUSES } from "@/lib/constants";
-import type { DeliveryRow, OrderItemRow, OrderRow, PaymentStatus, ProductVariantRow } from "@/types/database";
+import type { OrderRow, PaymentStatus } from "@/types/database";
 
 type OrderRelationRow = OrderRow & {
   customers?: { full_name: string; mobile: string } | null;
 };
 
-type VariantRelationRow = ProductVariantRow & {
-  products?: { name: string; sku: string } | null;
+type ItemWithOrderRow = {
+  product_name_snapshot: string;
+  quantity: number;
+  line_total: number;
+  orders: { order_status: string } | null;
 };
 
 function dayKey(date: Date) {
@@ -20,97 +23,175 @@ function startOfToday() {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
+// Statuses that count as "in the delivery pipeline" for the attention metric.
+const ACTIVE_DELIVERY_STATUSES = [
+  DELIVERY_STATUSES.pending,
+  DELIVERY_STATUSES.packed,
+  DELIVERY_STATUSES.readyForPickup,
+  DELIVERY_STATUSES.withCourier,
+  DELIVERY_STATUSES.outForDelivery,
+];
+
+// Order statuses excluded from revenue and best-seller totals.
+const EXCLUDED_ORDER_STATUSES = [ORDER_STATUSES.cancelled, ORDER_STATUSES.returned];
+
+// Delivery statuses shown in the delivery-status summary card.
+const LOAD_ERROR = "Unable to load data. Please try again or contact the administrator.";
+
+const DELIVERY_SUMMARY_STATUSES = [
+  DELIVERY_STATUSES.pending,
+  DELIVERY_STATUSES.packed,
+  DELIVERY_STATUSES.readyForPickup,
+  DELIVERY_STATUSES.withCourier,
+  DELIVERY_STATUSES.outForDelivery,
+  DELIVERY_STATUSES.delivered,
+  DELIVERY_STATUSES.failed,
+  DELIVERY_STATUSES.returnedToStore,
+];
+
+function emptyDashboard(loadError?: string) {
+  return {
+    loadError,
+    todaySales: 0,
+    monthSales: 0,
+    ordersToday: 0,
+    pendingDeliveries: 0,
+    failedDeliveries: 0,
+    lowStockProducts: 0,
+    outOfStockProducts: 0,
+    recentOrders: [] as OrderRelationRow[],
+    bestSellers: [] as { name: string; quantity: number; revenue: number }[],
+    salesChart: [] as { label: string; total: number }[],
+    paymentSummary: [] as { status: PaymentStatus; count: number }[],
+    deliverySummary: [] as { status: string; count: number }[],
+  };
+}
+
+/** DB-side delivery status aggregation — one count query per status, run in parallel. */
+async function getDeliverySummary(
+  supabase: NonNullable<Awaited<ReturnType<typeof createSupabaseServerClient>>>
+): Promise<{ status: string; count: number }[]> {
+  const results = await Promise.all(
+    DELIVERY_SUMMARY_STATUSES.map((status) =>
+      supabase
+        .from("deliveries")
+        .select("id", { count: "exact", head: true })
+        .eq("delivery_status", status)
+        .then(({ count }) => ({ status, count: count ?? 0 }))
+    )
+  );
+  return results.filter((item) => item.count > 0);
+}
+
 export async function getDashboardData() {
   const supabase = await createSupabaseServerClient();
+
+  if (!supabase) return emptyDashboard();
+
   const todayStart = startOfToday();
   const tomorrowStart = new Date(todayStart);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
   const monthStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
   const thirtyDaysStart = subDays(todayStart, 30);
   const chartStart = subDays(todayStart, 6);
-  const activeDeliveryStatuses = [
-    DELIVERY_STATUSES.pending,
-    DELIVERY_STATUSES.packed,
-    DELIVERY_STATUSES.readyForPickup,
-    DELIVERY_STATUSES.withCourier,
-    DELIVERY_STATUSES.outForDelivery,
-  ];
 
-  if (!supabase) {
-    return {
-      todaySales: 0,
-      monthSales: 0,
-      ordersToday: 0,
-      pendingDeliveries: 0,
-      lowStockProducts: 0,
-      outOfStockProducts: 0,
-      recentOrders: [],
-      bestSellers: [],
-      salesChart: [],
-      paymentSummary: [],
-      deliverySummary: [],
-    };
-  }
+  const excludedStatusFilter = `(${EXCLUDED_ORDER_STATUSES.join(",")})`;
 
   const [
-    { data: todayOrders },
-    { data: monthOrders },
-    { data: chartOrders },
-    { count: pendingDeliveriesCount },
-    { data: deliveryStatuses },
-    { data: recentOrders },
-    { data: variants },
-    { data: recentItems },
+    { data: todayOrders, error: todayOrdersError },
+    { data: monthOrders, error: monthOrdersError },
+    { data: chartOrders, error: chartOrdersError },
+    { count: pendingDeliveriesCount, error: pendingDeliveriesError },
+    { count: failedDeliveriesCount, error: failedDeliveriesError },
+    { data: recentOrders, error: recentOrdersError },
+    { data: stockAlerts, error: stockAlertsError },
+    { data: recentItems, error: recentItemsError },
+    deliverySummary,
   ] = await Promise.all([
+    // Today's gross sales (excluding cancelled/returned)
     supabase
       .from("orders")
       .select("grand_total")
-      .neq("order_status", ORDER_STATUSES.cancelled)
+      .not("order_status", "in", excludedStatusFilter)
       .gte("created_at", todayStart.toISOString())
       .lt("created_at", tomorrowStart.toISOString()),
+
+    // Month-to-date gross sales and payment breakdown
     supabase
       .from("orders")
       .select("grand_total, payment_status, created_at")
-      .neq("order_status", ORDER_STATUSES.cancelled)
+      .not("order_status", "in", excludedStatusFilter)
       .gte("created_at", monthStart.toISOString()),
+
+    // 7-day chart data
     supabase
       .from("orders")
       .select("grand_total, created_at")
-      .neq("order_status", ORDER_STATUSES.cancelled)
+      .not("order_status", "in", excludedStatusFilter)
       .gte("created_at", chartStart.toISOString())
       .lt("created_at", tomorrowStart.toISOString()),
+
+    // Pending deliveries count (in pipeline)
     supabase
       .from("deliveries")
       .select("id", { count: "exact", head: true })
-      .in("delivery_status", activeDeliveryStatuses),
+      .in("delivery_status", ACTIVE_DELIVERY_STATUSES),
+
+    // Failed deliveries that need re-attempt
     supabase
       .from("deliveries")
-      .select("delivery_status")
-      .order("created_at", { ascending: false })
-      .limit(500),
+      .select("id", { count: "exact", head: true })
+      .eq("delivery_status", DELIVERY_STATUSES.failed),
+
+    // Recent orders with customer info
     supabase
       .from("orders")
-      .select("id, order_number, order_status, grand_total, created_at, customers(full_name, mobile)")
+      .select(
+        "id, order_number, order_status, grand_total, created_at, customers(full_name, mobile)"
+      )
       .order("created_at", { ascending: false })
       .limit(8),
-    supabase
-      .from("product_variants")
-      .select("stock_quantity, minimum_stock"),
+
+    // DB-side stock alert aggregation via RPC — avoids fetching all variant rows
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any).rpc("get_stock_alert_counts").single(),
+
+    // Best sellers: join orders!inner to exclude cancelled/returned order items
     supabase
       .from("order_items")
-      .select("product_name_snapshot, quantity, line_total")
+      .select("product_name_snapshot, quantity, line_total, orders!inner(order_status)")
+      .neq("orders.order_status", ORDER_STATUSES.cancelled)
+      .neq("orders.order_status", ORDER_STATUSES.returned)
       .gte("created_at", thirtyDaysStart.toISOString())
-      .order("created_at", { ascending: false })
       .limit(500),
+
+    // Delivery status summary — DB-side count per status
+    getDeliverySummary(supabase),
   ]);
 
-  const monthOrderRows = (monthOrders ?? []) as Pick<OrderRow, "grand_total" | "payment_status" | "created_at">[];
-  const todayOrderRows = (todayOrders ?? []) as Pick<OrderRow, "grand_total">[];
-  const chartOrderRows = (chartOrders ?? []) as Pick<OrderRow, "grand_total" | "created_at">[];
-  const variantRows = (variants ?? []) as unknown as VariantRelationRow[];
-  const deliveryRows = (deliveryStatuses ?? []) as Pick<DeliveryRow, "delivery_status">[];
-  const itemRows = (recentItems ?? []) as OrderItemRow[];
+  if (
+    todayOrdersError ||
+    monthOrdersError ||
+    chartOrdersError ||
+    pendingDeliveriesError ||
+    failedDeliveriesError ||
+    recentOrdersError ||
+    stockAlertsError ||
+    recentItemsError
+  ) {
+    return emptyDashboard(LOAD_ERROR);
+  }
 
+  const todayOrderRows = (todayOrders ?? []) as Pick<OrderRow, "grand_total">[];
+  const monthOrderRows = (monthOrders ?? []) as Pick<
+    OrderRow,
+    "grand_total" | "payment_status" | "created_at"
+  >[];
+  const chartOrderRows = (chartOrders ?? []) as Pick<OrderRow, "grand_total" | "created_at">[];
+  const stockAlertCounts = stockAlerts as { low_stock_count: number; out_of_stock_count: number } | null;
+  const itemRows = (recentItems ?? []) as unknown as ItemWithOrderRow[];
+
+  // 7-day chart: one bucket per day
   const lastSevenDays = Array.from({ length: 7 }).map((_, index) => {
     const date = subDays(todayStart, 6 - index);
     const key = dayKey(date);
@@ -123,6 +204,7 @@ export async function getDashboardData() {
     };
   });
 
+  // Best sellers: aggregate by product name, sorted by units sold
   const bestSellerMap = new Map<string, { name: string; quantity: number; revenue: number }>();
   itemRows.forEach((item) => {
     const key = item.product_name_snapshot;
@@ -132,27 +214,30 @@ export async function getDashboardData() {
     bestSellerMap.set(key, current);
   });
 
+  // Payment status breakdown (this month, non-cancelled)
   const paymentMap = new Map<PaymentStatus, number>();
   monthOrderRows.forEach((order) => {
-    paymentMap.set(order.payment_status, (paymentMap.get(order.payment_status) ?? 0) + 1);
-  });
-
-  const deliveryMap = new Map<string, number>();
-  deliveryRows.forEach((delivery) => {
-    deliveryMap.set(delivery.delivery_status, (deliveryMap.get(delivery.delivery_status) ?? 0) + 1);
+    paymentMap.set(
+      order.payment_status,
+      (paymentMap.get(order.payment_status) ?? 0) + 1
+    );
   });
 
   return {
-    todaySales: todayOrderRows.reduce((sum, order) => sum + Number(order.grand_total), 0),
-    monthSales: monthOrderRows.reduce((sum, order) => sum + Number(order.grand_total), 0),
+    loadError: undefined,
+    todaySales: todayOrderRows.reduce((sum, o) => sum + Number(o.grand_total), 0),
+    monthSales: monthOrderRows.reduce((sum, o) => sum + Number(o.grand_total), 0),
     ordersToday: todayOrderRows.length,
     pendingDeliveries: pendingDeliveriesCount ?? 0,
-    lowStockProducts: variantRows.filter((variant) => variant.stock_quantity > 0 && variant.stock_quantity <= variant.minimum_stock).length,
-    outOfStockProducts: variantRows.filter((variant) => variant.stock_quantity === 0).length,
+    failedDeliveries: failedDeliveriesCount ?? 0,
+    lowStockProducts: stockAlertCounts?.low_stock_count ?? 0,
+    outOfStockProducts: stockAlertCounts?.out_of_stock_count ?? 0,
     recentOrders: (recentOrders ?? []) as unknown as OrderRelationRow[],
-    bestSellers: [...bestSellerMap.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5),
+    bestSellers: [...bestSellerMap.values()]
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5),
     salesChart: lastSevenDays,
     paymentSummary: [...paymentMap.entries()].map(([status, count]) => ({ status, count })),
-    deliverySummary: [...deliveryMap.entries()].map(([status, count]) => ({ status, count })),
+    deliverySummary,
   };
 }

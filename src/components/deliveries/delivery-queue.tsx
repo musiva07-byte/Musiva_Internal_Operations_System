@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, CheckSquare, LayoutList, Search, Table2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -101,10 +101,12 @@ function SummaryBar({ deliveries }: { deliveries: DeliveryListItem[] }) {
 
 function CompactList({
   deliveries,
+  emptyContent,
   selectedIds,
   onSelect,
 }: {
   deliveries: DeliveryListItem[];
+  emptyContent: ReactNode;
   selectedIds: Set<string>;
   onSelect: (id: string, checked: boolean) => void;
 }) {
@@ -113,7 +115,7 @@ function CompactList({
   if (deliveries.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-[hsl(var(--border))] py-14 text-center text-muted-foreground">
-        No deliveries found.
+        {emptyContent}
       </div>
     );
   }
@@ -145,10 +147,12 @@ function CompactList({
 
 function DetailedTable({
   deliveries,
+  emptyContent,
   selectedIds,
   onSelect,
 }: {
   deliveries: DeliveryListItem[];
+  emptyContent: ReactNode;
   selectedIds: Set<string>;
   onSelect: (id: string, checked: boolean) => void;
 }) {
@@ -157,7 +161,7 @@ function DetailedTable({
   if (deliveries.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-[hsl(var(--border))] py-14 text-center text-muted-foreground">
-        No deliveries found.
+        {emptyContent}
       </div>
     );
   }
@@ -343,6 +347,9 @@ export function DeliveryQueue({
   const allSelected =
     selectedIds.size > 0 && selectedIds.size === deliveries.data.length;
   const someSelected = selectedIds.size > 0;
+  const emptyContent = deliveries.loadError ? deliveries.loadError : tabCounts.all === 0 && !currentQ ? (
+    <div><p className="font-medium text-foreground">No deliveries in this queue.</p><p>Delivery orders will appear here after sales are created.</p></div>
+  ) : "No deliveries found.";
 
   return (
     <div className="space-y-4">
@@ -499,12 +506,14 @@ export function DeliveryQueue({
       {currentView === "compact" ? (
         <CompactList
           deliveries={deliveries.data}
+          emptyContent={emptyContent}
           selectedIds={selectedIds}
           onSelect={handleSelect}
         />
       ) : (
         <DetailedTable
           deliveries={deliveries.data}
+          emptyContent={emptyContent}
           selectedIds={selectedIds}
           onSelect={handleSelect}
         />

@@ -48,13 +48,15 @@ export async function listSuppliers(filters: SupplierFilters = {}): Promise<Pagi
   const rows = data ?? [];
   const supplierIds = rows.map((supplier) => supplier.id);
 
+  // Narrow to 3 columns only and cap at 100 rows (10 suppliers × up to 10 purchases).
   const { data: purchases } = supplierIds.length
     ? await supabase
         .from("purchase_orders")
-        .select("*")
+        .select("supplier_id, grand_total, purchase_date")
         .in("supplier_id", supplierIds)
         .order("purchase_date", { ascending: false })
-    : { data: [] as PurchaseOrderRow[] };
+        .limit(100)
+    : { data: [] as Pick<PurchaseOrderRow, "supplier_id" | "grand_total" | "purchase_date">[] };
 
   return {
     data: rows.map((supplier) => {

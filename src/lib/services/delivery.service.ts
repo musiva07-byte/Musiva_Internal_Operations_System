@@ -18,6 +18,7 @@ import { getOrder } from "./order.service";
 export { DELIVERY_NEXT_STATUSES, DELIVERY_STATUSES_REQUIRING_REASON } from "@/lib/constants/statuses";
 
 const PAGE_SIZE = 25;
+const LOAD_ERROR = "Unable to load data. Please try again or contact the administrator.";
 
 type DeliveryFilters = {
   q?: string;
@@ -78,11 +79,15 @@ export async function listDeliveries(
   const search = filters.q?.trim();
   let matchingOrderIds: string[] = [];
   if (search) {
-    const { data: matchingOrders } = await supabase
+    const { data: matchingOrders, error: matchingOrdersError } = await supabase
       .from("orders")
       .select("id")
       .ilike("order_number", `%${search}%`)
       .limit(50);
+    if (matchingOrdersError) {
+      return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
+    }
+
     matchingOrderIds = (matchingOrders ?? []).map((order) => order.id);
   }
 
@@ -133,7 +138,10 @@ export async function listDeliveries(
     query = query.or(directFilters.join(","));
   }
 
-  const { data, count } = await query;
+  const { data, count, error } = await query;
+  if (error) {
+    return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
+  }
   const rows = (data ?? []) as unknown as DeliveryRelationRow[];
 
   return {

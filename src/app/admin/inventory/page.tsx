@@ -34,8 +34,10 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
   const [params, profile] = await Promise.all([searchParams, getCurrentStaffProfile()]);
   const q = getParam(params, "q") ?? "";
   const stock = getParam(params, "stock") ?? "all";
+  // Default "active" excludes archived variants; "archived" shows only archived; "all" shows everything
+  const productStatus = getParam(params, "productStatus") ?? "active";
   const page = Number(getParam(params, "page") ?? 1);
-  const variants = await listInventoryVariants({ q, stock, page });
+  const variants = await listInventoryVariants({ q, stock, productStatus, page });
 
   const showCost = canViewCostData(profile?.role);
 
@@ -43,6 +45,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
     const next = new URLSearchParams();
     if (q) next.set("q", q);
     if (stock !== "all") next.set("stock", stock);
+    if (productStatus !== "active") next.set("productStatus", productStatus);
     next.set("page", String(nextPage));
     return `/admin/inventory?${next.toString()}`;
   };
@@ -83,7 +86,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
 
       <Card className="shadow-soft">
         <CardContent className="pt-6">
-          <form className="grid gap-3 md:grid-cols-[1fr_180px_auto]">
+          <form className="grid gap-3 md:grid-cols-[1fr_180px_200px_auto]">
             <div className="relative">
               <Search aria-hidden className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input className="pl-10" defaultValue={q} name="q" placeholder="Search product, color, size, SKU" />
@@ -93,10 +96,20 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
               <option value="low">Low stock</option>
               <option value="out">Out of stock</option>
             </Select>
+            <Select defaultValue={productStatus} name="productStatus">
+              <option value="active">Active stock</option>
+              <option value="archived">Archived products</option>
+              <option value="all">All products</option>
+            </Select>
             <Button type="submit" variant="outline">
               Filter
             </Button>
           </form>
+          {productStatus === "archived" && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Showing archived products. These are hidden from new sales.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -116,13 +129,29 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
             </TableRow>
           </TableHeader>
           <TableBody>
-            {variants.data.length === 0 ? (
+            {variants.loadError ? (
               <TableRow>
                 <TableCell
                   className="h-28 text-center text-muted-foreground"
                   colSpan={totalCols}
                 >
-                  No stock records found.
+                  {variants.loadError}
+                </TableCell>
+              </TableRow>
+            ) : variants.data.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  className="h-28 text-center text-muted-foreground"
+                  colSpan={totalCols}
+                >
+                  {!q && stock === "all" && productStatus === "active" ? (
+                    <div>
+                      <p className="font-medium text-foreground">No stock records yet.</p>
+                      <p>Add a product first, then receive stock.</p>
+                    </div>
+                  ) : (
+                    "No stock records found."
+                  )}
                 </TableCell>
               </TableRow>
             ) : (

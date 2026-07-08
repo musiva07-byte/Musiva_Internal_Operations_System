@@ -205,6 +205,7 @@ export type PaginatedResult<T> = {
   page: number;
   pageSize: number;
   pageCount: number;
+  loadError?: string;
 };
 
 export type OrderTabCounts = {

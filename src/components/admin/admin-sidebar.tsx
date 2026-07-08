@@ -8,6 +8,7 @@ import {
   Boxes,
   RefreshCcw,
   LayoutDashboard,
+  MonitorDot,
   Package,
   PackagePlus,
   ReceiptText,
@@ -77,6 +78,7 @@ function buildNavGroups(role: StaffRole | null | undefined): NavGroup[] {
 
   if (canUpdateSettings(role)) {
     management.push({ name: "Settings", href: "/admin/settings", icon: Settings });
+    management.push({ name: "System", href: "/admin/settings/system", icon: MonitorDot });
   }
 
   const groups: NavGroup[] = [

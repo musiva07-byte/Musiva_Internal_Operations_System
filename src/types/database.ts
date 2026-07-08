@@ -419,16 +419,25 @@ export type ExchangeRateRow = {
 
 export type InventoryBatchRow = {
   id: string;
-  purchase_order_item_id: string;
+  /** Null for opening-stock batches created during product creation (no purchase order). */
+  purchase_order_item_id: string | null;
   product_variant_id: string;
   quantity_received: number;
   quantity_remaining: number;
   supplier_unit_cost: number | null;
   supplier_currency: string | null;
+  /** Stored as the UI multiply-direction rate (BHD per supplier unit) for opening-stock
+   *  batches, and as the purchase-module divide-direction (INR per BHD) for purchase batches.
+   *  Use landed_unit_cost_bhd for cost calculations — do not interpret this field without
+   *  checking batch_type. */
   exchange_rate_to_bhd: number | null;
+  exchange_rate_date: string | null;
+  exchange_rate_source: string | null;
   converted_unit_cost_bhd: number | null;
   allocated_import_cost_bhd: number;
   landed_unit_cost_bhd: number | null;
+  /** "purchase" (linked to a purchase order item) or "opening_stock" (new product creation). */
+  batch_type: string;
   received_at: string;
   created_at: string;
 };

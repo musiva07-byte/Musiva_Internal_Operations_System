@@ -64,11 +64,12 @@ export async function listReturnOrders() {
     return [];
   }
 
+  // Select only columns needed for the return form dropdown — full * wastes bandwidth.
   const { data } = await supabase
     .from("orders")
-    .select("*, customers(full_name, mobile)")
+    .select("id, order_number, order_status, created_at, customer_id, customers(full_name, mobile)")
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(50);
 
   return (data ?? []) as unknown as Array<OrderRow & { customers?: Pick<CustomerRow, "full_name" | "mobile"> | null }>;
 }
@@ -80,11 +81,12 @@ export async function listRecentReturnableItems(): Promise<OrderItemRow[]> {
     return [];
   }
 
+  // Limit to 30 recent orders and only the columns used by the return form.
   const { data: orders } = await supabase
     .from("orders")
     .select("id")
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(30);
   const orderIds = (orders ?? []).map((order) => order.id);
 
   if (orderIds.length === 0) {
@@ -93,11 +95,11 @@ export async function listRecentReturnableItems(): Promise<OrderItemRow[]> {
 
   const { data } = await supabase
     .from("order_items")
-    .select("*")
+    .select("id, order_id, product_variant_id, product_name_snapshot, variant_sku_snapshot, size_snapshot, color_snapshot, quantity, unit_price, line_total")
     .in("order_id", orderIds)
     .order("created_at", { ascending: true });
 
-  return data ?? [];
+  return (data ?? []) as unknown as OrderItemRow[];
 }
 
 export async function listReturnableOrderItems(orderId?: string): Promise<OrderItemRow[]> {

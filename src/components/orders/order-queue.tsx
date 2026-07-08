@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, CheckSquare, LayoutList, Search, Table2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -78,9 +79,7 @@ function SummaryBar({ orders }: { orders: OrderListItem[] }) {
         <span className="font-semibold text-foreground">{count}</span>
         {" "}order{count !== 1 ? "s" : ""}
       </span>
-      {total > 0 && (
-        <span className="font-semibold text-musiva-plum">{formatBhd(total)}</span>
-      )}
+      <span className="font-semibold text-musiva-plum">{formatBhd(total)}</span>
       {attentionCount > 0 && (
         <span className="flex items-center gap-1 text-amber-700">
           <AlertTriangle aria-hidden className="h-3.5 w-3.5" />
@@ -95,10 +94,12 @@ function SummaryBar({ orders }: { orders: OrderListItem[] }) {
 
 function CompactList({
   orders,
+  emptyContent,
   selectedIds,
   onSelect,
 }: {
   orders: OrderListItem[];
+  emptyContent: ReactNode;
   selectedIds: Set<string>;
   onSelect: (id: string, checked: boolean) => void;
 }) {
@@ -107,7 +108,7 @@ function CompactList({
   if (orders.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-[hsl(var(--border))] py-14 text-center text-muted-foreground">
-        No orders found.
+        {emptyContent}
       </div>
     );
   }
@@ -139,10 +140,12 @@ function CompactList({
 
 function DetailedTable({
   orders,
+  emptyContent,
   selectedIds,
   onSelect,
 }: {
   orders: OrderListItem[];
+  emptyContent: ReactNode;
   selectedIds: Set<string>;
   onSelect: (id: string, checked: boolean) => void;
 }) {
@@ -151,7 +154,7 @@ function DetailedTable({
   if (orders.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-[hsl(var(--border))] py-14 text-center text-muted-foreground">
-        No orders found.
+        {emptyContent}
       </div>
     );
   }
@@ -335,6 +338,10 @@ export function OrderQueue({
   const allSelected =
     selectedIds.size > 0 && selectedIds.size === orders.data.length;
   const someSelected = selectedIds.size > 0;
+  const hasActiveFilters = Boolean(currentQ || currentPaymentStatus || currentFulfilment);
+  const emptyContent = orders.loadError ? orders.loadError : tabCounts.all === 0 && !hasActiveFilters ? (
+    <div className="flex flex-col items-center gap-3"><div><p className="font-medium text-foreground">No orders yet.</p><p>Create your first sale to start tracking customer orders.</p></div><Button asChild size="sm"><Link href="/admin/orders/new">New sale</Link></Button></div>
+  ) : "No orders found.";
 
   return (
     <div className="space-y-4">
@@ -358,7 +365,7 @@ export function OrderQueue({
               aria-current={isActive ? "page" : undefined}
             >
               {tab.label}
-              {count > 0 && (
+              {count >= 0 && (
                 <span
                   className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none ${
                     isActive
@@ -496,12 +503,14 @@ export function OrderQueue({
       {currentView === "compact" ? (
         <CompactList
           orders={orders.data}
+          emptyContent={emptyContent}
           selectedIds={selectedIds}
           onSelect={handleSelect}
         />
       ) : (
         <DetailedTable
           orders={orders.data}
+          emptyContent={emptyContent}
           selectedIds={selectedIds}
           onSelect={handleSelect}
         />

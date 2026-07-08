@@ -138,8 +138,9 @@ export async function getInventoryReport() {
     supabase
       .from("product_variants")
       .select("id, variant_sku, color, size, cost_price, selling_price, stock_quantity, minimum_stock, products(name, sku)")
+      .neq("status", "archived")
       .order("stock_quantity", { ascending: true })
-      .limit(100),
+      .limit(500),
     supabase
       .from("stock_movements")
       .select("id, product_variant_id, movement_type, quantity, previous_quantity, new_quantity, reference_type, reference_id, note, created_by, created_at")
@@ -176,6 +177,8 @@ export async function getCustomerReport(range: ReportRange) {
       .from("orders")
       .select("id, customer_id, grand_total, created_at")
       .neq("order_status", ORDER_STATUSES.cancelled)
+      .gte("created_at", range.startIso)   // respect the selected date range
+      .lt("created_at", range.endIso)
       .order("created_at", { ascending: false })
       .limit(500),
   ]);

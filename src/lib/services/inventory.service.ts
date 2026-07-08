@@ -19,10 +19,13 @@ import type { ProductVariantRow, StockMovementRow, StockMovementType } from "@/t
 
 const PAGE_SIZE = 12;
 const MOVEMENT_PAGE_SIZE = 15;
+const LOAD_ERROR = "Unable to load data. Please try again or contact the administrator.";
 
 type InventoryFilters = {
   q?: string;
   stock?: string;
+  /** "active" (default, excludes archived) | "archived" | "all" */
+  productStatus?: string;
   page?: number;
 };
 
@@ -84,18 +87,33 @@ export async function listInventoryVariants(
     query = query.eq("stock_quantity", 0);
   }
 
-  const { data, count } = await query;
+  // Default: exclude archived variants (archived products archive their variants too)
+  if (!filters.productStatus || filters.productStatus === "active") {
+    query = query.neq("status", "archived");
+  } else if (filters.productStatus === "archived") {
+    query = query.eq("status", "archived");
+  }
+  // productStatus === "all" → no filter
+
+  const { data, count, error } = await query;
+  if (error) {
+    return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
+  }
   const rows = (data ?? []) as unknown as VariantRelationRow[];
 
   const productIds = [...new Set(rows.map((row) => row.product_id))];
-  const { data: images } = productIds.length
+  const { data: images, error: imagesError } = productIds.length
     ? await supabase
         .from("product_images")
         .select("product_id, url")
         .in("product_id", productIds)
         .eq("is_primary", true)
         .order("sort_order", { ascending: true })
-    : { data: [] as { product_id: string; url: string }[] };
+    : { data: [] as { product_id: string; url: string }[], error: null };
+
+  if (imagesError) {
+    return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
+  }
 
   const imageMap = new Map<string, string>();
   for (const img of images ?? []) {
@@ -144,9 +162,19 @@ export async function listStockMovements(
     query = query.eq("movement_type", filters.movementType as StockMovementType);
   }
 
+  // DB-side search on joined variant columns so the count and pagination are accurate.
+  // Searching on products(name) is not supported at two join levels in PostgREST;
+  // variant_sku, color, and size cover the primary lookup needs.
+  if (filters.q?.trim()) {
+    const q = `%${filters.q.trim()}%`;
+    query = query.or(
+      `variant_sku.ilike.${q},color.ilike.${q},size.ilike.${q}`,
+      { referencedTable: "product_variants" },
+    );
+  }
+
   const { data, count } = await query;
   const rows = (data ?? []) as unknown as MovementRelationRow[];
-  const search = filters.q?.trim().toLowerCase();
 
   const mapped = rows.map<StockMovementItem>((row) => ({
     ...row,
@@ -157,11 +185,7 @@ export async function listStockMovements(
   }));
 
   return {
-    data: search
-      ? mapped.filter((row) =>
-          `${row.product_name} ${row.variant_sku} ${row.color} ${row.size}`.toLowerCase().includes(search),
-        )
-      : mapped,
+    data: mapped,
     count: count ?? 0,
     page,
     pageSize: MOVEMENT_PAGE_SIZE,

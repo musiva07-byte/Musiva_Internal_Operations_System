@@ -16,10 +16,13 @@ const mockDbSelect = vi.fn();
 const mockDbInsert = vi.fn();
 const mockDbDelete = vi.fn();
 
+const mockStorageCreateBucket = vi.fn().mockResolvedValue({ error: null });
+
 // Admin client stub
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: () => ({
     storage: {
+      createBucket: mockStorageCreateBucket,
       from: () => ({
         upload: mockStorageUpload,
         remove: mockStorageRemove,
@@ -82,7 +85,6 @@ function makeFile(
 }
 
 function mockAuthGranted() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   vi.mocked(requireStaffPermission).mockResolvedValue({
     supabase: {
       from: () => ({
@@ -104,6 +106,7 @@ function mockAuthGranted() {
           eq: mockDbDelete,
         }),
       }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any,
     userId: "user-1",
     role: "owner" as const,

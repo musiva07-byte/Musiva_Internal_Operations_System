@@ -39,30 +39,38 @@ export default async function InventoryReportPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {report.variants.slice(0, 20).map((variant) => {
-              const isOut = variant.stock_quantity === 0;
-              const isLow = variant.stock_quantity > 0 && variant.stock_quantity <= variant.minimum_stock;
-              return (
-                <TableRow key={variant.id}>
-                  <TableCell>
-                    <p className="font-medium text-musiva-plum">{variant.product_name}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {variant.color} / {variant.size}
-                    </p>
-                  </TableCell>
-                  <TableCell>{variant.variant_sku}</TableCell>
-                  <TableCell>
-                    <Badge variant={isOut ? "danger" : isLow ? "warning" : "success"}>
-                      {isOut ? "Out of Stock" : isLow ? "Low Stock" : "In Stock"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">{variant.stock_quantity}</TableCell>
-                  <TableCell className="text-right">
-                    {formatBhd(variant.stock_quantity * Number(variant.cost_price))}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+            {report.variants.length === 0 ? (
+              <TableRow>
+                <TableCell className="h-20 text-center text-muted-foreground" colSpan={5}>
+                  No stock records yet.
+                </TableCell>
+              </TableRow>
+            ) : (
+              report.variants.slice(0, 20).map((variant) => {
+                const isOut = variant.stock_quantity === 0;
+                const isLow = variant.stock_quantity > 0 && variant.stock_quantity <= variant.minimum_stock;
+                return (
+                  <TableRow key={variant.id}>
+                    <TableCell>
+                      <p className="font-medium text-musiva-plum">{variant.product_name}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {variant.color} / {variant.size}
+                      </p>
+                    </TableCell>
+                    <TableCell>{variant.variant_sku}</TableCell>
+                    <TableCell>
+                      <Badge variant={isOut ? "danger" : isLow ? "warning" : "success"}>
+                        {isOut ? "Out of Stock" : isLow ? "Low Stock" : "In Stock"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">{variant.stock_quantity}</TableCell>
+                    <TableCell className="text-right">
+                      {formatBhd(variant.stock_quantity * Number(variant.cost_price))}
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
           </TableBody>
         </Table>
       </Card>

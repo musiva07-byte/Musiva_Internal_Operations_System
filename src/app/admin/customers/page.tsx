@@ -74,10 +74,28 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
             </TableRow>
           </TableHeader>
           <TableBody>
-            {customers.data.length === 0 ? (
+            {customers.loadError ? (
               <TableRow>
                 <TableCell className="h-28 text-center text-muted-foreground" colSpan={7}>
-                  No customers found.
+                  {customers.loadError}
+                </TableCell>
+              </TableRow>
+            ) : customers.data.length === 0 ? (
+              <TableRow>
+                <TableCell className="h-28 text-center text-muted-foreground" colSpan={7}>
+                  {!q ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <div>
+                        <p className="font-medium text-foreground">No customers yet.</p>
+                        <p>Customers will appear here after the first sale.</p>
+                      </div>
+                      <Button asChild size="sm">
+                        <Link href="/admin/orders/new">New sale</Link>
+                      </Button>
+                    </div>
+                  ) : (
+                    "No customers found."
+                  )}
                 </TableCell>
               </TableRow>
             ) : (

@@ -100,7 +100,8 @@ export function canUpdateSettings(userRole: StaffRole | null | undefined) {
   return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
 }
 
-/** Cost data: supplier prices, converted costs, landed costs, average cost, gross profit, margin. */
+/** Cost data: supplier prices, converted costs, landed costs, average cost, gross profit, margin.
+ *  Accountant can view; sales_staff and delivery_coordinator cannot. */
 export function canViewCostData(userRole: StaffRole | null | undefined) {
   return (
     userRole === STAFF_ROLES.owner ||
@@ -109,6 +110,22 @@ export function canViewCostData(userRole: StaffRole | null | undefined) {
   );
 }
 
+/** Enter or edit initial buying cost (INR→BHD conversion) on new products.
+ *  Narrower than canViewCostData — accountants view but cannot enter by default. */
+export function canEnterBuyingCost(userRole: StaffRole | null | undefined) {
+  return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
+}
+
 export function canManageExchangeRates(userRole: StaffRole | null | undefined) {
+  return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
+}
+
+/** Archive and restore products. Owner and manager only. */
+export function canArchiveProducts(userRole: StaffRole | null | undefined) {
+  return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
+}
+
+/** Permanently delete products (only safe unused products). Owner and manager only. */
+export function canDeleteProducts(userRole: StaffRole | null | undefined) {
   return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
 }

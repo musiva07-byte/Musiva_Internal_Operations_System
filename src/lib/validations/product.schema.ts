@@ -1,6 +1,37 @@
 import { z } from "zod";
 import { PRODUCT_STATUSES, STOCK_MOVEMENT_TYPES } from "@/lib/constants";
 
+// ── Opening stock buying cost (INR → BHD) ─────────────────────────────────────
+
+/**
+ * Captured once per product when creating initial stock from India.
+ * Future stock purchases use Purchases → New Purchase instead.
+ *
+ * Exchange rate convention in this schema:
+ *   exchangeRateToBhd = 1 supplier-currency unit in BHD (multiply direction).
+ *   Example: 1 INR = 0.004520 BHD → exchangeRateToBhd = 0.004520
+ *   converted_cost_bhd = buyingPricePerPiece × exchangeRateToBhd
+ */
+export const openingCostSchema = z.object({
+  buyingCurrency: z.string().min(1).default("INR"),
+  buyingPricePerPiece: z.coerce
+    .number()
+    .min(0, "Buying price must be 0 or greater."),
+  /** 1 supplier-currency unit expressed in BHD. Must be > 0. */
+  exchangeRateToBhd: z.coerce
+    .number()
+    .positive("Exchange rate must be greater than 0."),
+  exchangeRateDate: z.string().min(1, "Exchange rate date is required."),
+  exchangeRateSource: z
+    .enum(["manual", "bank", "other"])
+    .default("manual"),
+  /** Extra BHD cost per piece (shipping, customs, packaging, etc.). */
+  extraImportCostBhd: z.coerce
+    .number()
+    .min(0, "Import cost cannot be negative.")
+    .default(0),
+});
+
 const optionalText = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? null : value),
   z.string().trim().nullable().optional(),
@@ -46,6 +77,11 @@ export const productVariantSchema = z
     stockQuantity,
     minimumStock: stockQuantity,
     status: z.enum([PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.archived, PRODUCT_STATUSES.draft]),
+    /** Override the shared openingCost landed cost for this specific variant only. */
+    landedCostOverrideBhd: z.preprocess(
+      (v) => (v === "" || v === null || v === undefined ? null : v),
+      z.coerce.number().min(0, "Landed cost cannot be negative.").nullable().optional(),
+    ),
   })
   .refine(
     (v) =>
@@ -87,6 +123,8 @@ export const productSchema = z.object({
   status: z.enum([PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.archived, PRODUCT_STATUSES.draft]),
   variants: z.array(productVariantSchema).min(1, "Add at least one color and size variant."),
   images: z.array(productImageSchema).default([]),
+  /** Initial buying cost from India — used only during product creation for opening stock. */
+  openingCost: openingCostSchema.nullable().optional(),
 });
 
 export const stockEntrySchema = z.object({
@@ -120,5 +158,6 @@ export const stockMovementFilterSchema = z.object({
 export type ProductInput = z.infer<typeof productSchema>;
 export type ProductVariantInput = z.infer<typeof productVariantSchema>;
 export type ProductImageInput = z.infer<typeof productImageSchema>;
+export type OpeningCostInput = z.infer<typeof openingCostSchema>;
 export type StockEntryInput = z.infer<typeof stockEntrySchema>;
 export type StockAdjustmentInput = z.infer<typeof stockAdjustmentSchema>;

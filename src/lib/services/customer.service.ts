@@ -9,6 +9,7 @@ import type { CustomerListItem, CustomerSearchResult, CustomerWithAddresses, Cus
 import type { CustomerAddressRow, CustomerRow, OrderRow } from "@/types/database";
 
 const PAGE_SIZE = 10;
+const LOAD_ERROR = "Unable to load data. Please try again or contact the administrator.";
 
 type CustomerFilters = {
   q?: string;
@@ -61,13 +62,27 @@ export async function listCustomers(
     query = query.or(`full_name.ilike.%${search}%,mobile.ilike.%${search}%,whatsapp.ilike.%${search}%`);
   }
 
-  const { data: customers, count } = await query;
+  const { data: customers, count, error } = await query;
+  if (error) {
+    return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
+  }
   const rows = customers ?? [];
   const customerIds = rows.map((customer) => customer.id);
 
-  const { data: orders } = customerIds.length
-    ? await supabase.from("orders").select("*").in("customer_id", customerIds)
-    : { data: [] as OrderRow[] };
+  // Narrow to 3 columns only — full * select wastes bandwidth on 15+ unused columns.
+  // Limit to 200 rows (20 orders × 10 customers) as a safety cap.
+  const { data: orders, error: ordersError } = customerIds.length
+    ? await supabase
+        .from("orders")
+        .select("customer_id, grand_total, created_at")
+        .in("customer_id", customerIds)
+        .order("created_at", { ascending: false })
+        .limit(200)
+    : { data: [] as Pick<OrderRow, "customer_id" | "grand_total" | "created_at">[], error: null };
+
+  if (ordersError) {
+    return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
+  }
 
   const data = rows.map<CustomerListItem>((customer) => {
     const customerOrders = (orders ?? []).filter((order) => order.customer_id === customer.id);

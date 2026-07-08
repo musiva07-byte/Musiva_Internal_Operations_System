@@ -1,8 +1,10 @@
 import { ProductWizard } from "@/components/products/product-wizard";
 import { listCategories } from "@/lib/services/product.service";
+import { getCurrentAuthState } from "@/lib/auth/session";
 
 export default async function NewProductPage() {
-  const categories = await listCategories();
+  const [categories, auth] = await Promise.all([listCategories(), getCurrentAuthState()]);
+  const userRole = auth.profile?.role ?? null;
 
   return (
     <div className="space-y-6">
@@ -13,7 +15,7 @@ export default async function NewProductPage() {
           Add a new product in three steps: basic details, colors and sizes, then pricing and stock.
         </p>
       </header>
-      <ProductWizard categories={categories} />
+      <ProductWizard categories={categories} userRole={userRole} />
     </div>
   );
 }

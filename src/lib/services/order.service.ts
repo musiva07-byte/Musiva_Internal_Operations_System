@@ -30,6 +30,7 @@ import type {
 } from "@/types/app";
 
 const PAGE_SIZE = 25;
+const LOAD_ERROR = "Unable to load data. Please try again or contact the administrator.";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -151,11 +152,15 @@ export async function listOrders(
   // ── Text search ─────────────────────────────────────────────────────────────
   if (filters.q?.trim()) {
     const q = filters.q.trim();
-    const { data: matchingCustomers } = await supabase
+    const { data: matchingCustomers, error: matchingCustomersError } = await supabase
       .from("customers")
       .select("id")
       .or(`full_name.ilike.%${q}%,mobile.ilike.%${q}%,mobile_normalized.ilike.%${q}%`)
       .limit(50);
+
+    if (matchingCustomersError) {
+      return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
+    }
 
     const customerIds = (matchingCustomers ?? []).map((c) => c.id);
     const orParts = [`order_number.ilike.%${q}%`];
@@ -179,7 +184,10 @@ export async function listOrders(
     );
   }
 
-  const { data, count } = await query;
+  const { data, count, error } = await query;
+  if (error) {
+    return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
+  }
   const rows = (data ?? []) as unknown as OrderRelationRow[];
 
   return {
