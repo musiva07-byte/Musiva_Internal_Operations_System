@@ -33,6 +33,7 @@ import {
   formatInr,
 } from "@/lib/utils/cost-conversion";
 import { cn } from "@/lib/utils";
+import { canEnterBuyingCost, canViewCostData } from "@/lib/auth/permissions";
 import type { CategoryRow, StaffRole } from "@/types/database";
 
 type ProductWizardProps = {
@@ -64,10 +65,11 @@ type Step2Data = {
   sizes: string[];
 };
 
-/** Extension of GeneratedVariant that carries an optional per-variant cost override. */
+/** Extension of GeneratedVariant that carries per-variant buying price and cost details. */
 type WizardVariant = GeneratedVariant & {
+  buyingPriceInr: number;
   landedCostOverrideBhd: number | null;
-  showCostOverride: boolean;
+  showCostDetails: boolean;
 };
 
 type OpeningCostState = {
@@ -85,13 +87,19 @@ type Step3Data = {
 
 // ── derived cost calculations ─────────────────────────────────────────────────
 
-function deriveConvertedCost(cost: OpeningCostState): number {
-  if (!cost.buyingPricePerPiece || !cost.exchangeRateToBhd) return 0;
-  return roundBhd(convertToBhd(cost.buyingPricePerPiece, cost.exchangeRateToBhd));
+function deriveVariantConvertedCost(buyingPriceInr: number, exchangeRateToBhd: number): number {
+  if (!buyingPriceInr || !exchangeRateToBhd) return 0;
+  return roundBhd(convertToBhd(buyingPriceInr, exchangeRateToBhd));
 }
 
-function deriveLandedCost(cost: OpeningCostState): number {
-  return roundBhd(calcLandedCost(deriveConvertedCost(cost), cost.extraImportCostBhd));
+function deriveVariantLandedCost(
+  buyingPriceInr: number,
+  exchangeRateToBhd: number,
+  extraImportCostBhd: number,
+): number {
+  const converted = deriveVariantConvertedCost(buyingPriceInr, exchangeRateToBhd);
+  if (!converted) return 0;
+  return roundBhd(calcLandedCost(converted, extraImportCostBhd));
 }
 
 // ── chip input ─────────────────────────────────────────────────────────────────
@@ -237,10 +245,9 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
   const [formError, setFormError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Buying-cost section — visible to owner/manager only.
-  const canEnterCost =
-    userRole === "owner" || userRole === "manager";
-  const [showCostSection, setShowCostSection] = useState(false);
+  // Role-based cost permissions.
+  const canEnterCost = canEnterBuyingCost(userRole);
+  const canViewProfit = canViewCostData(userRole);
   const [openingCost, setOpeningCost] = useState<OpeningCostState>({
     buyingCurrency: "INR",
     buyingPricePerPiece: 0,
@@ -273,17 +280,22 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
 
   // bulk setter inputs
   const [bulkPrice, setBulkPrice] = useState<number>(0);
+  const [bulkBuyingPriceInr, setBulkBuyingPriceInr] = useState<number>(0);
   const [bulkMinStock, setBulkMinStock] = useState<number>(1);
+  const [bulkStartingQty, setBulkStartingQty] = useState<number>(0);
 
   // ── derived values ───────────────────────────────────────────────────────────
 
-  const convertedCost = deriveConvertedCost(openingCost);
-  const globalLandedCost = deriveLandedCost(openingCost);
-  const hasCostPreview =
-    canEnterCost &&
-    showCostSection &&
-    openingCost.buyingPricePerPiece > 0 &&
-    openingCost.exchangeRateToBhd > 0;
+  const bulkConvertedCost = deriveVariantConvertedCost(
+    bulkBuyingPriceInr,
+    openingCost.exchangeRateToBhd,
+  );
+  const bulkLandedCost = deriveVariantLandedCost(
+    bulkBuyingPriceInr,
+    openingCost.exchangeRateToBhd,
+    openingCost.extraImportCostBhd,
+  );
+  const showBulkPreview = canEnterCost && bulkConvertedCost > 0;
 
   // ── cost field updater ───────────────────────────────────────────────────────
 
@@ -346,8 +358,9 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
     setStep3({
       variants: generated.map((v) => ({
         ...v,
+        buyingPriceInr: 0,
         landedCostOverrideBhd: null,
-        showCostOverride: false,
+        showCostDetails: false,
       })),
     });
     setStep(3);
@@ -364,7 +377,7 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
   function updateVariantField(
     color: string,
     size: string,
-    field: "regularSellingPriceBhd" | "stockQuantity",
+    field: "regularSellingPriceBhd" | "stockQuantity" | "minimumStock",
     value: number,
   ) {
     setStep3((prev) => ({
@@ -380,6 +393,14 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
     }));
   }
 
+  function updateVariantBuyingPrice(color: string, size: string, value: number) {
+    setStep3((prev) => ({
+      variants: prev.variants.map((v) =>
+        v.color === color && v.size === size ? { ...v, buyingPriceInr: value } : v,
+      ),
+    }));
+  }
+
   function updateVariantCostOverride(color: string, size: string, value: number | null) {
     setStep3((prev) => ({
       variants: prev.variants.map((v) =>
@@ -390,29 +411,27 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
     }));
   }
 
-  function toggleCostOverride(color: string, size: string) {
+  function toggleCostDetails(color: string, size: string) {
     setStep3((prev) => ({
       variants: prev.variants.map((v) =>
         v.color === color && v.size === size
-          ? { ...v, showCostOverride: !v.showCostOverride, landedCostOverrideBhd: null }
+          ? { ...v, showCostDetails: !v.showCostDetails }
           : v,
       ),
     }));
   }
 
-  function applyBulkPrice() {
+  function applyBulkAll() {
     setStep3((prev) => ({
       variants: prev.variants.map((v) => ({
         ...v,
-        regularSellingPriceBhd: bulkPrice,
-        sellingPrice: bulkPrice,
+        ...(bulkPrice > 0
+          ? { regularSellingPriceBhd: bulkPrice, sellingPrice: bulkPrice }
+          : {}),
+        ...(bulkBuyingPriceInr > 0 ? { buyingPriceInr: bulkBuyingPriceInr } : {}),
+        ...(bulkMinStock > 0 ? { minimumStock: bulkMinStock } : {}),
+        ...(bulkStartingQty > 0 ? { stockQuantity: bulkStartingQty } : {}),
       })),
-    }));
-  }
-
-  function applyBulkMinStock() {
-    setStep3((prev) => ({
-      variants: prev.variants.map((v) => ({ ...v, minimumStock: bulkMinStock })),
     }));
   }
 
@@ -424,10 +443,11 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
       return;
     }
 
-    // Validate cost fields if the section is open.
-    if (canEnterCost && showCostSection && openingCost.buyingPricePerPiece > 0) {
+    // Validate cost fields when any variant has a buying price.
+    const hasAnyCost = canEnterCost && step3.variants.some((v) => v.buyingPriceInr > 0);
+    if (hasAnyCost) {
       if (!openingCost.exchangeRateToBhd || openingCost.exchangeRateToBhd <= 0) {
-        setFormError("Exchange rate must be greater than 0 when a buying price is entered.");
+        setFormError("Exchange rate is required when a buying price is entered.");
         return;
       }
       if (!openingCost.exchangeRateDate) {
@@ -443,15 +463,12 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
     setFormError(null);
     const productSku = step1.sku.trim() || generateProductSku(step1.name);
 
-    // Include opening cost only when it was entered and is valid.
+    // Include opening cost only when at least one variant has a buying price.
     const sendOpeningCost =
-      canEnterCost &&
-      showCostSection &&
-      openingCost.buyingPricePerPiece > 0 &&
-      openingCost.exchangeRateToBhd > 0
+      hasAnyCost && openingCost.exchangeRateToBhd > 0
         ? {
             buyingCurrency: openingCost.buyingCurrency,
-            buyingPricePerPiece: openingCost.buyingPricePerPiece,
+            buyingPricePerPiece: 0,
             exchangeRateToBhd: openingCost.exchangeRateToBhd,
             exchangeRateDate: openingCost.exchangeRateDate,
             exchangeRateSource: openingCost.exchangeRateSource,
@@ -485,6 +502,7 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
           stockQuantity: v.stockQuantity,
           minimumStock: v.minimumStock,
           status: "active",
+          buyingPriceInr: v.buyingPriceInr,
           landedCostOverrideBhd: v.landedCostOverrideBhd,
         })),
         images: [],
@@ -741,51 +759,228 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
       {step === 3 && (
         <Card className="shadow-soft">
           <CardHeader>
-            <CardTitle>Price and starting stock</CardTitle>
+            <CardTitle>Price &amp; starting stock</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              Set the selling price and starting quantity. Use the bulk setters to fill all options
-              at once, then adjust individually.
+              {canEnterCost
+                ? "Fill the shared fields and click “Apply to all options”, then fine-tune individual options below."
+                : "Set the selling price and starting quantity. Use the bulk setter to fill all options at once, then adjust individually."}
             </p>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* ── Bulk setters ─────────────────────────── */}
-            <div className="grid gap-4 rounded-md bg-musiva-ivory p-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="bulk-price">Set selling price for all (BHD)</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="bulk-price"
-                    min={0}
-                    placeholder="0.000"
-                    step="0.001"
-                    type="number"
-                    value={bulkPrice || ""}
-                    onChange={(e) => setBulkPrice(Number(e.target.value) || 0)}
-                  />
-                  <Button type="button" variant="outline" onClick={applyBulkPrice}>
-                    Apply all
-                  </Button>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="bulk-min">Low-stock alert at (units, all)</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="bulk-min"
-                    min={0}
-                    placeholder="1"
-                    type="number"
-                    value={bulkMinStock}
-                    onChange={(e) => setBulkMinStock(Number(e.target.value) || 1)}
-                  />
-                  <Button type="button" variant="outline" onClick={applyBulkMinStock}>
-                    Apply all
-                  </Button>
-                </div>
-              </div>
-            </div>
 
-            {/* ── Variant rows ──────────────────────────── */}
+            {/* ── Bulk setters (cost-entry users) ──────────────────── */}
+            {canEnterCost ? (
+              <div className="space-y-4 rounded-md bg-musiva-ivory p-4">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="bulk-price">Selling price (BHD)</Label>
+                    <Input
+                      id="bulk-price"
+                      min={0}
+                      placeholder="0.000"
+                      step="0.001"
+                      type="number"
+                      value={bulkPrice || ""}
+                      onChange={(e) => setBulkPrice(Number(e.target.value) || 0)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="bulk-buy-inr">Buying price (INR)</Label>
+                    <Input
+                      id="bulk-buy-inr"
+                      min={0}
+                      placeholder="1500.00"
+                      step="0.01"
+                      type="number"
+                      value={bulkBuyingPriceInr || ""}
+                      onChange={(e) => setBulkBuyingPriceInr(Number(e.target.value) || 0)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="exchange-rate">Exchange rate (1 INR = ? BHD)</Label>
+                    <Input
+                      id="exchange-rate"
+                      min={0}
+                      placeholder="0.004520"
+                      step="0.000001"
+                      type="number"
+                      value={openingCost.exchangeRateToBhd || ""}
+                      onChange={(e) =>
+                        updateCost("exchangeRateToBhd", Number(e.target.value) || 0)
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="import-cost">Import cost per piece (BHD)</Label>
+                    <Input
+                      id="import-cost"
+                      min={0}
+                      placeholder="0.000"
+                      step="0.001"
+                      type="number"
+                      value={openingCost.extraImportCostBhd || ""}
+                      onChange={(e) =>
+                        updateCost("extraImportCostBhd", Number(e.target.value) || 0)
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="bulk-min">Low-stock alert (units)</Label>
+                    <Input
+                      id="bulk-min"
+                      min={0}
+                      placeholder="1"
+                      type="number"
+                      value={bulkMinStock || ""}
+                      onChange={(e) => setBulkMinStock(Number(e.target.value) || 1)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="bulk-qty">Starting quantity</Label>
+                    <Input
+                      id="bulk-qty"
+                      min={0}
+                      placeholder="0"
+                      type="number"
+                      value={bulkStartingQty || ""}
+                      onChange={(e) =>
+                        setBulkStartingQty(Math.max(0, Number(e.target.value) || 0))
+                      }
+                    />
+                  </div>
+                </div>
+
+                {/* Rate date + source — shown once exchange rate is entered */}
+                {openingCost.exchangeRateToBhd > 0 && (
+                  <div className="grid gap-4 border-t border-musiva-border/40 pt-3 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="rate-date">Rate date</Label>
+                      <Input
+                        id="rate-date"
+                        type="date"
+                        value={openingCost.exchangeRateDate}
+                        onChange={(e) => updateCost("exchangeRateDate", e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="rate-source">Rate source</Label>
+                      <Select
+                        id="rate-source"
+                        value={openingCost.exchangeRateSource}
+                        onChange={(e) =>
+                          updateCost(
+                            "exchangeRateSource",
+                            e.target.value as "manual" | "bank" | "other",
+                          )
+                        }
+                      >
+                        <option value="manual">Manual entry</option>
+                        <option value="bank">Bank rate</option>
+                        <option value="other">Other</option>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-4">
+                  <Button type="button" variant="outline" onClick={applyBulkAll}>
+                    Apply to all options
+                  </Button>
+                  <p className="text-[11px] text-muted-foreground">
+                    Only non-zero fields are applied. Future purchases use Purchases → New Purchase.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              /* ── Bulk setters (view-only users) ─────────────────── */
+              <div className="grid gap-4 rounded-md bg-musiva-ivory p-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="bulk-price">Set selling price for all (BHD)</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="bulk-price"
+                      min={0}
+                      placeholder="0.000"
+                      step="0.001"
+                      type="number"
+                      value={bulkPrice || ""}
+                      onChange={(e) => setBulkPrice(Number(e.target.value) || 0)}
+                    />
+                    <Button type="button" variant="outline" onClick={applyBulkAll}>
+                      Apply all
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="bulk-min">Low-stock alert (units, all)</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="bulk-min"
+                      min={0}
+                      placeholder="1"
+                      type="number"
+                      value={bulkMinStock || ""}
+                      onChange={(e) => setBulkMinStock(Number(e.target.value) || 1)}
+                    />
+                    <Button type="button" variant="outline" onClick={applyBulkAll}>
+                      Apply all
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Live conversion preview (bulk) ───────────────────── */}
+            {showBulkPreview && (
+              <div className="rounded-md border border-musiva-border bg-musiva-ivory px-4 py-3 text-sm">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-musiva-gold">
+                  Cost preview (bulk)
+                </p>
+                <div className="grid gap-1 tabular-nums sm:grid-cols-2">
+                  <div className="flex justify-between gap-4 text-muted-foreground">
+                    <span>Buying price</span>
+                    <span className="font-medium text-foreground">
+                      {formatInr(bulkBuyingPriceInr)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4 text-muted-foreground">
+                    <span>Exchange rate</span>
+                    <span className="font-medium text-foreground">
+                      1 INR = BHD {openingCost.exchangeRateToBhd.toFixed(6)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4 text-muted-foreground">
+                    <span>Converted cost</span>
+                    <span className="font-medium text-foreground">
+                      {formatBhd(bulkConvertedCost)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4 text-muted-foreground">
+                    <span>Import cost</span>
+                    <span className="font-medium text-foreground">
+                      {formatBhd(openingCost.extraImportCostBhd)}
+                    </span>
+                  </div>
+                  <div className="col-span-full mt-1 flex justify-between gap-4 border-t border-musiva-border pt-2">
+                    <span className="font-semibold text-musiva-plum">Landed cost</span>
+                    <span className="font-semibold text-musiva-plum">
+                      {formatBhd(bulkLandedCost)}
+                    </span>
+                  </div>
+                  {canViewProfit && bulkPrice > 0 && bulkLandedCost > 0 && (
+                    <div className="col-span-full flex items-center gap-2 pt-1">
+                      <span className="text-xs text-muted-foreground">Est. profit:</span>
+                      <ProfitBadge
+                        margin={calcEstimatedMargin(bulkPrice, bulkLandedCost)}
+                        profit={calcEstimatedProfit(bulkPrice, bulkLandedCost)}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Variant rows ──────────────────────────────────────── */}
             <div className="space-y-3">
               {step3.variants.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
@@ -793,131 +988,314 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
                 </p>
               ) : (
                 step3.variants.map((v) => {
+                  const vConverted = deriveVariantConvertedCost(
+                    v.buyingPriceInr,
+                    openingCost.exchangeRateToBhd,
+                  );
+                  const vLanded = vConverted > 0
+                    ? deriveVariantLandedCost(
+                        v.buyingPriceInr,
+                        openingCost.exchangeRateToBhd,
+                        openingCost.extraImportCostBhd,
+                      )
+                    : 0;
                   const effectiveLanded =
                     v.landedCostOverrideBhd != null
                       ? v.landedCostOverrideBhd
-                      : hasCostPreview
-                      ? globalLandedCost
+                      : vLanded > 0
+                      ? vLanded
                       : null;
                   const profit =
-                    effectiveLanded !== null && v.regularSellingPriceBhd > 0
+                    canViewProfit && effectiveLanded !== null && v.regularSellingPriceBhd > 0
                       ? calcEstimatedProfit(v.regularSellingPriceBhd, effectiveLanded)
                       : null;
                   const margin =
-                    effectiveLanded !== null && v.regularSellingPriceBhd > 0
+                    canViewProfit && effectiveLanded !== null && v.regularSellingPriceBhd > 0
                       ? calcEstimatedMargin(v.regularSellingPriceBhd, effectiveLanded)
                       : null;
+                  const hasCostForVariant = canEnterCost && vConverted > 0;
 
                   return (
                     <div
                       key={`${v.color}-${v.size}`}
                       className="rounded-md border border-musiva-border bg-white"
                     >
-                      <div className="grid items-end gap-3 p-4 sm:grid-cols-[1fr_140px_140px_40px]">
-                        <div>
-                          <p className="font-medium text-musiva-plum">
-                            {v.color} / {v.size}
-                          </p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">{v.variantSku}</p>
-                          {/* Profit preview — visible to owner/manager only */}
-                          {canEnterCost && profit !== null && margin !== null && (
-                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                              <span className="text-xs text-muted-foreground">Est. profit:</span>
-                              <ProfitBadge margin={margin} profit={profit} />
-                              {v.landedCostOverrideBhd != null && (
-                                <span className="text-[10px] text-muted-foreground/60 italic">
-                                  (custom cost)
-                                </span>
+                      {/* Main row */}
+                      {canEnterCost ? (
+                        <div className="grid items-end gap-2 p-3 sm:grid-cols-[1fr_100px_100px_64px_64px_32px_28px]">
+                          {/* Name + SKU + profit */}
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-musiva-plum">
+                              {v.color} / {v.size}
+                            </p>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                              {v.variantSku}
+                            </p>
+                            {profit !== null && margin !== null && (
+                              <div className="mt-1 flex flex-wrap items-center gap-1">
+                                <span className="text-[11px] text-muted-foreground">Profit:</span>
+                                <ProfitBadge margin={margin} profit={profit} />
+                              </div>
+                            )}
+                          </div>
+                          {/* Selling price */}
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Sell (BHD)</Label>
+                            <Input
+                              min={0}
+                              step="0.001"
+                              type="number"
+                              value={v.regularSellingPriceBhd || ""}
+                              onChange={(e) =>
+                                updateVariantField(
+                                  v.color,
+                                  v.size,
+                                  "regularSellingPriceBhd",
+                                  Number(e.target.value) || 0,
+                                )
+                              }
+                            />
+                          </div>
+                          {/* Buying price INR */}
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Buy (INR)</Label>
+                            <Input
+                              min={0}
+                              step="0.01"
+                              type="number"
+                              value={v.buyingPriceInr || ""}
+                              onChange={(e) =>
+                                updateVariantBuyingPrice(
+                                  v.color,
+                                  v.size,
+                                  Number(e.target.value) || 0,
+                                )
+                              }
+                            />
+                          </div>
+                          {/* Starting qty */}
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Qty</Label>
+                            <Input
+                              min={0}
+                              type="number"
+                              value={v.stockQuantity || ""}
+                              onChange={(e) =>
+                                updateVariantField(
+                                  v.color,
+                                  v.size,
+                                  "stockQuantity",
+                                  Math.max(0, Number(e.target.value) || 0),
+                                )
+                              }
+                            />
+                          </div>
+                          {/* Min stock */}
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Min</Label>
+                            <Input
+                              min={0}
+                              type="number"
+                              value={v.minimumStock}
+                              onChange={(e) =>
+                                updateVariantField(
+                                  v.color,
+                                  v.size,
+                                  "minimumStock",
+                                  Math.max(0, Number(e.target.value) || 0),
+                                )
+                              }
+                            />
+                          </div>
+                          {/* Trash */}
+                          <button
+                            aria-label={`Remove ${v.color} / ${v.size}`}
+                            className="flex h-9 w-9 items-center justify-center rounded-md border border-musiva-border text-muted-foreground hover:border-destructive hover:text-destructive"
+                            type="button"
+                            onClick={() => removeVariant(v.color, v.size)}
+                          >
+                            <Trash2 aria-hidden className="h-4 w-4" />
+                          </button>
+                          {/* Expand toggle */}
+                          <button
+                            aria-label={
+                              v.showCostDetails
+                                ? `Hide cost details for ${v.color} / ${v.size}`
+                                : `Show cost details for ${v.color} / ${v.size}`
+                            }
+                            className="flex h-9 w-7 items-center justify-center rounded text-muted-foreground hover:text-musiva-plum"
+                            type="button"
+                            onClick={() => toggleCostDetails(v.color, v.size)}
+                          >
+                            <ChevronDown
+                              aria-hidden
+                              className={cn(
+                                "h-4 w-4 transition-transform",
+                                v.showCostDetails ? "rotate-180" : "",
                               )}
-                            </div>
-                          )}
-                          {/* Per-variant cost override toggle (owner/manager) */}
-                          {canEnterCost && hasCostPreview && (
-                            <button
-                              className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:text-musiva-plum hover:underline"
-                              type="button"
-                              onClick={() => toggleCostOverride(v.color, v.size)}
-                            >
-                              <ChevronDown
-                                aria-hidden
-                                className={cn(
-                                  "h-3 w-3 transition-transform",
-                                  v.showCostOverride ? "rotate-180" : "",
-                                )}
-                              />
-                              {v.showCostOverride ? "Hide cost override" : "Different cost for this option"}
-                            </button>
-                          )}
+                            />
+                          </button>
                         </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Selling price (BHD)</Label>
-                          <Input
-                            min={0}
-                            step="0.001"
-                            type="number"
-                            value={v.regularSellingPriceBhd || ""}
-                            onChange={(e) =>
-                              updateVariantField(
-                                v.color,
-                                v.size,
-                                "regularSellingPriceBhd",
-                                Number(e.target.value) || 0,
-                              )
-                            }
-                          />
+                      ) : (
+                        /* Non-cost-entry variant row */
+                        <div className="grid items-end gap-3 p-4 sm:grid-cols-[1fr_140px_80px_80px_40px]">
+                          <div>
+                            <p className="font-medium text-musiva-plum">
+                              {v.color} / {v.size}
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{v.variantSku}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Selling price (BHD)</Label>
+                            <Input
+                              min={0}
+                              step="0.001"
+                              type="number"
+                              value={v.regularSellingPriceBhd || ""}
+                              onChange={(e) =>
+                                updateVariantField(
+                                  v.color,
+                                  v.size,
+                                  "regularSellingPriceBhd",
+                                  Number(e.target.value) || 0,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Qty</Label>
+                            <Input
+                              min={0}
+                              type="number"
+                              value={v.stockQuantity || ""}
+                              onChange={(e) =>
+                                updateVariantField(
+                                  v.color,
+                                  v.size,
+                                  "stockQuantity",
+                                  Math.max(0, Number(e.target.value) || 0),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Min</Label>
+                            <Input
+                              min={0}
+                              type="number"
+                              value={v.minimumStock}
+                              onChange={(e) =>
+                                updateVariantField(
+                                  v.color,
+                                  v.size,
+                                  "minimumStock",
+                                  Math.max(0, Number(e.target.value) || 0),
+                                )
+                              }
+                            />
+                          </div>
+                          <button
+                            aria-label={`Remove ${v.color} / ${v.size}`}
+                            className="flex h-9 w-9 items-center justify-center rounded-md border border-musiva-border text-muted-foreground hover:border-destructive hover:text-destructive"
+                            type="button"
+                            onClick={() => removeVariant(v.color, v.size)}
+                          >
+                            <Trash2 aria-hidden className="h-4 w-4" />
+                          </button>
                         </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Starting quantity</Label>
-                          <Input
-                            min={0}
-                            type="number"
-                            value={v.stockQuantity}
-                            onChange={(e) =>
-                              updateVariantField(
-                                v.color,
-                                v.size,
-                                "stockQuantity",
-                                Math.max(0, Number(e.target.value) || 0),
-                              )
-                            }
-                          />
-                        </div>
-                        <button
-                          aria-label={`Remove ${v.color} / ${v.size}`}
-                          className="flex h-9 w-9 items-center justify-center rounded-md border border-musiva-border text-muted-foreground hover:border-destructive hover:text-destructive"
-                          type="button"
-                          onClick={() => removeVariant(v.color, v.size)}
-                        >
-                          <Trash2 aria-hidden className="h-4 w-4" />
-                        </button>
-                      </div>
+                      )}
 
-                      {/* Per-variant landed cost override */}
-                      {canEnterCost && v.showCostOverride && (
-                        <div className="border-t border-dashed border-musiva-border px-4 pb-3 pt-3">
-                          <div className="flex items-end gap-3">
-                            <div className="flex-1 space-y-1">
-                              <Label className="text-xs">
-                                Landed cost override for this option (BHD)
-                              </Label>
-                              <Input
-                                min={0}
-                                placeholder={globalLandedCost > 0 ? String(globalLandedCost) : "0.000"}
-                                step="0.001"
-                                type="number"
-                                value={v.landedCostOverrideBhd ?? ""}
-                                onChange={(e) =>
-                                  updateVariantCostOverride(
-                                    v.color,
-                                    v.size,
-                                    e.target.value ? Number(e.target.value) : null,
-                                  )
-                                }
-                              />
-                              <p className="text-[11px] text-muted-foreground">
-                                Leave blank to use the shared landed cost (
-                                {globalLandedCost > 0 ? formatBhd(globalLandedCost) : "not set"}).
-                              </p>
+                      {/* Per-variant cost details (expand) */}
+                      {canEnterCost && v.showCostDetails && (
+                        <div className="border-t border-dashed border-musiva-border px-4 pb-4 pt-3">
+                          <div className="space-y-3">
+                            {hasCostForVariant && (
+                              <div className="rounded bg-musiva-ivory px-3 py-2 text-sm tabular-nums">
+                                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-musiva-gold">
+                                  Cost breakdown
+                                </p>
+                                <div className="space-y-0.5">
+                                  <div className="flex justify-between gap-4 text-muted-foreground">
+                                    <span>Buying price</span>
+                                    <span className="font-medium text-foreground">
+                                      {formatInr(v.buyingPriceInr)}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between gap-4 text-muted-foreground">
+                                    <span>Converted cost</span>
+                                    <span className="font-medium text-foreground">
+                                      {formatBhd(vConverted)}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between gap-4 text-muted-foreground">
+                                    <span>Import cost</span>
+                                    <span className="font-medium text-foreground">
+                                      {formatBhd(openingCost.extraImportCostBhd)}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between gap-4 border-t border-musiva-border pt-1">
+                                    <span className="font-semibold text-musiva-plum">
+                                      Landed cost
+                                    </span>
+                                    <span className="font-semibold text-musiva-plum">
+                                      {formatBhd(vLanded)}
+                                    </span>
+                                  </div>
+                                  {profit !== null && margin !== null && (
+                                    <div className="flex items-center gap-2 pt-0.5">
+                                      <span className="text-xs text-muted-foreground">
+                                        Est. profit:
+                                      </span>
+                                      <ProfitBadge margin={margin} profit={profit} />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Per-variant buying price override */}
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="space-y-1">
+                                <Label className="text-xs">
+                                  Buying price for this option (INR)
+                                </Label>
+                                <Input
+                                  min={0}
+                                  placeholder="Leave blank to use bulk value"
+                                  step="0.01"
+                                  type="number"
+                                  value={v.buyingPriceInr || ""}
+                                  onChange={(e) =>
+                                    updateVariantBuyingPrice(
+                                      v.color,
+                                      v.size,
+                                      Number(e.target.value) || 0,
+                                    )
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs">
+                                  Landed cost override (BHD — optional)
+                                </Label>
+                                <Input
+                                  min={0}
+                                  placeholder={vLanded > 0 ? String(vLanded) : "0.000"}
+                                  step="0.001"
+                                  type="number"
+                                  value={v.landedCostOverrideBhd ?? ""}
+                                  onChange={(e) =>
+                                    updateVariantCostOverride(
+                                      v.color,
+                                      v.size,
+                                      e.target.value ? Number(e.target.value) : null,
+                                    )
+                                  }
+                                />
+                                <p className="text-[10px] text-muted-foreground">
+                                  Only set this if you want to override the calculated cost.
+                                </p>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -928,7 +1306,7 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
               )}
             </div>
 
-            {/* ── Summary row ───────────────────────────── */}
+            {/* ── Summary row ───────────────────────────────────────── */}
             {step3.variants.length > 0 && (
               <div className="rounded-md bg-musiva-ivory p-4 text-sm">
                 <p className="font-medium text-musiva-plum">
@@ -937,194 +1315,6 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
                   {step3.variants.reduce((s, v) => s + v.stockQuantity, 0)} units starting stock
                   {minPrice !== null ? ` · from ${formatBhd(minPrice)}` : ""}
                 </p>
-              </div>
-            )}
-
-            {/* ── Initial Buying Cost section (owner/manager only) ─── */}
-            {canEnterCost && (
-              <div className="rounded-md border border-dashed border-musiva-border">
-                <button
-                  className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-muted-foreground hover:text-musiva-plum"
-                  type="button"
-                  onClick={() => setShowCostSection((v) => !v)}
-                >
-                  <span className="font-semibold text-musiva-plum/80">
-                    Initial buying cost from India
-                  </span>
-                  <ChevronDown
-                    aria-hidden
-                    className={cn(
-                      "h-4 w-4 transition-transform",
-                      showCostSection ? "rotate-180" : "",
-                    )}
-                  />
-                </button>
-
-                {showCostSection && (
-                  <div className="space-y-5 border-t border-dashed border-musiva-border px-4 pb-5 pt-4">
-                    <p className="text-xs text-muted-foreground">
-                      Use this only for the first stock entry. Future stock purchases should be
-                      recorded from{" "}
-                      <span className="font-medium text-musiva-plum">
-                        Purchases → New Purchase
-                      </span>{" "}
-                      so each shipment keeps its own INR price, exchange rate, and landed cost.
-                    </p>
-
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      {/* Buying currency */}
-                      <div className="space-y-2">
-                        <Label htmlFor="buying-currency">Buying currency</Label>
-                        <Select
-                          id="buying-currency"
-                          value={openingCost.buyingCurrency}
-                          onChange={(e) => updateCost("buyingCurrency", e.target.value)}
-                        >
-                          <option value="INR">INR — Indian Rupee</option>
-                          <option value="USD">USD — US Dollar</option>
-                          <option value="EUR">EUR — Euro</option>
-                          <option value="GBP">GBP — British Pound</option>
-                        </Select>
-                      </div>
-
-                      {/* Buying price per piece */}
-                      <div className="space-y-2">
-                        <Label htmlFor="buying-price">
-                          Buying price per piece ({openingCost.buyingCurrency})
-                        </Label>
-                        <Input
-                          id="buying-price"
-                          min={0}
-                          placeholder="1500.00"
-                          step="0.01"
-                          type="number"
-                          value={openingCost.buyingPricePerPiece || ""}
-                          onChange={(e) =>
-                            updateCost("buyingPricePerPiece", Number(e.target.value) || 0)
-                          }
-                        />
-                      </div>
-
-                      {/* Exchange rate */}
-                      <div className="space-y-2">
-                        <Label htmlFor="exchange-rate">
-                          Exchange rate — 1 {openingCost.buyingCurrency} = ? BHD
-                        </Label>
-                        <Input
-                          id="exchange-rate"
-                          min={0}
-                          placeholder="0.004520"
-                          step="0.000001"
-                          type="number"
-                          value={openingCost.exchangeRateToBhd || ""}
-                          onChange={(e) =>
-                            updateCost("exchangeRateToBhd", Number(e.target.value) || 0)
-                          }
-                        />
-                        <p className="text-[11px] text-muted-foreground">
-                          Example: if 1 INR = 0.004520 BHD, enter 0.004520
-                        </p>
-                      </div>
-
-                      {/* Exchange rate date */}
-                      <div className="space-y-2">
-                        <Label htmlFor="rate-date">Exchange rate date</Label>
-                        <Input
-                          id="rate-date"
-                          type="date"
-                          value={openingCost.exchangeRateDate}
-                          onChange={(e) => updateCost("exchangeRateDate", e.target.value)}
-                        />
-                      </div>
-
-                      {/* Exchange rate source */}
-                      <div className="space-y-2">
-                        <Label htmlFor="rate-source">Exchange rate source</Label>
-                        <Select
-                          id="rate-source"
-                          value={openingCost.exchangeRateSource}
-                          onChange={(e) =>
-                            updateCost(
-                              "exchangeRateSource",
-                              e.target.value as "manual" | "bank" | "other",
-                            )
-                          }
-                        >
-                          <option value="manual">Manual entry</option>
-                          <option value="bank">Bank rate</option>
-                          <option value="other">Other</option>
-                        </Select>
-                      </div>
-
-                      {/* Extra import cost */}
-                      <div className="space-y-2">
-                        <Label htmlFor="import-cost">Extra import cost per piece (BHD)</Label>
-                        <Input
-                          id="import-cost"
-                          min={0}
-                          placeholder="0.700"
-                          step="0.001"
-                          type="number"
-                          value={openingCost.extraImportCostBhd || ""}
-                          onChange={(e) =>
-                            updateCost("extraImportCostBhd", Number(e.target.value) || 0)
-                          }
-                        />
-                        <p className="text-[11px] text-muted-foreground">
-                          Shipping, customs, packaging, bank fees, etc.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Live calculation preview */}
-                    {hasCostPreview && (
-                      <div className="rounded-md border border-musiva-border bg-musiva-ivory px-4 py-3 text-sm">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-musiva-gold">
-                          Cost calculation preview
-                        </p>
-                        <div className="grid gap-1 tabular-nums sm:grid-cols-2">
-                          <div className="flex justify-between gap-4 text-muted-foreground">
-                            <span>Buying price</span>
-                            <span className="font-medium text-foreground">
-                              {formatInr(openingCost.buyingPricePerPiece)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-4 text-muted-foreground">
-                            <span>Exchange rate</span>
-                            <span className="font-medium text-foreground">
-                              1 {openingCost.buyingCurrency} = BHD{" "}
-                              {openingCost.exchangeRateToBhd.toFixed(6)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-4 text-muted-foreground">
-                            <span>Converted cost</span>
-                            <span className="font-medium text-foreground">
-                              {formatBhd(convertedCost)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-4 text-muted-foreground">
-                            <span>Import cost</span>
-                            <span className="font-medium text-foreground">
-                              {formatBhd(openingCost.extraImportCostBhd)}
-                            </span>
-                          </div>
-                          <div className="col-span-full mt-1 flex justify-between gap-4 border-t border-musiva-border pt-2">
-                            <span className="font-semibold text-musiva-plum">
-                              Final landed cost
-                            </span>
-                            <span className="font-semibold text-musiva-plum">
-                              {formatBhd(globalLandedCost)}
-                            </span>
-                          </div>
-                        </div>
-                        <p className="mt-2 text-[11px] text-muted-foreground">
-                          This cost applies to all options. Use &quot;Different cost for this
-                          option&quot; below each variant to override.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             )}
           </CardContent>

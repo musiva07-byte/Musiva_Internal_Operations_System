@@ -251,12 +251,18 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
   }
 
   for (const variant of productInput.variants) {
-    // Compute landed cost for this variant (override takes priority over shared cost).
+    // Per-variant buying price takes priority over the shared (legacy) price.
+    const variantBuyingPrice =
+      (variant.buyingPriceInr ?? 0) > 0
+        ? variant.buyingPriceInr!
+        : (openingCost?.buyingPricePerPiece ?? 0);
+
+    // Compute landed cost for this variant (explicit override takes final priority).
     let landedCostBhd: number | null = null;
     let convertedCostBhd: number | null = null;
-    if (openingCost && openingCost.buyingPricePerPiece > 0) {
+    if (openingCost && variantBuyingPrice > 0) {
       convertedCostBhd = roundBhd(
-        convertToBhd(openingCost.buyingPricePerPiece, openingCost.exchangeRateToBhd),
+        convertToBhd(variantBuyingPrice, openingCost.exchangeRateToBhd),
       );
       landedCostBhd =
         variant.landedCostOverrideBhd != null
@@ -316,7 +322,7 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
           product_variant_id: createdVariant.id,
           quantity_received: variant.stockQuantity,
           quantity_remaining: variant.stockQuantity,
-          supplier_unit_cost: openingCost.buyingPricePerPiece,
+          supplier_unit_cost: variantBuyingPrice,
           supplier_currency: openingCost.buyingCurrency,
           // Store in multiply direction (BHD per INR = spec convention).
           exchange_rate_to_bhd: openingCost.exchangeRateToBhd,

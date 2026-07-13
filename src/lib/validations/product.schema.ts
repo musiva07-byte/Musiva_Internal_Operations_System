@@ -14,9 +14,12 @@ import { PRODUCT_STATUSES, STOCK_MOVEMENT_TYPES } from "@/lib/constants";
  */
 export const openingCostSchema = z.object({
   buyingCurrency: z.string().min(1).default("INR"),
+  /** Shared buying price per piece (legacy — prefer per-variant buyingPriceInr). */
   buyingPricePerPiece: z.coerce
     .number()
-    .min(0, "Buying price must be 0 or greater."),
+    .min(0, "Buying price must be 0 or greater.")
+    .optional()
+    .default(0),
   /** 1 supplier-currency unit expressed in BHD. Must be > 0. */
   exchangeRateToBhd: z.coerce
     .number()
@@ -77,6 +80,8 @@ export const productVariantSchema = z
     stockQuantity,
     minimumStock: stockQuantity,
     status: z.enum([PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.archived, PRODUCT_STATUSES.draft]),
+    /** Buying price in INR for this specific variant (per-variant cost entry). */
+    buyingPriceInr: z.coerce.number().min(0).optional().default(0),
     /** Override the shared openingCost landed cost for this specific variant only. */
     landedCostOverrideBhd: z.preprocess(
       (v) => (v === "" || v === null || v === undefined ? null : v),

@@ -111,9 +111,13 @@ export function canViewCostData(userRole: StaffRole | null | undefined) {
 }
 
 /** Enter or edit initial buying cost (INR→BHD conversion) on new products.
- *  Narrower than canViewCostData — accountants view but cannot enter by default. */
+ *  Inventory staff can enter buying prices but cannot view profit/margin. */
 export function canEnterBuyingCost(userRole: StaffRole | null | undefined) {
-  return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.inventoryStaff
+  );
 }
 
 export function canManageExchangeRates(userRole: StaffRole | null | undefined) {
