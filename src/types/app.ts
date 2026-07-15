@@ -47,6 +47,8 @@ export type ProductListItem = ProductRow & {
   has_active_discount: boolean;
   /** Minimal variant data for quick-action dialogs. */
   variants_quick: VariantQuick[];
+  /** True when the product satisfies all required-for-publishing checks (see lib/validations/product-publishing.ts). */
+  website_ready: boolean;
 };
 
 export type InventoryVariantItem = ProductVariantRow & {

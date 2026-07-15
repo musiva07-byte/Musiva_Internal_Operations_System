@@ -487,6 +487,18 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
         careInstructions: step1.careInstructions.trim() || null,
         status: "active",
         openingCost: sendOpeningCost,
+        // New products are never published from the wizard — staff opt in
+        // from Edit → Ecommerce / Website once the product is reviewed.
+        slug: null,
+        websiteVisible: false,
+        onlineStatus: "hidden",
+        websiteTitle: null,
+        websiteDescription: null,
+        seoTitle: null,
+        seoDescription: null,
+        featured: false,
+        newArrival: false,
+        sortOrder: 0,
         variants: step3.variants.map((v) => ({
           variantSku: v.variantSku,
           barcode: null,

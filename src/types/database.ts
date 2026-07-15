@@ -118,8 +118,78 @@ export type ProductRow = {
   material: string | null;
   care_instructions: string | null;
   status: ProductStatus;
+  // Ecommerce publishing fields (Phase: website readiness)
+  slug: string | null;
+  website_visible: boolean;
+  online_status: ProductOnlineStatus;
+  website_title: string | null;
+  website_description: string | null;
+  seo_title: string | null;
+  seo_description: string | null;
+  featured: boolean;
+  new_arrival: boolean;
+  sort_order: number;
   created_at: string;
   updated_at: string;
+};
+
+/** Public website visibility only becomes 'published' when staff opts the product in. */
+export type ProductOnlineStatus = "draft" | "published" | "hidden";
+
+// ── Public-safe views (read-only; anon-readable — see
+// database/migrations/202607150001_ecommerce_publishing.sql) ────────────────
+
+export type PublicProductRow = {
+  id: string;
+  name: string;
+  slug: string;
+  category_id: string | null;
+  collection: string | null;
+  description: string | null;
+  material: string | null;
+  care_instructions: string | null;
+  website_title: string | null;
+  website_description: string | null;
+  seo_title: string | null;
+  seo_description: string | null;
+  featured: boolean;
+  new_arrival: boolean;
+  sort_order: number;
+};
+
+export type PublicProductVariantRow = {
+  id: string;
+  product_id: string;
+  color: string;
+  size: string;
+  regular_selling_price_bhd: number | null;
+  discount_price_bhd: number | null;
+  discount_start_at: string | null;
+  discount_end_at: string | null;
+  stock_quantity: number;
+};
+
+export type PublicProductImageRow = {
+  id: string;
+  product_id: string;
+  url: string;
+  is_primary: boolean;
+  sort_order: number;
+};
+
+export type PublicCategoryRow = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  sort_order: number;
+};
+
+export type PublicSiteSettingsRow = {
+  business_name: string;
+  logo_url: string | null;
+  whatsapp_number: string | null;
+  instagram_handle: string | null;
 };
 
 export type ProductVariantRow = {
@@ -553,7 +623,13 @@ export interface Database {
       profiles: TableDefinition<ProfileRow, ProfileRow>;
       settings: TableDefinition<SettingsRow, Insertable<SettingsRow>>;
     };
-    Views: Record<string, never>;
+    Views: {
+      public_products: TableDefinition<PublicProductRow>;
+      public_product_variants: TableDefinition<PublicProductVariantRow>;
+      public_product_images: TableDefinition<PublicProductImageRow>;
+      public_categories: TableDefinition<PublicCategoryRow>;
+      public_site_settings: TableDefinition<PublicSiteSettingsRow>;
+    };
     Functions: {
       add_variant_stock: {
         Args: {
@@ -625,6 +701,7 @@ export interface Database {
     Enums: {
       product_status: ProductStatus;
       product_variant_status: ProductStatus;
+      product_online_status: ProductOnlineStatus;
       pricing_status: PricingStatus;
       stock_status: StockStatus;
       stock_movement_type: StockMovementType;

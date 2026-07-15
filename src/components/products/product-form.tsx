@@ -14,13 +14,15 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { PRODUCT_STATUSES } from "@/lib/constants";
 import { productSchema, type ProductInput } from "@/lib/validations/product.schema";
-import type { CategoryRow } from "@/types/database";
+import { canPublishProducts } from "@/lib/auth/permissions";
+import type { CategoryRow, StaffRole } from "@/types/database";
 import type { ProductWithRelations } from "@/types/app";
 import { createProductAction, updateProductAction } from "@/app/admin/products/actions";
 
 type ProductFormProps = {
   categories: CategoryRow[];
   product?: ProductWithRelations;
+  userRole: StaffRole | null;
 };
 
 const emptyVariant = {
@@ -54,6 +56,16 @@ function mapProduct(product?: ProductWithRelations): ProductInput {
       status: PRODUCT_STATUSES.active,
       variants: [emptyVariant],
       images: [],
+      slug: null,
+      websiteVisible: false,
+      onlineStatus: "hidden",
+      websiteTitle: null,
+      websiteDescription: null,
+      seoTitle: null,
+      seoDescription: null,
+      featured: false,
+      newArrival: false,
+      sortOrder: 0,
     };
   }
 
@@ -67,6 +79,16 @@ function mapProduct(product?: ProductWithRelations): ProductInput {
     material: product.material,
     careInstructions: product.care_instructions,
     status: product.status,
+    slug: product.slug,
+    websiteVisible: product.website_visible,
+    onlineStatus: product.online_status,
+    websiteTitle: product.website_title,
+    websiteDescription: product.website_description,
+    seoTitle: product.seo_title,
+    seoDescription: product.seo_description,
+    featured: product.featured,
+    newArrival: product.new_arrival,
+    sortOrder: product.sort_order,
     variants: product.variants.map((variant) => ({
       id: variant.id,
       variantSku: variant.variant_sku,
@@ -98,11 +120,12 @@ function mapProduct(product?: ProductWithRelations): ProductInput {
   };
 }
 
-export function ProductForm({ categories, product }: ProductFormProps) {
+export function ProductForm({ categories, product, userRole }: ProductFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
   const isEditing = Boolean(product);
+  const canPublish = canPublishProducts(userRole);
 
   const form = useForm<ProductInput>({
     resolver: zodResolver(productSchema) as Resolver<ProductInput>,
@@ -269,6 +292,104 @@ export function ProductForm({ categories, product }: ProductFormProps) {
             </div>
           ))}
           <FieldError message={form.formState.errors.variants?.message} />
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-soft">
+        <CardHeader>
+          <CardTitle>Ecommerce / Website</CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Only published products marked Show on website will appear on www.moosivabh.com.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid gap-5 md:grid-cols-2">
+            <label className="flex items-center gap-2 text-sm font-medium text-musiva-plum">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-musiva-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!canPublish}
+                {...form.register("websiteVisible")}
+              />
+              Show on website
+            </label>
+
+            <div className="space-y-2">
+              <Label htmlFor="onlineStatus">Online status</Label>
+              <Select id="onlineStatus" {...form.register("onlineStatus")}>
+                <option value="draft">Draft</option>
+                <option value="published" disabled={!canPublish}>
+                  Published
+                </option>
+                <option value="hidden">Hidden</option>
+              </Select>
+              {!canPublish && (
+                <p className="text-xs text-muted-foreground">
+                  Only owner and manager can publish products. You can save website details as
+                  draft.
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="slug">Website slug</Label>
+              <Input id="slug" {...form.register("slug")} placeholder="pearl-trim-abaya" />
+              <p className="text-xs text-muted-foreground">
+                Auto-generated from the product name if left blank. Changing it later changes the
+                product&apos;s public URL.
+              </p>
+              <FieldError message={form.formState.errors.slug?.message} />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="websiteTitle">Website title (optional)</Label>
+              <Input
+                id="websiteTitle"
+                {...form.register("websiteTitle")}
+                placeholder="Defaults to the product name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sortOrder">Sort order</Label>
+              <Input id="sortOrder" type="number" {...form.register("sortOrder")} />
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="websiteDescription">Website description (optional)</Label>
+              <Textarea
+                id="websiteDescription"
+                rows={3}
+                {...form.register("websiteDescription")}
+                placeholder="Shown on the product page on the public website."
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="seoTitle">SEO title (optional)</Label>
+              <Input id="seoTitle" {...form.register("seoTitle")} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="seoDescription">SEO description (optional)</Label>
+              <Input id="seoDescription" {...form.register("seoDescription")} />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm font-medium text-musiva-plum">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-musiva-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                {...form.register("featured")}
+              />
+              Featured product
+            </label>
+            <label className="flex items-center gap-2 text-sm font-medium text-musiva-plum">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-musiva-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                {...form.register("newArrival")}
+              />
+              New arrival
+            </label>
+          </div>
         </CardContent>
       </Card>
 

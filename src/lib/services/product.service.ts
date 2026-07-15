@@ -2,11 +2,24 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireStaffPermission } from "@/lib/auth/authorization";
-import { canManageProducts, canArchiveProducts, canDeleteProducts, canEnterBuyingCost } from "@/lib/auth/permissions";
+import {
+  canManageProducts,
+  canArchiveProducts,
+  canDeleteProducts,
+  canEnterBuyingCost,
+  canPublishProducts,
+} from "@/lib/auth/permissions";
 import { PRODUCT_STATUSES, STOCK_MOVEMENT_TYPES } from "@/lib/constants";
 import { isDiscountActive } from "@/lib/pricing/calculations";
 import { productSchema, type ProductInput } from "@/lib/validations/product.schema";
+import {
+  checkPublishAttempt,
+  getPublishingReadiness,
+  matchesWebsiteFilter,
+  type WebsiteFilterValue,
+} from "@/lib/validations/product-publishing";
 import { convertToBhd, calcLandedCost, roundBhd } from "@/lib/utils/cost-conversion";
+import { generateUniqueProductSlug } from "@/lib/utils/slug";
 import { createAuditLog } from "./audit.service";
 import { serviceError, serviceSuccess, type ServiceResult } from "./service-result";
 import type {
@@ -17,16 +30,62 @@ import type {
   ProductVariantRow,
 } from "@/types/database";
 import type { PaginatedResult, ProductListItem, ProductWithRelations, VariantQuick } from "@/types/app";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const PAGE_SIZE = 10;
 const LOAD_ERROR = "Unable to load data. Please try again or contact the administrator.";
+/** Safety cap for the unpaginated scan used by the "Website" filter (see listProducts). */
+const WEBSITE_FILTER_SCAN_LIMIT = 1000;
 
 type ProductListFilters = {
   q?: string;
   status?: string;
   categoryId?: string;
   page?: number;
+  websiteFilter?: WebsiteFilterValue;
 };
+
+/**
+ * Resolve the slug to save for a product: keep an explicitly-provided slug
+ * (validating it's not used by another product), or auto-generate one from
+ * the name/SKU when left blank. Never regenerates a slug the product
+ * already has unless the caller explicitly submitted a new value — the
+ * edit form always round-trips the current slug, so a no-op edit results
+ * in the same value here.
+ */
+async function resolveProductSlug(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  name: string,
+  sku: string,
+  requestedSlug: string | null | undefined,
+  excludeProductId?: string,
+): Promise<{ slug: string; error: null } | { slug: null; error: string }> {
+  async function isTaken(candidate: string): Promise<boolean> {
+    let query = supabase
+      .from("products")
+      .select("id", { count: "exact", head: true })
+      .eq("slug", candidate);
+    if (excludeProductId) {
+      query = query.neq("id", excludeProductId);
+    }
+    const { count } = await query;
+    return (count ?? 0) > 0;
+  }
+
+  if (requestedSlug) {
+    if (await isTaken(requestedSlug)) {
+      return {
+        slug: null,
+        error: `The slug "${requestedSlug}" is already used by another product. Choose a different one.`,
+      };
+    }
+    return { slug: requestedSlug, error: null };
+  }
+
+  const generated = await generateUniqueProductSlug(name, sku, isTaken);
+  return { slug: generated, error: null };
+}
 
 type ProductRelationRow = ProductRow & {
   categories?: Pick<CategoryRow, "id" | "name"> | null;
@@ -64,6 +123,7 @@ export async function listProducts(
   const page = toPage(filters.page);
   const from = (page - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
+  const websiteFilter = filters.websiteFilter ?? "";
 
   if (!supabase) {
     return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0 };
@@ -73,8 +133,7 @@ export async function listProducts(
   let query = supabase
     .from("products")
     .select("*, categories(id, name)", { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    .order("created_at", { ascending: false });
 
   if (search) {
     query = query.or(`name.ilike.%${search}%,sku.ilike.%${search}%,collection.ilike.%${search}%`);
@@ -91,6 +150,15 @@ export async function listProducts(
   if (filters.categoryId && filters.categoryId !== "all") {
     query = query.eq("category_id", filters.categoryId);
   }
+
+  // The "Website" filter (published/draft/hidden/missing details) is
+  // partly derived (missing_details depends on variants/images, not a
+  // single column), so it can't always be pushed down as a plain .eq().
+  // Instead, when this filter is active, fetch a capped, unpaginated batch
+  // matching every other filter and paginate the already-filtered result
+  // in JS below. Boutique catalog sizes make this bounded and safe; the
+  // normal (no website filter) path is untouched and still paginates in SQL.
+  query = websiteFilter ? query.limit(WEBSITE_FILTER_SCAN_LIMIT) : query.range(from, to);
 
   const { data: products, count, error } = await query;
   if (error) {
@@ -145,6 +213,18 @@ export async function listProducts(
       stock_quantity: v.stock_quantity,
     }));
 
+    const websiteReady = getPublishingReadiness({
+      name: product.name,
+      slug: product.slug,
+      variants: variantRows.map((v) => ({
+        status: v.status,
+        stockQuantity: v.stock_quantity,
+        regularSellingPriceBhd:
+          v.regular_selling_price_bhd === null ? null : Number(v.regular_selling_price_bhd),
+      })),
+      hasImage: Boolean(primaryImage),
+    }).ready;
+
     return {
       ...product,
       category_name: product.categories?.name ?? null,
@@ -156,8 +236,22 @@ export async function listProducts(
       min_selling_price: activePrices.length ? Math.min(...activePrices) : null,
       has_active_discount: hasActiveDiscount,
       variants_quick: variantsQuick,
+      website_ready: websiteReady,
     };
   });
+
+  if (websiteFilter) {
+    const filtered = data.filter((product) => matchesWebsiteFilter(product, websiteFilter));
+    const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const start = (page - 1) * PAGE_SIZE;
+    return {
+      data: filtered.slice(start, start + PAGE_SIZE),
+      count: filtered.length,
+      page,
+      pageSize: PAGE_SIZE,
+      pageCount,
+    };
+  }
 
   return {
     data,
@@ -231,6 +325,37 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       ? productInput.openingCost
       : null;
 
+  const slugResult = await resolveProductSlug(
+    supabase,
+    productInput.name,
+    productInput.sku,
+    productInput.slug,
+  );
+  if (slugResult.error) {
+    return serviceError(slugResult.error);
+  }
+
+  const wantsPublished =
+    productInput.onlineStatus === "published" || productInput.websiteVisible === true;
+  const readiness = getPublishingReadiness({
+    name: productInput.name,
+    slug: slugResult.slug,
+    variants: productInput.variants.map((v) => ({
+      status: v.status,
+      stockQuantity: v.stockQuantity,
+      regularSellingPriceBhd: v.regularSellingPriceBhd,
+    })),
+    hasImage: productInput.images.length > 0,
+  });
+  const publishCheck = checkPublishAttempt({
+    wantsPublished,
+    canPublish: canPublishProducts(auth.role),
+    readiness,
+  });
+  if (!publishCheck.ok) {
+    return serviceError(publishCheck.error);
+  }
+
   const { data: product, error: productError } = await supabase
     .from("products")
     .insert({
@@ -242,6 +367,16 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       material: productInput.material ?? null,
       care_instructions: productInput.careInstructions ?? null,
       status: productInput.status,
+      slug: slugResult.slug,
+      website_visible: productInput.websiteVisible,
+      online_status: productInput.onlineStatus,
+      website_title: productInput.websiteTitle ?? null,
+      website_description: productInput.websiteDescription ?? null,
+      seo_title: productInput.seoTitle ?? null,
+      seo_description: productInput.seoDescription ?? null,
+      featured: productInput.featured,
+      new_arrival: productInput.newArrival,
+      sort_order: productInput.sortOrder,
     })
     .select()
     .single();
@@ -363,6 +498,16 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
     },
   });
 
+  if (wantsPublished) {
+    await createAuditLog({
+      action: "publish_product",
+      tableName: "products",
+      recordId: product.id,
+      userId: auth.userId,
+      metadata: { sku: product.sku, online_status: product.online_status },
+    });
+  }
+
   revalidatePath("/admin/products");
   revalidatePath("/admin/inventory");
   return serviceSuccess(product);
@@ -382,6 +527,47 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
 
   const supabase = auth.supabase;
   const productInput = parsed.data;
+
+  const { data: existingProduct } = await supabase
+    .from("products")
+    .select("website_visible, online_status")
+    .eq("id", productId)
+    .maybeSingle();
+  const wasPublished =
+    existingProduct?.online_status === "published" || existingProduct?.website_visible === true;
+
+  const slugResult = await resolveProductSlug(
+    supabase,
+    productInput.name,
+    productInput.sku,
+    productInput.slug,
+    productId,
+  );
+  if (slugResult.error) {
+    return serviceError(slugResult.error);
+  }
+
+  const wantsPublished =
+    productInput.onlineStatus === "published" || productInput.websiteVisible === true;
+  const readiness = getPublishingReadiness({
+    name: productInput.name,
+    slug: slugResult.slug,
+    variants: productInput.variants.map((v) => ({
+      status: v.status,
+      stockQuantity: v.stockQuantity,
+      regularSellingPriceBhd: v.regularSellingPriceBhd,
+    })),
+    hasImage: productInput.images.length > 0,
+  });
+  const publishCheck = checkPublishAttempt({
+    wantsPublished,
+    canPublish: canPublishProducts(auth.role),
+    readiness,
+  });
+  if (!publishCheck.ok) {
+    return serviceError(publishCheck.error);
+  }
+
   const { data: product, error: productError } = await supabase
     .from("products")
     .update({
@@ -393,6 +579,16 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
       material: productInput.material ?? null,
       care_instructions: productInput.careInstructions ?? null,
       status: productInput.status,
+      slug: slugResult.slug,
+      website_visible: productInput.websiteVisible,
+      online_status: productInput.onlineStatus,
+      website_title: productInput.websiteTitle ?? null,
+      website_description: productInput.websiteDescription ?? null,
+      seo_title: productInput.seoTitle ?? null,
+      seo_description: productInput.seoDescription ?? null,
+      featured: productInput.featured,
+      new_arrival: productInput.newArrival,
+      sort_order: productInput.sortOrder,
     })
     .eq("id", productId)
     .select()
@@ -484,8 +680,27 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
     },
   });
 
+  if (wantsPublished && !wasPublished) {
+    await createAuditLog({
+      action: "publish_product",
+      tableName: "products",
+      recordId: product.id,
+      userId: auth.userId,
+      metadata: { sku: product.sku, online_status: product.online_status },
+    });
+  } else if (!wantsPublished && wasPublished) {
+    await createAuditLog({
+      action: "unpublish_product",
+      tableName: "products",
+      recordId: product.id,
+      userId: auth.userId,
+      metadata: { sku: product.sku, online_status: product.online_status },
+    });
+  }
+
   revalidatePath("/admin/products");
   revalidatePath(`/admin/products/${productId}`);
+  revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath("/admin/inventory");
   return serviceSuccess(product);
 }

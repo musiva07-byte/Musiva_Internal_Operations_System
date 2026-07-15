@@ -40,6 +40,19 @@ const optionalText = z.preprocess(
   z.string().trim().nullable().optional(),
 );
 
+const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+const optionalSlug = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? null : value),
+  z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(SLUG_PATTERN, "Slug must be lowercase letters, numbers, and hyphens only.")
+    .nullable()
+    .optional(),
+);
+
 const optionalUuid = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? null : value),
   z.string().uuid().nullable().optional(),
@@ -130,6 +143,18 @@ export const productSchema = z.object({
   images: z.array(productImageSchema).default([]),
   /** Initial buying cost from India — used only during product creation for opening stock. */
   openingCost: openingCostSchema.nullable().optional(),
+  // ── Ecommerce / Website (public website publishing) ─────────────────────────
+  /** Auto-generated from the name when left blank. Never auto-changed after it's set. */
+  slug: optionalSlug,
+  websiteVisible: z.coerce.boolean().default(false),
+  onlineStatus: z.enum(["draft", "published", "hidden"]).default("hidden"),
+  websiteTitle: optionalText,
+  websiteDescription: optionalText,
+  seoTitle: optionalText,
+  seoDescription: optionalText,
+  featured: z.coerce.boolean().default(false),
+  newArrival: z.coerce.boolean().default(false),
+  sortOrder: z.coerce.number().int().default(0),
 });
 
 export const stockEntrySchema = z.object({

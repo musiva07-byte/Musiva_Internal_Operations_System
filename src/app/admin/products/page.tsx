@@ -29,11 +29,17 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   // Default is "" (active + inactive, archived excluded) — "all" shows everything
   const status = getParam(params, "status") ?? "";
   const categoryId = getParam(params, "categoryId") ?? "all";
+  const website = (getParam(params, "website") ?? "") as
+    | "published"
+    | "draft"
+    | "hidden"
+    | "missing_details"
+    | "";
   const page = Number(getParam(params, "page") ?? 1);
 
   const [categories, products, auth] = await Promise.all([
     listCategories(),
-    listProducts({ q, status, categoryId, page }),
+    listProducts({ q, status, categoryId, page, websiteFilter: website }),
     getCurrentAuthState(),
   ]);
 
@@ -44,12 +50,13 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     if (q) next.set("q", q);
     if (status) next.set("status", status);
     if (categoryId !== "all") next.set("categoryId", categoryId);
+    if (website) next.set("website", website);
     next.set("page", String(nextPage));
     return `/admin/products?${next.toString()}`;
   };
 
   const showingArchived = status === "archived" || status === "all";
-  const isUnfilteredEmptyState = !q && !status && categoryId === "all";
+  const isUnfilteredEmptyState = !q && !status && categoryId === "all" && !website;
 
   return (
     <div className="space-y-6">
@@ -71,7 +78,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
 
       <Card className="shadow-soft">
         <CardContent className="pt-6">
-          <form className="grid gap-3 md:grid-cols-[1fr_200px_220px_auto]">
+          <form className="grid gap-3 md:grid-cols-[1fr_180px_180px_180px_auto]">
             <div className="relative">
               <Search aria-hidden className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input className="pl-10" defaultValue={q} name="q" placeholder="Search name, SKU, collection" />
@@ -90,6 +97,13 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                   {category.name}
                 </option>
               ))}
+            </Select>
+            <Select defaultValue={website} name="website">
+              <option value="">Website: All</option>
+              <option value="published">Website: Published</option>
+              <option value="draft">Website: Draft</option>
+              <option value="hidden">Website: Hidden</option>
+              <option value="missing_details">Website: Missing details</option>
             </Select>
             <Button type="submit" variant="outline">
               Filter
@@ -182,17 +196,33 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={
-                        product.status === "active"
-                          ? "success"
-                          : product.status === "archived"
-                          ? "danger"
-                          : "secondary"
-                      }
-                    >
-                      {titleize(product.status)}
-                    </Badge>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Badge
+                        variant={
+                          product.status === "active"
+                            ? "success"
+                            : product.status === "archived"
+                            ? "danger"
+                            : "secondary"
+                        }
+                      >
+                        {titleize(product.status)}
+                      </Badge>
+                      <Badge
+                        variant={
+                          product.online_status === "published"
+                            ? "success"
+                            : product.online_status === "draft"
+                            ? "warning"
+                            : "secondary"
+                        }
+                      >
+                        Website: {titleize(product.online_status)}
+                      </Badge>
+                      {!product.website_ready && (
+                        <Badge variant="danger">Missing website details</Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex flex-col items-end gap-1">

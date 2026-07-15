@@ -24,7 +24,8 @@ export default async function EditProductPage({ params }: EditProductPageProps) 
     notFound();
   }
 
-  const canEdit = canManageProducts(auth.profile?.role ?? null);
+  const userRole = auth.profile?.role ?? null;
+  const canEdit = canManageProducts(userRole);
 
   return (
     <div className="space-y-6">
@@ -49,7 +50,7 @@ export default async function EditProductPage({ params }: EditProductPageProps) 
         </CardContent>
       </Card>
 
-      <ProductForm categories={categories} product={product} />
+      <ProductForm categories={categories} product={product} userRole={userRole} />
     </div>
   );
 }

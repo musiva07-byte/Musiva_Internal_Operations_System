@@ -133,3 +133,9 @@ export function canArchiveProducts(userRole: StaffRole | null | undefined) {
 export function canDeleteProducts(userRole: StaffRole | null | undefined) {
   return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
 }
+
+/** Publish/unpublish products to the public website (www.moosivabh.com). Owner and manager only.
+ *  Inventory staff can still prepare website fields and save as draft/hidden via canManageProducts. */
+export function canPublishProducts(userRole: StaffRole | null | undefined) {
+  return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
+}
