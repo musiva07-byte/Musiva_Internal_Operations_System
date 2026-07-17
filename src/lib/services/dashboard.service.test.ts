@@ -440,4 +440,161 @@ describe("getDashboardData", () => {
     expect(result.contactedWebsiteRequests).toBe(0);
     expect(result.latestWebsiteRequestAt).toBeNull();
   });
+
+  // ── Product Cost Summary — buying-cost validity bug fix ─────────────────────
+  // Regression coverage for the "impossible dashboard values" bug: totals were being
+  // summed from latest_landed_cost_bhd/average_landed_cost_bhd, which are also written
+  // by the unrelated Purchase Order flow and can carry bad legacy data. The fix reads
+  // only latest_supplier_unit_cost_inr/latest_exchange_rate_to_bhd and always recalculates
+  // buying price BHD fresh — see getValidBuyingCost in lib/utils/cost-conversion.ts.
+
+  function mockProductVariantsAndRate(rows: unknown[], rate: number | null = 0.00452) {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "product_variants") {
+        return chainResolveAll({ data: rows, error: null });
+      }
+      if (table === "exchange_rates") {
+        return chainResolveAll({ data: rate !== null ? { rate } : null, error: null });
+      }
+      return emptyQuery();
+    });
+  }
+
+  it("excludes a variant with a missing INR price from totals and counts it as missing", async () => {
+    mockProductVariantsAndRate([
+      {
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: 0.00452,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    expect(result.validBuyingCostCount).toBe(0);
+    expect(result.productsMissingBuyingCost).toBe(1);
+    expect(result.totalStockBuyingValueInr).toBe(0);
+    expect(result.totalStockBuyingValueBhd).toBe(0);
+  });
+
+  it("excludes a variant with a missing exchange rate from totals and counts it as missing", async () => {
+    mockProductVariantsAndRate([
+      {
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: null,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    expect(result.validBuyingCostCount).toBe(0);
+    expect(result.productsMissingBuyingCost).toBe(1);
+    expect(result.totalStockBuyingValueBhd).toBe(0);
+  });
+
+  it("computes total buying value INR/BHD from valid INR × rate × quantity only", async () => {
+    mockProductVariantsAndRate([
+      {
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    expect(result.validBuyingCostCount).toBe(1);
+    expect(result.productsMissingBuyingCost).toBe(0);
+    expect(result.totalStockBuyingValueInr).toBeCloseTo(1500 * 5, 3);
+    expect(result.totalStockBuyingValueBhd).toBeCloseTo(6.78 * 5, 3);
+  });
+
+  it("never leaks a corrupted legacy landed-cost column into totals — that column is not even queried", async () => {
+    mockProductVariantsAndRate([
+      {
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        // Simulates the exact bug: a huge stray BHD figure from the purchase-order flow.
+        // The service no longer selects this column at all, so it cannot leak even if present.
+        latest_landed_cost_bhd: 6012099.002,
+        average_landed_cost_bhd: 6012099.002,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    expect(result.totalStockBuyingValueBhd).toBeCloseTo(6.78 * 5, 3);
+    expect(result.totalStockBuyingValueBhd).toBeLessThan(1000);
+  });
+
+  it("never shows an impossible negative gross profit or margin for reasonable valid costs", async () => {
+    mockProductVariantsAndRate([
+      {
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    expect(result.estimatedGrossProfit).toBeGreaterThan(-100);
+    expect(result.estimatedMarginPercent).not.toBeNull();
+    expect(result.estimatedMarginPercent!).toBeGreaterThan(-1000);
+  });
+
+  it("shows zero/null profit fields (not impossible values) when no valid buying cost exists at all", async () => {
+    mockProductVariantsAndRate([
+      {
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    expect(result.validBuyingCostCount).toBe(0);
+    expect(result.estimatedSellingValue).toBe(0);
+    expect(result.estimatedGrossProfit).toBe(0);
+    expect(result.estimatedMarginPercent).toBeNull();
+  });
+
+  it("shows the latest exchange rate when a default is set", async () => {
+    mockProductVariantsAndRate([], 0.00452);
+    const result = await getDashboardData();
+    expect(result.latestExchangeRate).toBe(0.00452);
+  });
+
+  it("shows null (rendered as 'Not set') when no default exchange rate exists", async () => {
+    mockProductVariantsAndRate([], null);
+    const result = await getDashboardData();
+    expect(result.latestExchangeRate).toBeNull();
+  });
 });

@@ -535,15 +535,9 @@ export default async function DashboardPage() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Total stock buying value (INR)</p>
+                  <p className="text-xs text-muted-foreground">Variants with valid buying cost</p>
                   <p className="mt-1 text-lg font-semibold text-musiva-plum">
-                    {formatInr(dashboard.totalStockBuyingValueInr)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Total stock buying value (BHD)</p>
-                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
-                    {formatBhd(dashboard.totalStockBuyingValueBhd)}
+                    {dashboard.validBuyingCostCount}
                   </p>
                 </div>
                 <div>
@@ -554,42 +548,65 @@ export default async function DashboardPage() {
                 </div>
               </div>
 
-              <div className="grid gap-4 border-t border-[hsl(var(--border))] pt-4 sm:grid-cols-3">
-                <div>
-                  <p className="text-xs text-muted-foreground">Estimated selling value</p>
-                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
-                    {formatBhd(dashboard.estimatedSellingValue)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Estimated gross profit</p>
-                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
-                    {formatBhd(dashboard.estimatedGrossProfit)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Estimated margin</p>
-                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
-                    {dashboard.estimatedMarginPercent !== null
-                      ? `${dashboard.estimatedMarginPercent.toFixed(2)}%`
-                      : "—"}
-                  </p>
-                </div>
-              </div>
-
-              {dashboard.lowMarginVariants.length > 0 && (
-                <div className="border-t border-[hsl(var(--border))] pt-4">
-                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Low-margin options (under 20%)
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {dashboard.lowMarginVariants.map((item) => (
-                      <Badge key={item.name} variant="warning">
-                        {item.name}: {item.margin.toFixed(1)}%
-                      </Badge>
-                    ))}
+              {dashboard.validBuyingCostCount === 0 ? (
+                <p className="border-t border-[hsl(var(--border))] pt-4 text-sm text-muted-foreground">
+                  No valid buying cost recorded yet.
+                </p>
+              ) : (
+                <>
+                  <div className="grid gap-4 border-t border-[hsl(var(--border))] pt-4 sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Total stock buying value (INR)</p>
+                      <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                        {formatInr(dashboard.totalStockBuyingValueInr)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Total stock buying value (BHD)</p>
+                      <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                        {formatBhd(dashboard.totalStockBuyingValueBhd)}
+                      </p>
+                    </div>
                   </div>
-                </div>
+
+                  <div className="grid gap-4 border-t border-[hsl(var(--border))] pt-4 sm:grid-cols-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Estimated selling value</p>
+                      <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                        {formatBhd(dashboard.estimatedSellingValue)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Estimated gross profit</p>
+                      <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                        {formatBhd(dashboard.estimatedGrossProfit)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Estimated margin</p>
+                      <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                        {dashboard.estimatedMarginPercent !== null
+                          ? `${dashboard.estimatedMarginPercent.toFixed(2)}%`
+                          : "—"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {dashboard.lowMarginVariants.length > 0 && (
+                    <div className="border-t border-[hsl(var(--border))] pt-4">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Low-margin options (under 20%)
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {dashboard.lowMarginVariants.map((item) => (
+                          <Badge key={item.name} variant="warning">
+                            {item.name}: {item.margin.toFixed(1)}%
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>

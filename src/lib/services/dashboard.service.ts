@@ -2,7 +2,7 @@ import { subDays } from "date-fns";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DELIVERY_STATUSES, ORDER_STATUSES } from "@/lib/constants";
 import { getCurrentExchangeRate } from "./exchange-rate.service";
-import { calcEstimatedMargin } from "@/lib/utils/cost-conversion";
+import { calcEstimatedMargin, getValidBuyingCost } from "@/lib/utils/cost-conversion";
 import type { OrderRow, PaymentStatus } from "@/types/database";
 
 type CostVariantRow = {
@@ -10,8 +10,7 @@ type CostVariantRow = {
   size: string;
   stock_quantity: number;
   latest_supplier_unit_cost_inr: number | null;
-  latest_landed_cost_bhd: number | null;
-  average_landed_cost_bhd: number | null;
+  latest_exchange_rate_to_bhd: number | null;
   regular_selling_price_bhd: number | null;
   selling_price: number;
   products?: { name: string } | null;
@@ -82,9 +81,10 @@ function emptyDashboard(loadError?: string) {
     contactedWebsiteRequests: 0,
     latestWebsiteRequestAt: null as string | null,
     latestExchangeRate: null as number | null,
+    validBuyingCostCount: 0,
+    productsMissingBuyingCost: 0,
     totalStockBuyingValueInr: 0,
     totalStockBuyingValueBhd: 0,
-    productsMissingBuyingCost: 0,
     estimatedSellingValue: 0,
     estimatedGrossProfit: 0,
     estimatedMarginPercent: null as number | null,
@@ -235,34 +235,43 @@ export async function getDashboardData() {
     supabase
       .from("product_variants")
       .select(
-        "color, size, stock_quantity, latest_supplier_unit_cost_inr, latest_landed_cost_bhd, average_landed_cost_bhd, regular_selling_price_bhd, selling_price, products(name)",
+        "color, size, stock_quantity, latest_supplier_unit_cost_inr, latest_exchange_rate_to_bhd, regular_selling_price_bhd, selling_price, products(name)",
       )
       .neq("status", "archived"),
   ]);
 
   const costRows = (costVariants ?? []) as unknown as CostVariantRow[];
+  let validBuyingCostCount = 0;
+  let productsMissingBuyingCost = 0;
   let totalStockBuyingValueInr = 0;
   let totalStockBuyingValueBhd = 0;
-  let productsMissingBuyingCost = 0;
   let estimatedSellingValue = 0;
   const lowMarginCandidates: { name: string; margin: number }[] = [];
 
+  // Totals are computed only from variants with a valid buying cost (see
+  // getValidBuyingCost's doc comment for why latest_landed_cost_bhd /
+  // average_landed_cost_bhd are never trusted here) — mixing valid and missing-cost
+  // variants into the same total is exactly what produced impossible dashboard figures
+  // before this fix.
   for (const row of costRows) {
-    const buyingBhd = row.latest_landed_cost_bhd ?? row.average_landed_cost_bhd;
+    const cost = getValidBuyingCost(row);
+
+    if (!cost) {
+      if (row.stock_quantity > 0) {
+        productsMissingBuyingCost += 1;
+      }
+      continue;
+    }
+
+    validBuyingCostCount += 1;
     const sellingBhd = Number(row.regular_selling_price_bhd ?? row.selling_price);
 
-    if (row.latest_supplier_unit_cost_inr !== null) {
-      totalStockBuyingValueInr += row.latest_supplier_unit_cost_inr * row.stock_quantity;
-    }
-    if (buyingBhd !== null) {
-      totalStockBuyingValueBhd += buyingBhd * row.stock_quantity;
-    } else if (row.stock_quantity > 0) {
-      productsMissingBuyingCost += 1;
-    }
+    totalStockBuyingValueInr += cost.buyingPriceInr * row.stock_quantity;
+    totalStockBuyingValueBhd += cost.buyingPriceBhd * row.stock_quantity;
     estimatedSellingValue += sellingBhd * row.stock_quantity;
 
-    if (buyingBhd !== null && sellingBhd > 0) {
-      const margin = calcEstimatedMargin(sellingBhd, buyingBhd);
+    if (sellingBhd > 0) {
+      const margin = calcEstimatedMargin(sellingBhd, cost.buyingPriceBhd);
       if (margin !== null && margin < 20) {
         lowMarginCandidates.push({
           name: `${row.products?.name ?? "Unknown product"} (${row.color} / ${row.size})`,
@@ -272,9 +281,14 @@ export async function getDashboardData() {
     }
   }
 
-  const estimatedGrossProfit = estimatedSellingValue - totalStockBuyingValueBhd;
+  const hasAnyValidBuyingCost = validBuyingCostCount > 0;
+  const estimatedGrossProfit = hasAnyValidBuyingCost
+    ? estimatedSellingValue - totalStockBuyingValueBhd
+    : 0;
   const estimatedMarginPercent =
-    estimatedSellingValue > 0 ? (estimatedGrossProfit / estimatedSellingValue) * 100 : null;
+    hasAnyValidBuyingCost && estimatedSellingValue > 0
+      ? (estimatedGrossProfit / estimatedSellingValue) * 100
+      : null;
   const lowMarginVariants = lowMarginCandidates.sort((a, b) => a.margin - b.margin).slice(0, 5);
 
   const todayOrderRows = (todayOrders ?? []) as Pick<OrderRow, "grand_total">[];
@@ -338,9 +352,10 @@ export async function getDashboardData() {
     contactedWebsiteRequests: contactedWebsiteRequestsRes.count ?? 0,
     latestWebsiteRequestAt: latestWebsiteRequestRes.data?.created_at ?? null,
     latestExchangeRate: currentRate?.rate ?? null,
+    validBuyingCostCount,
+    productsMissingBuyingCost,
     totalStockBuyingValueInr,
     totalStockBuyingValueBhd,
-    productsMissingBuyingCost,
     estimatedSellingValue,
     estimatedGrossProfit,
     estimatedMarginPercent,

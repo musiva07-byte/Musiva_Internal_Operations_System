@@ -12,7 +12,7 @@ import { getProductImage } from "@/lib/services/product-image.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { canManageProducts, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
 import { formatBhd } from "@/lib/formatters/currency";
-import { formatInr, calcEstimatedProfit, calcEstimatedMargin } from "@/lib/utils/cost-conversion";
+import { formatInr, calcEstimatedProfit, calcEstimatedMargin, getValidBuyingCost } from "@/lib/utils/cost-conversion";
 import { titleize } from "@/lib/formatters/labels";
 
 type ProductDetailPageProps = {
@@ -124,97 +124,124 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
         </Table>
       </Card>
 
-      {showBuyingCost && (
-        <Card className="shadow-soft">
-          <CardHeader>
-            <CardTitle>Buying cost</CardTitle>
-          </CardHeader>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Color / size</TableHead>
-                <TableHead className="text-right">Buying price (INR)</TableHead>
-                <TableHead>Exchange rate used</TableHead>
-                <TableHead className="text-right">Buying price (BHD)</TableHead>
-                <TableHead className="text-right">Selling price (BHD)</TableHead>
-                {showProfit && <TableHead className="text-right">Profit / margin</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {product.variants.map((variant) => {
-                const buyingInr = variant.latest_supplier_unit_cost_inr;
-                const buyingBhd = variant.latest_landed_cost_bhd ?? variant.average_landed_cost_bhd;
-                const rate = variant.latest_exchange_rate_to_bhd;
-                const sellingBhd = variant.regular_selling_price_bhd ?? variant.selling_price;
-                const profit =
-                  showProfit && buyingBhd !== null ? calcEstimatedProfit(sellingBhd, buyingBhd) : null;
-                const margin =
-                  showProfit && buyingBhd !== null ? calcEstimatedMargin(sellingBhd, buyingBhd) : null;
+      {showBuyingCost &&
+        (() => {
+          const rows = product.variants.map((variant) => {
+            const cost = getValidBuyingCost(variant);
+            const sellingBhd = Number(variant.regular_selling_price_bhd ?? variant.selling_price);
+            const profit = showProfit && cost ? calcEstimatedProfit(sellingBhd, cost.buyingPriceBhd) : null;
+            const margin = showProfit && cost ? calcEstimatedMargin(sellingBhd, cost.buyingPriceBhd) : null;
+            return { variant, cost, sellingBhd, profit, margin };
+          });
+          const validCount = rows.filter((r) => r.cost !== null).length;
+          const missingCount = rows.length - validCount;
+          const totalBuyingInr = rows.reduce((sum, r) => sum + (r.cost ? r.cost.buyingPriceInr * r.variant.stock_quantity : 0), 0);
+          const totalBuyingBhd = rows.reduce((sum, r) => sum + (r.cost ? r.cost.buyingPriceBhd * r.variant.stock_quantity : 0), 0);
+          const totalSellingBhd = rows.reduce((sum, r) => sum + (r.cost ? r.sellingBhd * r.variant.stock_quantity : 0), 0);
 
-                return (
-                  <TableRow key={variant.id}>
-                    <TableCell>
-                      {variant.color} / {variant.size}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {buyingInr !== null ? formatInr(buyingInr) : "—"}
-                    </TableCell>
-                    <TableCell>
-                      {rate !== null ? `1 INR = BHD ${Number(rate).toFixed(6)}` : "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {buyingBhd !== null ? (
-                        formatBhd(buyingBhd)
-                      ) : (
-                        <span className="italic text-muted-foreground">Not recorded</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">{formatBhd(sellingBhd)}</TableCell>
-                    {showProfit && (
+          return (
+            <Card className="shadow-soft">
+              <CardHeader>
+                <CardTitle>Buying cost</CardTitle>
+              </CardHeader>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Option</TableHead>
+                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Buy / piece (INR)</TableHead>
+                    <TableHead>Rate used</TableHead>
+                    <TableHead className="text-right">Buy / piece (BHD)</TableHead>
+                    <TableHead className="text-right">Total buy (INR)</TableHead>
+                    <TableHead className="text-right">Total buy (BHD)</TableHead>
+                    <TableHead className="text-right">Selling price (BHD)</TableHead>
+                    {showProfit && <TableHead className="text-right">Profit / margin</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map(({ variant, cost, sellingBhd, profit, margin }) => (
+                    <TableRow key={variant.id}>
+                      <TableCell>
+                        {variant.color} / {variant.size}
+                      </TableCell>
+                      <TableCell className="text-right">{variant.stock_quantity}</TableCell>
                       <TableCell className="text-right">
-                        {profit !== null && margin !== null ? (
-                          `${formatBhd(profit)} · ${margin.toFixed(2)}%`
+                        {cost ? formatInr(cost.buyingPriceInr) : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {cost ? `1 INR = BHD ${cost.exchangeRateToBhd.toFixed(6)}` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {cost ? (
+                          formatBhd(cost.buyingPriceBhd)
                         ) : (
-                          <span className="italic text-muted-foreground">—</span>
+                          <span className="italic text-muted-foreground">Not recorded</span>
                         )}
                       </TableCell>
+                      <TableCell className="text-right">
+                        {cost ? formatInr(cost.buyingPriceInr * variant.stock_quantity) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {cost ? formatBhd(cost.buyingPriceBhd * variant.stock_quantity) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">{formatBhd(sellingBhd)}</TableCell>
+                      {showProfit && (
+                        <TableCell className="text-right">
+                          {profit !== null && margin !== null ? (
+                            `${formatBhd(profit)} · ${margin.toFixed(2)}%`
+                          ) : (
+                            <span className="italic text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <CardContent className="space-y-3 border-t border-[hsl(var(--border))] pt-4 text-sm">
+                <p className="text-muted-foreground">
+                  {validCount} option{validCount !== 1 ? "s" : ""} with recorded buying cost
+                  {missingCount > 0 ? ` · ${missingCount} missing buying cost` : ""}
+                </p>
+                {validCount === 0 ? (
+                  <p className="text-muted-foreground">No valid buying cost recorded yet.</p>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div>
+                      <p className="font-medium text-musiva-plum">Total stock buying value</p>
+                      <p className="mt-1 text-muted-foreground">
+                        {formatInr(totalBuyingInr)} / {formatBhd(totalBuyingBhd)}
+                      </p>
+                    </div>
+                    {showProfit && (
+                      <>
+                        <div>
+                          <p className="font-medium text-musiva-plum">Estimated selling value</p>
+                          <p className="mt-1 text-muted-foreground">{formatBhd(totalSellingBhd)}</p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-musiva-plum">Estimated gross profit</p>
+                          <p className="mt-1 text-muted-foreground">
+                            {formatBhd(totalSellingBhd - totalBuyingBhd)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-musiva-plum">Estimated margin</p>
+                          <p className="mt-1 text-muted-foreground">
+                            {(() => {
+                              const margin = calcEstimatedMargin(totalSellingBhd, totalBuyingBhd);
+                              return margin !== null ? `${margin.toFixed(2)}%` : "—";
+                            })()}
+                          </p>
+                        </div>
+                      </>
                     )}
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-          {showProfit &&
-            (() => {
-              const totalBuyingBhd = product.variants.reduce(
-                (sum, v) => sum + (v.latest_landed_cost_bhd ?? v.average_landed_cost_bhd ?? 0) * v.stock_quantity,
-                0,
-              );
-              const totalSellingBhd = product.variants.reduce(
-                (sum, v) => sum + Number(v.regular_selling_price_bhd ?? v.selling_price) * v.stock_quantity,
-                0,
-              );
-              return (
-                <CardContent className="grid gap-4 border-t border-[hsl(var(--border))] pt-4 text-sm sm:grid-cols-3">
-                  <div>
-                    <p className="font-medium text-musiva-plum">Total stock buying value</p>
-                    <p className="mt-1 text-muted-foreground">{formatBhd(totalBuyingBhd)}</p>
                   </div>
-                  <div>
-                    <p className="font-medium text-musiva-plum">Estimated selling value</p>
-                    <p className="mt-1 text-muted-foreground">{formatBhd(totalSellingBhd)}</p>
-                  </div>
-                  <div>
-                    <p className="font-medium text-musiva-plum">Estimated gross profit</p>
-                    <p className="mt-1 text-muted-foreground">
-                      {formatBhd(totalSellingBhd - totalBuyingBhd)}
-                    </p>
-                  </div>
-                </CardContent>
-              );
-            })()}
-        </Card>
-      )}
+                )}
+              </CardContent>
+            </Card>
+          );
+        })()}
 
       <Card>
         <CardHeader>

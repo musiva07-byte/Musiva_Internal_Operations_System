@@ -20,7 +20,7 @@ import { listInventoryVariants } from "@/lib/services/inventory.service";
 import { getCurrentStaffProfile } from "@/lib/auth/session";
 import { canViewBuyingCost } from "@/lib/auth/permissions";
 import { formatBhd } from "@/lib/formatters/currency";
-import { formatInr } from "@/lib/utils/cost-conversion";
+import { formatInr, getValidBuyingCost } from "@/lib/utils/cost-conversion";
 
 type InventoryPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -194,34 +194,37 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
                   </TableCell>
                   {showCost ? (
                     <TableCell>
-                      <div className="space-y-0.5 text-xs">
-                        {variant.latest_supplier_unit_cost_inr !== null ? (
-                          <p className="text-muted-foreground">
-                            Buying (INR):{" "}
-                            <span className="font-medium text-foreground">
-                              {formatInr(variant.latest_supplier_unit_cost_inr)}
-                            </span>
-                          </p>
-                        ) : null}
-                        {variant.latest_landed_cost_bhd !== null ? (
-                          <p className="text-muted-foreground">
-                            Buying (BHD):{" "}
-                            <span className="font-medium text-foreground">
-                              {formatBhd(variant.latest_landed_cost_bhd)}
-                            </span>
-                          </p>
-                        ) : variant.average_landed_cost_bhd !== null ? null : (
-                          <p className="text-muted-foreground/60 italic">Not recorded</p>
-                        )}
-                        {variant.average_landed_cost_bhd !== null ? (
-                          <p className="text-muted-foreground">
-                            Avg buying:{" "}
-                            <span className="font-medium text-foreground">
-                              {formatBhd(variant.average_landed_cost_bhd)}
-                            </span>
-                          </p>
-                        ) : null}
-                      </div>
+                      {(() => {
+                        const cost = getValidBuyingCost(variant);
+                        if (!cost) {
+                          return (
+                            <div className="space-y-1 text-xs">
+                              <p className="italic text-muted-foreground/60">Not recorded</p>
+                              <Badge className="text-[10px]" variant="secondary">Missing</Badge>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="space-y-0.5 text-xs">
+                            <p className="text-muted-foreground">
+                              Buy: <span className="font-medium text-foreground">{formatInr(cost.buyingPriceInr)}</span>
+                              {" / "}
+                              <span className="font-medium text-foreground">{formatBhd(cost.buyingPriceBhd)}</span>
+                            </p>
+                            <p className="text-muted-foreground">
+                              Total:{" "}
+                              <span className="font-medium text-foreground">
+                                {formatInr(cost.buyingPriceInr * variant.stock_quantity)}
+                              </span>
+                              {" / "}
+                              <span className="font-medium text-foreground">
+                                {formatBhd(cost.buyingPriceBhd * variant.stock_quantity)}
+                              </span>
+                            </p>
+                            <Badge className="text-[10px]" variant="success">Recorded</Badge>
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                   ) : null}
                   <TableCell>

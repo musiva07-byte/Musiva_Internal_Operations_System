@@ -243,6 +243,15 @@ export function ProductWizard({
   const canEnterCost = canEnterBuyingCost(userRole);
   const canViewProfit = canViewCostData(userRole);
   const hasExchangeRate = currentExchangeRate !== null && currentExchangeRate > 0;
+  // Fallback: when no default rate is set in Settings, staff can enter the purchase rate
+  // for this product only (not saved as the new default). Never used when a default exists.
+  const [fallbackRate, setFallbackRate] = useState<number>(0);
+  const effectiveExchangeRate = hasExchangeRate
+    ? currentExchangeRate
+    : fallbackRate > 0
+      ? fallbackRate
+      : null;
+  const hasEffectiveRate = effectiveExchangeRate !== null && effectiveExchangeRate > 0;
 
   // step 4 — image upload after product creation
   const [createdProductId, setCreatedProductId] = useState<string | null>(null);
@@ -273,7 +282,7 @@ export function ProductWizard({
 
   // ── derived values ───────────────────────────────────────────────────────────
 
-  const bulkConvertedCost = deriveVariantConvertedCost(bulkBuyingPriceInr, currentExchangeRate);
+  const bulkConvertedCost = deriveVariantConvertedCost(bulkBuyingPriceInr, effectiveExchangeRate);
   const showBulkPreview = canEnterCost && bulkConvertedCost > 0;
 
   // ── step 1 ───────────────────────────────────────────────────────────────────
@@ -396,7 +405,7 @@ export function ProductWizard({
 
     // Validate cost fields when any variant has a buying price.
     const hasAnyCost = canEnterCost && step3.variants.some((v) => v.buyingPriceInr > 0);
-    if (hasAnyCost && !hasExchangeRate) {
+    if (hasAnyCost && !hasEffectiveRate) {
       setFormError("Enter the INR to BHD exchange rate before saving buying cost.");
       return;
     }
@@ -404,16 +413,21 @@ export function ProductWizard({
     setFormError(null);
     const productSku = step1.sku.trim() || generateProductSku(step1.name);
 
-    // Include opening cost only when at least one variant has a buying price and a
-    // current exchange rate is configured (Settings → Exchange Rates).
+    // Include opening cost only when at least one variant has a buying price and a rate
+    // is available (either the default from Settings, or the per-product fallback rate).
     const sendOpeningCost =
-      hasAnyCost && hasExchangeRate
+      hasAnyCost && hasEffectiveRate
         ? {
             buyingCurrency: "INR",
             buyingPricePerPiece: 0,
-            exchangeRateToBhd: currentExchangeRate!,
-            exchangeRateDate: currentExchangeRateDate ?? new Date().toISOString().slice(0, 10),
-            exchangeRateSource: (currentExchangeRateSource ?? "manual") as "manual" | "bank" | "other",
+            exchangeRateToBhd: effectiveExchangeRate!,
+            exchangeRateDate: hasExchangeRate
+              ? (currentExchangeRateDate ?? new Date().toISOString().slice(0, 10))
+              : new Date().toISOString().slice(0, 10),
+            exchangeRateSource: (hasExchangeRate ? (currentExchangeRateSource ?? "manual") : "manual") as
+              | "manual"
+              | "bank"
+              | "other",
           }
         : null;
 
@@ -720,9 +734,25 @@ export function ProductWizard({
           </CardHeader>
           <CardContent className="space-y-6">
             {canEnterCost && !hasExchangeRate && (
-              <div className="rounded-md border border-musiva-warning/30 bg-musiva-warning/10 px-4 py-3 text-sm text-musiva-warning-foreground">
-                No INR to BHD exchange rate is set. Ask a manager to add today&apos;s rate in
-                Settings.
+              <div className="space-y-3 rounded-md border border-musiva-warning/30 bg-musiva-warning/10 px-4 py-3 text-sm text-musiva-warning-foreground">
+                <p>
+                  No INR to BHD rate is set. Ask a manager to add a default rate, or enter the
+                  purchase rate before saving buying cost.
+                </p>
+                <div className="max-w-xs space-y-1">
+                  <Label className="text-xs" htmlFor="fallback-rate">
+                    Purchase rate for this product (1 INR = ? BHD)
+                  </Label>
+                  <Input
+                    id="fallback-rate"
+                    min={0}
+                    placeholder="0.004520"
+                    step="0.000001"
+                    type="number"
+                    value={fallbackRate || ""}
+                    onChange={(e) => setFallbackRate(Number(e.target.value) || 0)}
+                  />
+                </div>
               </div>
             )}
 
@@ -757,8 +787,8 @@ export function ProductWizard({
                   <div className="space-y-2">
                     <Label>Exchange rate</Label>
                     <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
-                      {hasExchangeRate
-                        ? `1 INR = BHD ${Number(currentExchangeRate).toFixed(6)}`
+                      {hasEffectiveRate
+                        ? `1 INR = BHD ${Number(effectiveExchangeRate).toFixed(6)}`
                         : "Not set — see Settings"}
                     </div>
                   </div>
@@ -852,7 +882,7 @@ export function ProductWizard({
                   <div className="flex justify-between gap-4 text-muted-foreground">
                     <span>Exchange rate</span>
                     <span className="font-medium text-foreground">
-                      1 INR = BHD {Number(currentExchangeRate).toFixed(6)}
+                      1 INR = BHD {Number(effectiveExchangeRate).toFixed(6)}
                     </span>
                   </div>
                   <div className="col-span-full mt-1 flex justify-between gap-4 border-t border-musiva-border pt-2">
@@ -882,7 +912,7 @@ export function ProductWizard({
                 </p>
               ) : (
                 step3.variants.map((v) => {
-                  const vConverted = deriveVariantConvertedCost(v.buyingPriceInr, currentExchangeRate);
+                  const vConverted = deriveVariantConvertedCost(v.buyingPriceInr, effectiveExchangeRate);
                   const profit =
                     canViewProfit && vConverted > 0 && v.regularSellingPriceBhd > 0
                       ? calcEstimatedProfit(v.regularSellingPriceBhd, vConverted)
@@ -1100,7 +1130,7 @@ export function ProductWizard({
                       0,
                     );
                     const totalBuyingBhd = step3.variants.reduce(
-                      (s, v) => s + deriveVariantConvertedCost(v.buyingPriceInr, currentExchangeRate) * v.stockQuantity,
+                      (s, v) => s + deriveVariantConvertedCost(v.buyingPriceInr, effectiveExchangeRate) * v.stockQuantity,
                       0,
                     );
                     const totalSellingBhd = step3.variants.reduce(

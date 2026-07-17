@@ -14,7 +14,14 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { convertToBhd, calcEstimatedProfit, calcEstimatedMargin, roundBhd, formatInr } from "./cost-conversion";
+import {
+  convertToBhd,
+  calcEstimatedProfit,
+  calcEstimatedMargin,
+  roundBhd,
+  formatInr,
+  getValidBuyingCost,
+} from "./cost-conversion";
 import { formatBhd, formatSupplierCurrency } from "@/lib/formatters/currency";
 import { canEnterBuyingCost, canViewCostData, canViewBuyingCost } from "@/lib/auth/permissions";
 import { openingCostSchema } from "@/lib/validations/product.schema";
@@ -48,6 +55,70 @@ describe("convertToBhd", () => {
     const base = convertToBhd(1000, 0.004);
     const doubled = convertToBhd(1000, 0.008);
     expect(roundBhd(doubled)).toBeCloseTo(roundBhd(base) * 2, 3);
+  });
+});
+
+// ── getValidBuyingCost — the centralized validity/calculation rule ──────────────
+// This is the fix for the "impossible dashboard values" bug: latest_landed_cost_bhd /
+// average_landed_cost_bhd are also written by the unrelated Purchase Order flow and can
+// carry bad legacy data, so they must never be trusted. Only latest_supplier_unit_cost_inr
+// and latest_exchange_rate_to_bhd (written exclusively by this workflow) decide validity,
+// and buying price BHD is always recalculated fresh from them.
+
+describe("getValidBuyingCost", () => {
+  it("returns the recalculated buying cost when INR and rate are both present and positive", () => {
+    const result = getValidBuyingCost({
+      latest_supplier_unit_cost_inr: 1500,
+      latest_exchange_rate_to_bhd: 0.00452,
+    });
+    expect(result).not.toBeNull();
+    expect(result!.buyingPriceInr).toBe(1500);
+    expect(result!.exchangeRateToBhd).toBe(0.00452);
+    expect(result!.buyingPriceBhd).toBe(6.78);
+  });
+
+  it("returns null when INR is missing (null)", () => {
+    expect(
+      getValidBuyingCost({ latest_supplier_unit_cost_inr: null, latest_exchange_rate_to_bhd: 0.00452 }),
+    ).toBeNull();
+  });
+
+  it("returns null when INR is 0 or negative", () => {
+    expect(
+      getValidBuyingCost({ latest_supplier_unit_cost_inr: 0, latest_exchange_rate_to_bhd: 0.00452 }),
+    ).toBeNull();
+    expect(
+      getValidBuyingCost({ latest_supplier_unit_cost_inr: -100, latest_exchange_rate_to_bhd: 0.00452 }),
+    ).toBeNull();
+  });
+
+  it("returns null when the exchange rate is missing (null)", () => {
+    expect(
+      getValidBuyingCost({ latest_supplier_unit_cost_inr: 1500, latest_exchange_rate_to_bhd: null }),
+    ).toBeNull();
+  });
+
+  it("returns null when the exchange rate is 0 or negative", () => {
+    expect(
+      getValidBuyingCost({ latest_supplier_unit_cost_inr: 1500, latest_exchange_rate_to_bhd: 0 }),
+    ).toBeNull();
+    expect(
+      getValidBuyingCost({ latest_supplier_unit_cost_inr: 1500, latest_exchange_rate_to_bhd: -0.004 }),
+    ).toBeNull();
+  });
+
+  it("ignores any stored converted/landed BHD figure entirely — it is not part of the input", () => {
+    // The type doesn't even accept latest_landed_cost_bhd / average_landed_cost_bhd —
+    // this documents that the function's only inputs are INR and rate.
+    const withHugeLegacyValue = {
+      latest_supplier_unit_cost_inr: 1500,
+      latest_exchange_rate_to_bhd: 0.00452,
+      // Simulates a corrupted legacy column that must never influence the result.
+      latest_landed_cost_bhd: 6012099.002,
+    };
+    const result = getValidBuyingCost(withHugeLegacyValue);
+    expect(result!.buyingPriceBhd).toBe(6.78);
+    expect(result!.buyingPriceBhd).not.toBe(6012099.002);
   });
 });
 
