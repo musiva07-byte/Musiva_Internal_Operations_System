@@ -55,6 +55,18 @@ export function getAllowedNextStatuses(
   return candidates.filter((next) => permissionForTransition(currentStatus, next)(role));
 }
 
+/**
+ * Enriches a page of website request rows with the allowed-next-statuses for this viewer's
+ * role, computed once server-side so the card/table UI can render its per-row action buttons
+ * without importing this service module (which pulls in server-only Supabase client code).
+ */
+export function withAllowedNextStatuses<T extends { status: WebsiteOrderRequestStatus }>(
+  rows: T[],
+  role: StaffRole | null | undefined,
+): (T & { allowedNextStatuses: WebsiteOrderRequestStatus[] })[] {
+  return rows.map((row) => ({ ...row, allowedNextStatuses: getAllowedNextStatuses(row.status, role) }));
+}
+
 export async function listWebsiteRequests(
   filters: WebsiteRequestFilters = {},
 ): Promise<PaginatedResult<WebsiteOrderRequestRow>> {

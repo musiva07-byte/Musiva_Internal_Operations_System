@@ -39,6 +39,7 @@ import {
   listWebsiteRequestTabCounts,
   listWebsiteRequests,
   updateWebsiteRequestStatus,
+  withAllowedNextStatuses,
 } from "./website-request.service";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -239,6 +240,49 @@ describe("getAllowedNextStatuses", () => {
 
   it("returns nothing for an unauthenticated/null role", () => {
     expect(getAllowedNextStatuses("new", null)).toEqual([]);
+  });
+});
+
+// ── withAllowedNextStatuses (card-friendly list enrichment) ─────────────────────
+
+describe("withAllowedNextStatuses", () => {
+  it("attaches per-row allowedNextStatuses without altering the original row data", () => {
+    const rows = [
+      { ...baseRequest, status: "new" as const },
+      { ...baseRequest, id: "req-2", status: "confirmed" as const },
+    ];
+
+    const enriched = withAllowedNextStatuses(rows, "manager");
+
+    expect(enriched).toHaveLength(2);
+    expect(enriched[0]).toMatchObject({ id: "req-1", status: "new" });
+    expect(enriched[0].allowedNextStatuses).toEqual(["contacted", "confirmed", "cancelled"]);
+    expect(enriched[1]).toMatchObject({ id: "req-2", status: "confirmed" });
+    expect(enriched[1].allowedNextStatuses).toEqual(["cancelled"]);
+  });
+
+  it("gives sales/inventory staff a narrower set than owner/manager for the same rows", () => {
+    const rows = [{ ...baseRequest, status: "new" as const }];
+
+    const staffView = withAllowedNextStatuses(rows, "sales_staff");
+    const managerView = withAllowedNextStatuses(rows, "manager");
+
+    expect(staffView[0].allowedNextStatuses).toEqual(["contacted"]);
+    expect(managerView[0].allowedNextStatuses).toEqual(["contacted", "confirmed", "cancelled"]);
+  });
+
+  it("never exposes cost, profit, sku, or barcode fields on enriched rows", () => {
+    const rows = [{ ...baseRequest, status: "new" as const }];
+    const enriched = withAllowedNextStatuses(rows, "owner");
+    const serialized = JSON.stringify(enriched).toLowerCase();
+
+    for (const forbidden of ["cost_price", "landed_cost", "profit", "margin", "supplier", "barcode", "sku"]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("returns an empty array unchanged", () => {
+    expect(withAllowedNextStatuses([], "owner")).toEqual([]);
   });
 });
 

@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import { WebsiteRequestQueue } from "@/components/website-requests/website-request-queue";
-import { listWebsiteRequestTabCounts, listWebsiteRequests } from "@/lib/services/website-request.service";
+import {
+  listWebsiteRequestTabCounts,
+  listWebsiteRequests,
+  withAllowedNextStatuses,
+} from "@/lib/services/website-request.service";
+import { getCurrentAuthState } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
   title: "Website Requests",
@@ -16,6 +21,7 @@ function getParam(params: Record<string, string | string[] | undefined>, key: st
 }
 
 const VALID_TABS = new Set(["new", "contacted", "confirmed", "cancelled", "all"]);
+const VALID_VIEWS = new Set(["card", "table"]);
 
 export default async function WebsiteRequestsPage({ searchParams }: WebsiteRequestsPageProps) {
   const params = await searchParams;
@@ -28,13 +34,23 @@ export default async function WebsiteRequestsPage({ searchParams }: WebsiteReque
     | "cancelled"
     | "all";
 
+  const rawView = getParam(params, "view");
+  const view = (VALID_VIEWS.has(rawView) ? rawView : "card") as "card" | "table";
+
   const q = getParam(params, "q");
   const page = Number(getParam(params, "page") || 1);
 
-  const [requests, tabCounts] = await Promise.all([
+  const [requests, tabCounts, { profile }] = await Promise.all([
     listWebsiteRequests({ tab, q, page }),
     listWebsiteRequestTabCounts(),
+    getCurrentAuthState(),
   ]);
+
+  const role = profile?.role;
+  const enrichedRequests = {
+    ...requests,
+    data: withAllowedNextStatuses(requests.data, role),
+  };
 
   return (
     <div className="space-y-6">
@@ -44,16 +60,18 @@ export default async function WebsiteRequestsPage({ searchParams }: WebsiteReque
         </p>
         <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Website order requests</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Checkout requests from www.moosivabh.com, newest first. These are pending requests —
-          confirming one here does not create an order or deduct stock.
+          Website requests are pending WhatsApp leads. Confirming here does not create an order or
+          deduct stock.
         </p>
       </header>
 
       <WebsiteRequestQueue
-        requests={requests}
+        requests={enrichedRequests}
         tabCounts={tabCounts}
         currentTab={tab}
         currentQ={q}
+        currentView={view}
+        role={role}
       />
     </div>
   );

@@ -20,6 +20,8 @@ import type {
   StockMovementRow,
   StockStatus,
   SupplierRow,
+  WebsiteOrderRequestRow,
+  WebsiteOrderRequestStatus,
 } from "./database";
 
 export type ProductWithRelations = ProductRow & {
@@ -237,4 +239,10 @@ export type WebsiteRequestTabCounts = {
   confirmed: number;
   cancelled: number;
   all: number;
+};
+
+/** A website request row enriched with which statuses this viewer's role may move it to —
+ *  precomputed server-side so card/table UI never needs to import the service layer. */
+export type WebsiteRequestListItem = WebsiteOrderRequestRow & {
+  allowedNextStatuses: WebsiteOrderRequestStatus[];
 };
