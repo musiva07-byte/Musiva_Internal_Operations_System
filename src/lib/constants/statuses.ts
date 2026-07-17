@@ -218,6 +218,43 @@ export const FULFILMENT_METHOD_LABELS: Record<string, string> = {
   delivery: "Delivery",
 };
 
+export const WEBSITE_REQUEST_STATUSES = {
+  new: "new",
+  contacted: "contacted",
+  confirmed: "confirmed",
+  cancelled: "cancelled",
+} as const;
+
+export const WEBSITE_REQUEST_PAYMENT_PREFERENCES = {
+  cashOnDelivery: "cash_on_delivery",
+  benefitpay: "benefitpay",
+  bankTransfer: "bank_transfer",
+  paymentLink: "payment_link",
+} as const;
+
+/** Matches the customer-facing labels in the moosiva-website project's own
+ *  lib/constants/bahrain.ts PAYMENT_PREFERENCE_LABELS — kept identical so staff see the
+ *  same brand-consistent wording the customer chose at checkout. */
+export const WEBSITE_REQUEST_PAYMENT_PREFERENCE_LABELS: Record<string, string> = {
+  cash_on_delivery: "Cash on Delivery",
+  benefitpay: "BenefitPay",
+  bank_transfer: "Bank Transfer",
+  payment_link: "Payment Link",
+};
+
+/**
+ * Website order request state machine (base transitions — role-gating happens in
+ * lib/services/website-request.service.ts via canDecideWebsiteRequest). "new" can go
+ * straight to "confirmed"/"cancelled" as well as "contacted", matching Unit 2F's spec.
+ * "cancelled" is terminal for everyone except an owner reopening it back to "new".
+ */
+export const WEBSITE_REQUEST_NEXT_STATUSES: Record<string, string[]> = {
+  new: ["contacted", "confirmed", "cancelled"],
+  contacted: ["confirmed", "cancelled"],
+  confirmed: ["cancelled"],
+  cancelled: ["new"],
+};
+
 export const EXPENSE_CATEGORIES = {
   productPurchase: "product_purchase",
   packaging: "packaging",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildWhatsAppMessage, buildWhatsAppUrl } from "./whatsapp";
+import { buildWebsiteRequestFollowUpMessage, buildWhatsAppMessage, buildWhatsAppUrl } from "./whatsapp";
 
 // ── buildWhatsAppMessage ──────────────────────────────────────────────────────
 
@@ -130,5 +130,56 @@ describe("buildWhatsAppUrl", () => {
     const url = buildWhatsAppUrl("33331101", "Line1\nLine2");
     expect(url).toContain("text=");
     expect(url).not.toContain("\n");
+  });
+});
+
+// ── buildWebsiteRequestFollowUpMessage ─────────────────────────────────────────
+
+describe("buildWebsiteRequestFollowUpMessage", () => {
+  it("matches the required example format exactly", () => {
+    const msg = buildWebsiteRequestFollowUpMessage({
+      customerName: "Fatima Ali",
+      requestNumber: "MWR-20260716-0001",
+    });
+    expect(msg).toBe(
+      "Hello Fatima Ali, thank you for your Moosiva request MWR-20260716-0001. We are checking availability and will confirm payment and delivery shortly.",
+    );
+  });
+
+  it("includes the customer name", () => {
+    const msg = buildWebsiteRequestFollowUpMessage({
+      customerName: "Sara",
+      requestNumber: "MWR-20260716-0002",
+    });
+    expect(msg).toContain("Sara");
+  });
+
+  it("includes the request number", () => {
+    const msg = buildWebsiteRequestFollowUpMessage({
+      customerName: "Sara",
+      requestNumber: "MWR-20260716-0002",
+    });
+    expect(msg).toContain("MWR-20260716-0002");
+  });
+
+  it("never includes cost, profit, or margin fields", () => {
+    const msg = buildWebsiteRequestFollowUpMessage({
+      customerName: "Sara",
+      requestNumber: "MWR-20260716-0002",
+    });
+    const lower = msg.toLowerCase();
+    for (const forbidden of ["cost", "profit", "margin", "supplier"]) {
+      expect(lower).not.toContain(forbidden);
+    }
+  });
+
+  it("builds a valid wa.me URL when combined with buildWhatsAppUrl", () => {
+    const msg = buildWebsiteRequestFollowUpMessage({
+      customerName: "Sara",
+      requestNumber: "MWR-20260716-0002",
+    });
+    const url = buildWhatsAppUrl("+97333331101", msg);
+    expect(url).toContain("wa.me/97333331101");
+    expect(url).toContain("text=");
   });
 });

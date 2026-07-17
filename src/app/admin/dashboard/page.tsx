@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CheckCircle2,
   CircleDollarSign,
+  Globe,
   PackageCheck,
   PackagePlus,
   Plus,
@@ -32,7 +33,15 @@ export default async function DashboardPage() {
   const codOrders = dashboard.paymentSummary.find((item) => item.status === "cod")?.count ?? 0;
   const allSalesZero = dashboard.salesChart.every((day) => day.total === 0);
 
-  const cards = [
+  type DashboardCard = {
+    title: string;
+    value: string;
+    helper: string;
+    icon: React.ElementType;
+    href?: string;
+  };
+
+  const cards: DashboardCard[] = [
     {
       title: "Today sales",
       value: formatBhd(dashboard.todaySales),
@@ -56,6 +65,15 @@ export default async function DashboardPage() {
       value: String(dashboard.pendingDeliveries),
       helper: "Packed, courier, and delivery queue.",
       icon: Truck,
+    },
+    {
+      title: "Website requests",
+      value: String(dashboard.newWebsiteRequests),
+      helper: `${dashboard.contactedWebsiteRequests} contacted · latest ${
+        dashboard.latestWebsiteRequestAt ? formatDateTime(dashboard.latestWebsiteRequestAt) : "—"
+      }`,
+      icon: Globe,
+      href: "/admin/website-requests?tab=new",
     },
   ];
 
@@ -229,13 +247,16 @@ export default async function DashboardPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         {cards.map((card) => {
           const Icon = card.icon;
-          return (
+          const content = (
             <Card
-              key={card.title}
-              className="border-musiva-champagne/60 bg-musiva-porcelain shadow-soft"
+              className={
+                card.href
+                  ? "border-musiva-champagne/60 bg-musiva-porcelain shadow-soft transition-colors hover:border-musiva-pink"
+                  : "border-musiva-champagne/60 bg-musiva-porcelain shadow-soft"
+              }
             >
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -250,6 +271,14 @@ export default async function DashboardPage() {
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">{card.helper}</p>
               </CardContent>
             </Card>
+          );
+
+          return card.href ? (
+            <Link key={card.title} href={card.href}>
+              {content}
+            </Link>
+          ) : (
+            <div key={card.title}>{content}</div>
           );
         })}
       </section>

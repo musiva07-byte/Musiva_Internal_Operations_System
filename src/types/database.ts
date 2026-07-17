@@ -81,6 +81,12 @@ export type PurchaseStatus =
   | "received"
   | "cancelled";
 export type PurchasePaymentStatus = "unpaid" | "partial" | "paid";
+export type WebsiteOrderRequestStatus = "new" | "contacted" | "confirmed" | "cancelled";
+export type WebsiteRequestPaymentPreference =
+  | "cash_on_delivery"
+  | "benefitpay"
+  | "bank_transfer"
+  | "payment_link";
 export type ExpenseCategory =
   | "product_purchase"
   | "packaging"
@@ -390,6 +396,48 @@ export type AuditLogRow = {
   created_at: string;
 };
 
+/**
+ * Created by the public ecommerce website (www.moosivabh.com), NOT this project —
+ * see moosiva-website/database/migrations/202607171000_create_website_order_requests.sql
+ * for the authoritative table definition. This is a pending customer request, never a
+ * final order: no stock is deducted, no order/order_items row exists for it.
+ *
+ * RLS: enabled with zero policies for INSERT/DELETE (only the website's service-role key
+ * may create rows). This project's own migration
+ * (database/migrations/202607171100_website_order_requests_staff_access.sql) adds
+ * `to authenticated` SELECT/UPDATE policies so staff can view and update status here.
+ */
+export type WebsiteOrderRequestRow = {
+  id: string;
+  request_number: string;
+  product_id: string;
+  product_variant_id: string;
+  product_name_snapshot: string;
+  color_snapshot: string | null;
+  size_snapshot: string | null;
+  quantity: number;
+  unit_price_snapshot: number;
+  total_snapshot: number;
+  customer_name: string;
+  mobile_display: string;
+  mobile_normalized: string;
+  whatsapp_display: string;
+  whatsapp_normalized: string;
+  governorate: string;
+  area: string;
+  block: string | null;
+  road: string | null;
+  building: string | null;
+  flat: string | null;
+  landmark: string | null;
+  delivery_notes: string | null;
+  payment_preference: WebsiteRequestPaymentPreference;
+  status: WebsiteOrderRequestStatus;
+  whatsapp_message: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ReturnRow = {
   id: string;
   original_order_id: string;
@@ -601,6 +649,9 @@ export interface Database {
       delivery_status_history: TableDefinition<DeliveryStatusHistoryRow, InsertableCreated<DeliveryStatusHistoryRow>>;
       delivery_charge_rules: TableDefinition<DeliveryChargeRuleRow, Insertable<DeliveryChargeRuleRow>>;
       audit_logs: TableDefinition<AuditLogRow, InsertableCreated<AuditLogRow>>;
+      // Insert type included for completeness only — this project never inserts rows here,
+      // it only reads/updates status. See WebsiteOrderRequestRow's doc comment above.
+      website_order_requests: TableDefinition<WebsiteOrderRequestRow, Insertable<WebsiteOrderRequestRow>>;
       returns: TableDefinition<ReturnRow, Insertable<ReturnRow>>;
       return_items: TableDefinition<ReturnItemRow, InsertableCreated<ReturnItemRow>>;
       suppliers: TableDefinition<SupplierRow, Insertable<SupplierRow>>;

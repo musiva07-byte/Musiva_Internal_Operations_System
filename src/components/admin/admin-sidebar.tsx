@@ -7,6 +7,7 @@ import {
   BarChart3,
   Boxes,
   RefreshCcw,
+  Globe,
   LayoutDashboard,
   MonitorDot,
   Package,
@@ -48,6 +49,7 @@ function buildNavGroups(role: StaffRole | null | undefined): NavGroup[] {
     { name: "Orders", href: "/admin/orders", icon: ShoppingBag },
     { name: "Customers", href: "/admin/customers", icon: Users },
     { name: "Deliveries", href: "/admin/deliveries", icon: Truck },
+    { name: "Website Requests", href: "/admin/website-requests", icon: Globe },
   ];
 
   const catalogStock: NavItem[] = [

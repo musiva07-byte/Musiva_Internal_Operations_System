@@ -402,4 +402,42 @@ describe("getDashboardData", () => {
     await getDashboardData();
     expect(mockRpc).toHaveBeenCalledWith("get_stock_alert_counts");
   });
+
+  // ── Website requests (Unit 2F) ────────────────────────────────────────────
+
+  it("computes new/contacted website request counts and latest request time from real data", async () => {
+    let wsCall = 0;
+    const wsResults = [
+      { count: 4, error: null }, // new
+      { count: 2, error: null }, // contacted
+      { data: { created_at: "2026-07-16T22:13:31.489157+00:00" }, error: null }, // latest
+    ];
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "website_order_requests") {
+        return chainResolveAll(wsResults[wsCall++]);
+      }
+      return emptyQuery();
+    });
+
+    const result = await getDashboardData();
+
+    expect(result.newWebsiteRequests).toBe(4);
+    expect(result.contactedWebsiteRequests).toBe(2);
+    expect(result.latestWebsiteRequestAt).toBe("2026-07-16T22:13:31.489157+00:00");
+  });
+
+  it("defaults website request fields to zero/null when none exist", async () => {
+    const result = await getDashboardData();
+    expect(result.newWebsiteRequests).toBe(0);
+    expect(result.contactedWebsiteRequests).toBe(0);
+    expect(result.latestWebsiteRequestAt).toBeNull();
+  });
+
+  it("returns zero/null website request fields when Supabase is unavailable", async () => {
+    mockCreateClient.mockResolvedValue(null);
+    const result = await getDashboardData();
+    expect(result.newWebsiteRequests).toBe(0);
+    expect(result.contactedWebsiteRequests).toBe(0);
+    expect(result.latestWebsiteRequestAt).toBeNull();
+  });
 });

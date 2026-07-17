@@ -139,3 +139,31 @@ export function canDeleteProducts(userRole: StaffRole | null | undefined) {
 export function canPublishProducts(userRole: StaffRole | null | undefined) {
   return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
 }
+
+/** View website order requests (customer checkout requests from www.moosivabh.com) and
+ *  mark them contacted / open WhatsApp. Sales and inventory staff need this to follow up. */
+export function canViewWebsiteRequests(userRole: StaffRole | null | undefined) {
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.salesStaff ||
+    userRole === STAFF_ROLES.inventoryStaff
+  );
+}
+
+/** Mark a website request as contacted. Same roles as canViewWebsiteRequests. */
+export function canContactWebsiteRequest(userRole: StaffRole | null | undefined) {
+  return canViewWebsiteRequests(userRole);
+}
+
+/** Confirm or cancel a website request (and, in a later unit, convert it to a real order).
+ *  Owner and manager only — this is a business decision, not a follow-up task. */
+export function canDecideWebsiteRequest(userRole: StaffRole | null | undefined) {
+  return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
+}
+
+/** Reopen a cancelled website request back to "new". Owner only — cancellation is meant
+ *  to be terminal; reopening is a rare override, not a routine action. */
+export function canReopenWebsiteRequest(userRole: StaffRole | null | undefined) {
+  return userRole === STAFF_ROLES.owner;
+}

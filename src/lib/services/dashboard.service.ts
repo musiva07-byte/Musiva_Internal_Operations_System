@@ -64,6 +64,9 @@ function emptyDashboard(loadError?: string) {
     salesChart: [] as { label: string; total: number }[],
     paymentSummary: [] as { status: PaymentStatus; count: number }[],
     deliverySummary: [] as { status: string; count: number }[],
+    newWebsiteRequests: 0,
+    contactedWebsiteRequests: 0,
+    latestWebsiteRequestAt: null as string | null,
   };
 }
 
@@ -182,6 +185,27 @@ export async function getDashboardData() {
     return emptyDashboard(LOAD_ERROR);
   }
 
+  // Website requests (from www.moosivabh.com) — kept as its own lenient batch so a problem
+  // here (e.g. RLS policies not yet applied) degrades to zero counts instead of failing the
+  // whole dashboard.
+  const [newWebsiteRequestsRes, contactedWebsiteRequestsRes, latestWebsiteRequestRes] =
+    await Promise.all([
+      supabase
+        .from("website_order_requests")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "new"),
+      supabase
+        .from("website_order_requests")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "contacted"),
+      supabase
+        .from("website_order_requests")
+        .select("created_at")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
   const todayOrderRows = (todayOrders ?? []) as Pick<OrderRow, "grand_total">[];
   const monthOrderRows = (monthOrders ?? []) as Pick<
     OrderRow,
@@ -239,5 +263,8 @@ export async function getDashboardData() {
     salesChart: lastSevenDays,
     paymentSummary: [...paymentMap.entries()].map(([status, count]) => ({ status, count })),
     deliverySummary,
+    newWebsiteRequests: newWebsiteRequestsRes.count ?? 0,
+    contactedWebsiteRequests: contactedWebsiteRequestsRes.count ?? 0,
+    latestWebsiteRequestAt: latestWebsiteRequestRes.data?.created_at ?? null,
   };
 }

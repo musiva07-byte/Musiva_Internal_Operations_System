@@ -230,3 +230,11 @@ export type DeliveryTabCounts = {
   delivered: number;
   all: number;
 };
+
+export type WebsiteRequestTabCounts = {
+  new: number;
+  contacted: number;
+  confirmed: number;
+  cancelled: number;
+  all: number;
+};
