@@ -1,7 +1,21 @@
 import { subDays } from "date-fns";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DELIVERY_STATUSES, ORDER_STATUSES } from "@/lib/constants";
+import { getCurrentExchangeRate } from "./exchange-rate.service";
+import { calcEstimatedMargin } from "@/lib/utils/cost-conversion";
 import type { OrderRow, PaymentStatus } from "@/types/database";
+
+type CostVariantRow = {
+  color: string;
+  size: string;
+  stock_quantity: number;
+  latest_supplier_unit_cost_inr: number | null;
+  latest_landed_cost_bhd: number | null;
+  average_landed_cost_bhd: number | null;
+  regular_selling_price_bhd: number | null;
+  selling_price: number;
+  products?: { name: string } | null;
+};
 
 type OrderRelationRow = OrderRow & {
   customers?: { full_name: string; mobile: string } | null;
@@ -67,6 +81,14 @@ function emptyDashboard(loadError?: string) {
     newWebsiteRequests: 0,
     contactedWebsiteRequests: 0,
     latestWebsiteRequestAt: null as string | null,
+    latestExchangeRate: null as number | null,
+    totalStockBuyingValueInr: 0,
+    totalStockBuyingValueBhd: 0,
+    productsMissingBuyingCost: 0,
+    estimatedSellingValue: 0,
+    estimatedGrossProfit: 0,
+    estimatedMarginPercent: null as number | null,
+    lowMarginVariants: [] as { name: string; margin: number }[],
   };
 }
 
@@ -206,6 +228,55 @@ export async function getDashboardData() {
         .maybeSingle(),
     ]);
 
+  // Product Cost Summary (owner/manager/accountant) — its own lenient batch so a problem
+  // here degrades to zero/empty values instead of failing the whole dashboard.
+  const [currentRate, { data: costVariants }] = await Promise.all([
+    getCurrentExchangeRate("INR"),
+    supabase
+      .from("product_variants")
+      .select(
+        "color, size, stock_quantity, latest_supplier_unit_cost_inr, latest_landed_cost_bhd, average_landed_cost_bhd, regular_selling_price_bhd, selling_price, products(name)",
+      )
+      .neq("status", "archived"),
+  ]);
+
+  const costRows = (costVariants ?? []) as unknown as CostVariantRow[];
+  let totalStockBuyingValueInr = 0;
+  let totalStockBuyingValueBhd = 0;
+  let productsMissingBuyingCost = 0;
+  let estimatedSellingValue = 0;
+  const lowMarginCandidates: { name: string; margin: number }[] = [];
+
+  for (const row of costRows) {
+    const buyingBhd = row.latest_landed_cost_bhd ?? row.average_landed_cost_bhd;
+    const sellingBhd = Number(row.regular_selling_price_bhd ?? row.selling_price);
+
+    if (row.latest_supplier_unit_cost_inr !== null) {
+      totalStockBuyingValueInr += row.latest_supplier_unit_cost_inr * row.stock_quantity;
+    }
+    if (buyingBhd !== null) {
+      totalStockBuyingValueBhd += buyingBhd * row.stock_quantity;
+    } else if (row.stock_quantity > 0) {
+      productsMissingBuyingCost += 1;
+    }
+    estimatedSellingValue += sellingBhd * row.stock_quantity;
+
+    if (buyingBhd !== null && sellingBhd > 0) {
+      const margin = calcEstimatedMargin(sellingBhd, buyingBhd);
+      if (margin !== null && margin < 20) {
+        lowMarginCandidates.push({
+          name: `${row.products?.name ?? "Unknown product"} (${row.color} / ${row.size})`,
+          margin,
+        });
+      }
+    }
+  }
+
+  const estimatedGrossProfit = estimatedSellingValue - totalStockBuyingValueBhd;
+  const estimatedMarginPercent =
+    estimatedSellingValue > 0 ? (estimatedGrossProfit / estimatedSellingValue) * 100 : null;
+  const lowMarginVariants = lowMarginCandidates.sort((a, b) => a.margin - b.margin).slice(0, 5);
+
   const todayOrderRows = (todayOrders ?? []) as Pick<OrderRow, "grand_total">[];
   const monthOrderRows = (monthOrders ?? []) as Pick<
     OrderRow,
@@ -266,5 +337,13 @@ export async function getDashboardData() {
     newWebsiteRequests: newWebsiteRequestsRes.count ?? 0,
     contactedWebsiteRequests: contactedWebsiteRequestsRes.count ?? 0,
     latestWebsiteRequestAt: latestWebsiteRequestRes.data?.created_at ?? null,
+    latestExchangeRate: currentRate?.rate ?? null,
+    totalStockBuyingValueInr,
+    totalStockBuyingValueBhd,
+    productsMissingBuyingCost,
+    estimatedSellingValue,
+    estimatedGrossProfit,
+    estimatedMarginPercent,
+    lowMarginVariants,
   };
 }

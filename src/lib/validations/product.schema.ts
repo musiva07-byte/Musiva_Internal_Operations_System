@@ -11,6 +11,9 @@ import { PRODUCT_STATUSES, STOCK_MOVEMENT_TYPES } from "@/lib/constants";
  *   exchangeRateToBhd = 1 supplier-currency unit in BHD (multiply direction).
  *   Example: 1 INR = 0.004520 BHD → exchangeRateToBhd = 0.004520
  *   converted_cost_bhd = buyingPricePerPiece × exchangeRateToBhd
+ *
+ * No import/shipping/customs cost is collected here — this workflow only converts
+ * currency. Buying price BHD is always the converted cost, nothing is added to it.
  */
 export const openingCostSchema = z.object({
   buyingCurrency: z.string().min(1).default("INR"),
@@ -28,11 +31,6 @@ export const openingCostSchema = z.object({
   exchangeRateSource: z
     .enum(["manual", "bank", "other"])
     .default("manual"),
-  /** Extra BHD cost per piece (shipping, customs, packaging, etc.). */
-  extraImportCostBhd: z.coerce
-    .number()
-    .min(0, "Import cost cannot be negative.")
-    .default(0),
 });
 
 const optionalText = z.preprocess(
@@ -95,11 +93,6 @@ export const productVariantSchema = z
     status: z.enum([PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.archived, PRODUCT_STATUSES.draft]),
     /** Buying price in INR for this specific variant (per-variant cost entry). */
     buyingPriceInr: z.coerce.number().min(0).optional().default(0),
-    /** Override the shared openingCost landed cost for this specific variant only. */
-    landedCostOverrideBhd: z.preprocess(
-      (v) => (v === "" || v === null || v === undefined ? null : v),
-      z.coerce.number().min(0, "Landed cost cannot be negative.").nullable().optional(),
-    ),
   })
   .refine(
     (v) =>

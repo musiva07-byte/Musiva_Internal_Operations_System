@@ -124,6 +124,13 @@ export function canManageExchangeRates(userRole: StaffRole | null | undefined) {
   return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
 }
 
+/** View buying price (INR/BHD) without necessarily seeing profit/margin: anyone who can
+ *  enter it (owner/manager/inventory_staff) plus accountant (view-only). Sales staff and
+ *  delivery coordinators are excluded from both and see neither. */
+export function canViewBuyingCost(userRole: StaffRole | null | undefined) {
+  return canEnterBuyingCost(userRole) || canViewCostData(userRole);
+}
+
 /** Archive and restore products. Owner and manager only. */
 export function canArchiveProducts(userRole: StaffRole | null | undefined) {
   return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;

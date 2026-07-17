@@ -218,6 +218,10 @@ export type ProductVariantRow = {
   discount_end_at: string | null;
   latest_landed_cost_bhd: number | null;
   average_landed_cost_bhd: number | null;
+  /** Buying price in INR that produced latest_landed_cost_bhd (multiply-direction rate). */
+  latest_supplier_unit_cost_inr: number | null;
+  /** 1 INR expressed in BHD, as used for latest_landed_cost_bhd. */
+  latest_exchange_rate_to_bhd: number | null;
   stock_quantity: number;
   minimum_stock: number;
   status: ProductStatus;
@@ -524,6 +528,8 @@ export type PurchaseOrderItemRow = {
   created_at: string;
 };
 
+/** rate = 1 unit of quote_currency expressed in BHD (multiply direction) for rows managed
+ *  through Settings → Exchange Rates. See 202607171400_exchange_rate_settings.sql. */
 export type ExchangeRateRow = {
   id: string;
   base_currency: string;
@@ -532,7 +538,11 @@ export type ExchangeRateRow = {
   rate_date: string;
   source: string;
   is_manual: boolean;
+  is_active: boolean;
+  created_by: string | null;
+  updated_by: string | null;
   created_at: string;
+  updated_at: string;
 };
 
 export type InventoryBatchRow = {
@@ -718,6 +728,15 @@ export interface Database {
           p_purchase_order_id: string;
         };
         Returns: PurchaseOrderRow;
+      };
+      set_exchange_rate: {
+        Args: {
+          p_quote_currency: string;
+          p_rate: number;
+          p_effective_date: string;
+          p_source?: string;
+        };
+        Returns: ExchangeRateRow;
       };
       recalculate_average_landed_cost: {
         Args: {

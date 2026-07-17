@@ -18,8 +18,9 @@ import { ProductThumbnail } from "@/components/products/product-thumbnail";
 import { StockBadge } from "@/components/products/stock-badge";
 import { listInventoryVariants } from "@/lib/services/inventory.service";
 import { getCurrentStaffProfile } from "@/lib/auth/session";
-import { canViewCostData } from "@/lib/auth/permissions";
+import { canViewBuyingCost } from "@/lib/auth/permissions";
 import { formatBhd } from "@/lib/formatters/currency";
+import { formatInr } from "@/lib/utils/cost-conversion";
 
 type InventoryPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -39,7 +40,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
   const page = Number(getParam(params, "page") ?? 1);
   const variants = await listInventoryVariants({ q, stock, productStatus, page });
 
-  const showCost = canViewCostData(profile?.role);
+  const showCost = canViewBuyingCost(profile?.role);
 
   const hrefForPage = (nextPage: number) => {
     const next = new URLSearchParams();
@@ -123,7 +124,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
               <TableHead>Available</TableHead>
               <TableHead>Alert at</TableHead>
               <TableHead>Status</TableHead>
-              {showCost ? <TableHead>Cost</TableHead> : null}
+              {showCost ? <TableHead>Buying cost</TableHead> : null}
               <TableHead>Price</TableHead>
               <TableHead className="w-12" />
             </TableRow>
@@ -194,26 +195,27 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
                   {showCost ? (
                     <TableCell>
                       <div className="space-y-0.5 text-xs">
+                        {variant.latest_supplier_unit_cost_inr !== null ? (
+                          <p className="text-muted-foreground">
+                            Buying (INR):{" "}
+                            <span className="font-medium text-foreground">
+                              {formatInr(variant.latest_supplier_unit_cost_inr)}
+                            </span>
+                          </p>
+                        ) : null}
                         {variant.latest_landed_cost_bhd !== null ? (
                           <p className="text-muted-foreground">
-                            Landed:{" "}
+                            Buying (BHD):{" "}
                             <span className="font-medium text-foreground">
                               {formatBhd(variant.latest_landed_cost_bhd)}
                             </span>
                           </p>
-                        ) : variant.average_landed_cost_bhd !== null ? null : variant.cost_price > 0 ? (
-                          <p className="text-muted-foreground">
-                            Cost:{" "}
-                            <span className="font-medium text-foreground">
-                              {formatBhd(variant.cost_price)}
-                            </span>
-                          </p>
-                        ) : (
+                        ) : variant.average_landed_cost_bhd !== null ? null : (
                           <p className="text-muted-foreground/60 italic">Not recorded</p>
                         )}
                         {variant.average_landed_cost_bhd !== null ? (
                           <p className="text-muted-foreground">
-                            Avg:{" "}
+                            Avg buying:{" "}
                             <span className="font-medium text-foreground">
                               {formatBhd(variant.average_landed_cost_bhd)}
                             </span>

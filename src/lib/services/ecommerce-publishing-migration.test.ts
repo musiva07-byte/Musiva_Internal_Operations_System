@@ -155,6 +155,10 @@ const FORBIDDEN_COLUMNS = [
   "cost_price",
   "latest_landed_cost_bhd",
   "average_landed_cost_bhd",
+  // Product buying-cost workflow (Unit: exchange-rate settings) — INR buying price and
+  // the rate used to convert it must never reach the public website either.
+  "latest_supplier_unit_cost_inr",
+  "latest_exchange_rate_to_bhd",
   "variant_sku",
   "barcode",
   "minimum_stock",

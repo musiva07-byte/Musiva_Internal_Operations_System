@@ -1,30 +1,22 @@
 /**
  * Tests for the INR→BHD cost-conversion helpers.
  *
- * Covers the 10 areas specified in the product-buying-cost spec:
+ * Covers the areas specified in the product-buying-cost spec:
  *  1. INR to BHD conversion
- *  2. Final landed cost calculation
- *  3. Estimated profit preview
- *  4. Permission-based cost visibility (delegated to permissions.test.ts)
- *  5. Opening-stock batch creation (service integration — covered in product-lifecycle.test.ts)
- *  6. Per-variant cost override
- *  7. Missing-cost display (zero / null guards)
- *  8. Historical exchange-rate snapshot (verified via schema)
- *  9. Invalid exchange rate rejection
- * 10. BHD / INR formatting
+ *  2. Estimated profit / margin preview (no import cost — buying price BHD is the only
+ *     cost basis in this workflow)
+ *  3. Permission-based cost visibility (delegated to permissions.test.ts)
+ *  4. Opening-stock batch creation (service integration — covered in product-lifecycle.test.ts)
+ *  5. Missing-cost display (zero / null guards)
+ *  6. Historical exchange-rate snapshot (verified via schema)
+ *  7. Invalid exchange rate rejection
+ *  8. BHD / INR formatting
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  convertToBhd,
-  calcLandedCost,
-  calcEstimatedProfit,
-  calcEstimatedMargin,
-  roundBhd,
-  formatInr,
-} from "./cost-conversion";
+import { convertToBhd, calcEstimatedProfit, calcEstimatedMargin, roundBhd, formatInr } from "./cost-conversion";
 import { formatBhd, formatSupplierCurrency } from "@/lib/formatters/currency";
-import { canEnterBuyingCost, canViewCostData } from "@/lib/auth/permissions";
+import { canEnterBuyingCost, canViewCostData, canViewBuyingCost } from "@/lib/auth/permissions";
 import { openingCostSchema } from "@/lib/validations/product.schema";
 
 // ── 1. INR to BHD conversion ─────────────────────────────────────────────────
@@ -59,42 +51,25 @@ describe("convertToBhd", () => {
   });
 });
 
-// ── 2. Final landed cost calculation ─────────────────────────────────────────
-
-describe("calcLandedCost", () => {
-  it("adds import cost to converted cost", () => {
-    // Spec example: BHD 6.780 + BHD 0.700 = BHD 7.480
-    expect(calcLandedCost(6.78, 0.7)).toBeCloseTo(7.48, 3);
-  });
-
-  it("returns converted cost when import cost is 0", () => {
-    expect(calcLandedCost(6.78, 0)).toBe(6.78);
-  });
-
-  it("handles zero converted cost", () => {
-    expect(calcLandedCost(0, 1.5)).toBe(1.5);
-  });
-
-  it("full spec example end-to-end", () => {
-    const converted = roundBhd(convertToBhd(1500, 0.00452));
-    const landed = roundBhd(calcLandedCost(converted, 0.7));
-    expect(landed).toBe(7.48);
-  });
-});
-
-// ── 3. Estimated profit preview ───────────────────────────────────────────────
+// ── 2. Estimated profit / margin preview ──────────────────────────────────────
 
 describe("calcEstimatedProfit", () => {
-  it("returns positive profit when selling price exceeds landed cost", () => {
+  it("returns positive profit when selling price exceeds buying price", () => {
     expect(calcEstimatedProfit(12.0, 7.48)).toBeCloseTo(4.52, 3);
   });
 
-  it("returns 0 when selling price equals landed cost", () => {
+  it("returns 0 when selling price equals buying price", () => {
     expect(calcEstimatedProfit(7.48, 7.48)).toBeCloseTo(0, 3);
   });
 
-  it("returns negative profit (loss) when landed cost exceeds selling price", () => {
+  it("returns negative profit (loss) when buying price exceeds selling price", () => {
     expect(calcEstimatedProfit(5.0, 7.48)).toBeCloseTo(-2.48, 3);
+  });
+
+  it("full spec example: selling 11.000, buying 6.780 → profit 4.220", () => {
+    const buyingBhd = roundBhd(convertToBhd(1500, 0.00452));
+    expect(buyingBhd).toBe(6.78);
+    expect(roundBhd(calcEstimatedProfit(11.0, buyingBhd))).toBeCloseTo(4.22, 3);
   });
 });
 
@@ -119,9 +94,16 @@ describe("calcEstimatedMargin", () => {
     expect(margin).not.toBeNull();
     expect(margin!).toBeLessThan(0);
   });
+
+  it("full spec example: selling 11.000, buying 6.780 → margin ~38.36%", () => {
+    const buyingBhd = roundBhd(convertToBhd(1500, 0.00452));
+    const margin = calcEstimatedMargin(11.0, buyingBhd);
+    expect(margin).not.toBeNull();
+    expect(margin!).toBeCloseTo(38.36, 1);
+  });
 });
 
-// ── 4. Permission-based cost visibility ──────────────────────────────────────
+// ── 3. Permission-based cost visibility ──────────────────────────────────────
 
 describe("canEnterBuyingCost (permission)", () => {
   it("grants owner", () => expect(canEnterBuyingCost("owner")).toBe(true));
@@ -143,30 +125,23 @@ describe("canViewCostData (permission)", () => {
   it("denies null", () => expect(canViewCostData(null)).toBe(false));
 });
 
-// ── 6. Per-variant cost override ──────────────────────────────────────────────
-
-describe("per-variant landed cost override", () => {
-  it("override replaces global landed cost for profit calculation", () => {
-    const globalLanded = roundBhd(calcLandedCost(roundBhd(convertToBhd(1500, 0.00452)), 0.7));
-    const override = 5.0; // cheaper variant
-    const sellingPrice = 12.0;
-
-    const globalProfit = calcEstimatedProfit(sellingPrice, globalLanded);
-    const overrideProfit = calcEstimatedProfit(sellingPrice, override);
-
-    expect(overrideProfit).toBeGreaterThan(globalProfit);
-    expect(overrideProfit).toBeCloseTo(7.0, 3);
+describe("canViewBuyingCost (permission)", () => {
+  it("grants owner, manager, inventory_staff, and accountant", () => {
+    expect(canViewBuyingCost("owner")).toBe(true);
+    expect(canViewBuyingCost("manager")).toBe(true);
+    expect(canViewBuyingCost("inventory_staff")).toBe(true);
+    expect(canViewBuyingCost("accountant")).toBe(true);
   });
 
-  it("per-variant override of null falls back to global cost", () => {
-    const override: number | null = null;
-    const globalLanded = 7.48;
-    const effectiveLanded = override ?? globalLanded;
-    expect(effectiveLanded).toBe(7.48);
+  it("denies sales_staff and delivery_coordinator", () => {
+    expect(canViewBuyingCost("sales_staff")).toBe(false);
+    expect(canViewBuyingCost("delivery_coordinator")).toBe(false);
   });
+
+  it("denies null", () => expect(canViewBuyingCost(null)).toBe(false));
 });
 
-// ── 7. Missing-cost display ───────────────────────────────────────────────────
+// ── 4. Missing-cost display ───────────────────────────────────────────────────
 
 describe("missing cost display guard", () => {
   it("formatBhd returns BHD 0.000 for zero (existing behaviour)", () => {
@@ -177,15 +152,15 @@ describe("missing cost display guard", () => {
     expect(formatBhd(null)).toBe("BHD 0.000");
   });
 
-  it("UI should show 'Not recorded' instead of BHD 0.000 for null landed cost", () => {
-    // This is a UI guard — verified by checking the null path in inventory page.
+  it("UI should show 'Not recorded' instead of BHD 0.000 for null buying cost", () => {
+    // This is a UI guard — verified by checking the null path in inventory/product pages.
     // The service stores null (not 0) for missing cost, so UI receives null.
-    const landedCost: number | null = null;
-    expect(landedCost).toBeNull();
+    const buyingCostBhd: number | null = null;
+    expect(buyingCostBhd).toBeNull();
   });
 });
 
-// ── 8. Historical exchange-rate snapshot (schema validation) ─────────────────
+// ── 5. Historical exchange-rate snapshot (schema validation) ─────────────────
 
 describe("openingCostSchema — historical snapshot fields", () => {
   it("accepts valid opening cost snapshot", () => {
@@ -195,7 +170,6 @@ describe("openingCostSchema — historical snapshot fields", () => {
       exchangeRateToBhd: 0.00452,
       exchangeRateDate: "2026-07-08",
       exchangeRateSource: "manual",
-      extraImportCostBhd: 0.7,
     });
     expect(result.success).toBe(true);
   });
@@ -207,7 +181,6 @@ describe("openingCostSchema — historical snapshot fields", () => {
       exchangeRateToBhd: 0.0046,
       exchangeRateDate: "2026-01-15",
       exchangeRateSource: "bank",
-      extraImportCostBhd: 1.2,
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -215,9 +188,24 @@ describe("openingCostSchema — historical snapshot fields", () => {
       expect(result.data.exchangeRateSource).toBe("bank");
     }
   });
+
+  it("does not accept an import-cost field — it is not part of this workflow", () => {
+    const result = openingCostSchema.safeParse({
+      buyingCurrency: "INR",
+      buyingPricePerPiece: 1500,
+      exchangeRateToBhd: 0.00452,
+      exchangeRateDate: "2026-07-08",
+      exchangeRateSource: "manual",
+      extraImportCostBhd: 5, // should simply be ignored/stripped, never used
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect((result.data as Record<string, unknown>).extraImportCostBhd).toBeUndefined();
+    }
+  });
 });
 
-// ── 9. Invalid exchange rate rejection ────────────────────────────────────────
+// ── 6. Invalid exchange rate rejection ────────────────────────────────────────
 
 describe("openingCostSchema — validation", () => {
   it("rejects zero exchange rate", () => {
@@ -227,7 +215,6 @@ describe("openingCostSchema — validation", () => {
       exchangeRateToBhd: 0,
       exchangeRateDate: "2026-07-08",
       exchangeRateSource: "manual",
-      extraImportCostBhd: 0,
     });
     expect(result.success).toBe(false);
   });
@@ -239,7 +226,6 @@ describe("openingCostSchema — validation", () => {
       exchangeRateToBhd: -0.004,
       exchangeRateDate: "2026-07-08",
       exchangeRateSource: "manual",
-      extraImportCostBhd: 0,
     });
     expect(result.success).toBe(false);
   });
@@ -251,19 +237,6 @@ describe("openingCostSchema — validation", () => {
       exchangeRateToBhd: 0.00452,
       exchangeRateDate: "2026-07-08",
       exchangeRateSource: "manual",
-      extraImportCostBhd: 0,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects negative import cost", () => {
-    const result = openingCostSchema.safeParse({
-      buyingCurrency: "INR",
-      buyingPricePerPiece: 1500,
-      exchangeRateToBhd: 0.00452,
-      exchangeRateDate: "2026-07-08",
-      exchangeRateSource: "manual",
-      extraImportCostBhd: -1,
     });
     expect(result.success).toBe(false);
   });
@@ -275,7 +248,6 @@ describe("openingCostSchema — validation", () => {
       exchangeRateToBhd: 0.00452,
       exchangeRateDate: "2026-07-08",
       exchangeRateSource: "manual",
-      extraImportCostBhd: 0,
     });
     expect(result.success).toBe(true);
   });
@@ -287,28 +259,13 @@ describe("openingCostSchema — validation", () => {
       exchangeRateToBhd: 0.00452,
       exchangeRateDate: "",
       exchangeRateSource: "manual",
-      extraImportCostBhd: 0,
     });
     // Schema accepts empty date — service/wizard enforces non-empty when price > 0.
     expect(result.success).toBe(false); // exchangeRateDate min(1) fails
   });
-
-  it("defaults extraImportCostBhd to 0 when not provided", () => {
-    const result = openingCostSchema.safeParse({
-      buyingCurrency: "INR",
-      buyingPricePerPiece: 1500,
-      exchangeRateToBhd: 0.00452,
-      exchangeRateDate: "2026-07-08",
-      exchangeRateSource: "manual",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.extraImportCostBhd).toBe(0);
-    }
-  });
 });
 
-// ── 10. BHD / INR formatting ─────────────────────────────────────────────────
+// ── 7. BHD / INR formatting ─────────────────────────────────────────────────
 
 describe("BHD formatting", () => {
   it("formats BHD with 3 decimal places and BHD prefix", () => {

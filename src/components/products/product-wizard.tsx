@@ -4,7 +4,6 @@ import { useState, useTransition, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Check,
-  ChevronDown,
   ChevronRight,
   ImageOff,
   Loader2,
@@ -26,7 +25,6 @@ import { uploadProductImageAction } from "@/app/admin/products/image-actions";
 import { formatBhd } from "@/lib/formatters/currency";
 import {
   convertToBhd,
-  calcLandedCost,
   calcEstimatedProfit,
   calcEstimatedMargin,
   roundBhd,
@@ -39,6 +37,11 @@ import type { CategoryRow, StaffRole } from "@/types/database";
 type ProductWizardProps = {
   categories: CategoryRow[];
   userRole: StaffRole | null;
+  /** Current INR → BHD rate from Settings → Exchange Rates (multiply direction), or null
+   *  if no manager has set one yet. Auto-fills the wizard — staff never type a rate here. */
+  currentExchangeRate: number | null;
+  currentExchangeRateDate: string | null;
+  currentExchangeRateSource: string | null;
 };
 
 const MAX_IMAGE_MB = 5;
@@ -65,20 +68,10 @@ type Step2Data = {
   sizes: string[];
 };
 
-/** Extension of GeneratedVariant that carries per-variant buying price and cost details. */
+/** Extension of GeneratedVariant that carries per-variant buying price. Buying price BHD
+ *  is always calculated (converted from INR) — there is no manual override. */
 type WizardVariant = GeneratedVariant & {
   buyingPriceInr: number;
-  landedCostOverrideBhd: number | null;
-  showCostDetails: boolean;
-};
-
-type OpeningCostState = {
-  buyingCurrency: string;
-  buyingPricePerPiece: number;
-  exchangeRateToBhd: number;
-  exchangeRateDate: string;
-  exchangeRateSource: "manual" | "bank" | "other";
-  extraImportCostBhd: number;
 };
 
 type Step3Data = {
@@ -87,19 +80,14 @@ type Step3Data = {
 
 // ── derived cost calculations ─────────────────────────────────────────────────
 
-function deriveVariantConvertedCost(buyingPriceInr: number, exchangeRateToBhd: number): number {
-  if (!buyingPriceInr || !exchangeRateToBhd) return 0;
-  return roundBhd(convertToBhd(buyingPriceInr, exchangeRateToBhd));
-}
-
-function deriveVariantLandedCost(
+/** Buying price converted to BHD. Returns 0 without a valid (>0) exchange rate — buying
+ *  price can never be converted without one, per the buying-cost workflow's rules. */
+function deriveVariantConvertedCost(
   buyingPriceInr: number,
-  exchangeRateToBhd: number,
-  extraImportCostBhd: number,
+  exchangeRateToBhd: number | null,
 ): number {
-  const converted = deriveVariantConvertedCost(buyingPriceInr, exchangeRateToBhd);
-  if (!converted) return 0;
-  return roundBhd(calcLandedCost(converted, extraImportCostBhd));
+  if (!buyingPriceInr || !exchangeRateToBhd || exchangeRateToBhd <= 0) return 0;
+  return roundBhd(convertToBhd(buyingPriceInr, exchangeRateToBhd));
 }
 
 // ── chip input ─────────────────────────────────────────────────────────────────
@@ -238,7 +226,13 @@ function ProfitBadge({ profit, margin }: { profit: number; margin: number | null
 
 // ── main wizard ────────────────────────────────────────────────────────────────
 
-export function ProductWizard({ categories, userRole }: ProductWizardProps) {
+export function ProductWizard({
+  categories,
+  userRole,
+  currentExchangeRate,
+  currentExchangeRateDate,
+  currentExchangeRateSource,
+}: ProductWizardProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [step, setStep] = useState<WizardStep>(1);
@@ -248,14 +242,7 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
   // Role-based cost permissions.
   const canEnterCost = canEnterBuyingCost(userRole);
   const canViewProfit = canViewCostData(userRole);
-  const [openingCost, setOpeningCost] = useState<OpeningCostState>({
-    buyingCurrency: "INR",
-    buyingPricePerPiece: 0,
-    exchangeRateToBhd: 0,
-    exchangeRateDate: "",
-    exchangeRateSource: "manual",
-    extraImportCostBhd: 0,
-  });
+  const hasExchangeRate = currentExchangeRate !== null && currentExchangeRate > 0;
 
   // step 4 — image upload after product creation
   const [createdProductId, setCreatedProductId] = useState<string | null>(null);
@@ -286,22 +273,8 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
 
   // ── derived values ───────────────────────────────────────────────────────────
 
-  const bulkConvertedCost = deriveVariantConvertedCost(
-    bulkBuyingPriceInr,
-    openingCost.exchangeRateToBhd,
-  );
-  const bulkLandedCost = deriveVariantLandedCost(
-    bulkBuyingPriceInr,
-    openingCost.exchangeRateToBhd,
-    openingCost.extraImportCostBhd,
-  );
+  const bulkConvertedCost = deriveVariantConvertedCost(bulkBuyingPriceInr, currentExchangeRate);
   const showBulkPreview = canEnterCost && bulkConvertedCost > 0;
-
-  // ── cost field updater ───────────────────────────────────────────────────────
-
-  function updateCost<K extends keyof OpeningCostState>(key: K, value: OpeningCostState[K]) {
-    setOpeningCost((prev) => ({ ...prev, [key]: value }));
-  }
 
   // ── step 1 ───────────────────────────────────────────────────────────────────
 
@@ -359,8 +332,6 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
       variants: generated.map((v) => ({
         ...v,
         buyingPriceInr: 0,
-        landedCostOverrideBhd: null,
-        showCostDetails: false,
       })),
     });
     setStep(3);
@@ -401,26 +372,6 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
     }));
   }
 
-  function updateVariantCostOverride(color: string, size: string, value: number | null) {
-    setStep3((prev) => ({
-      variants: prev.variants.map((v) =>
-        v.color === color && v.size === size
-          ? { ...v, landedCostOverrideBhd: value }
-          : v,
-      ),
-    }));
-  }
-
-  function toggleCostDetails(color: string, size: string) {
-    setStep3((prev) => ({
-      variants: prev.variants.map((v) =>
-        v.color === color && v.size === size
-          ? { ...v, showCostDetails: !v.showCostDetails }
-          : v,
-      ),
-    }));
-  }
-
   function applyBulkAll() {
     setStep3((prev) => ({
       variants: prev.variants.map((v) => ({
@@ -445,34 +396,24 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
 
     // Validate cost fields when any variant has a buying price.
     const hasAnyCost = canEnterCost && step3.variants.some((v) => v.buyingPriceInr > 0);
-    if (hasAnyCost) {
-      if (!openingCost.exchangeRateToBhd || openingCost.exchangeRateToBhd <= 0) {
-        setFormError("Exchange rate is required when a buying price is entered.");
-        return;
-      }
-      if (!openingCost.exchangeRateDate) {
-        setFormError("Exchange rate date is required.");
-        return;
-      }
-      if (openingCost.extraImportCostBhd < 0) {
-        setFormError("Import cost cannot be negative.");
-        return;
-      }
+    if (hasAnyCost && !hasExchangeRate) {
+      setFormError("Enter the INR to BHD exchange rate before saving buying cost.");
+      return;
     }
 
     setFormError(null);
     const productSku = step1.sku.trim() || generateProductSku(step1.name);
 
-    // Include opening cost only when at least one variant has a buying price.
+    // Include opening cost only when at least one variant has a buying price and a
+    // current exchange rate is configured (Settings → Exchange Rates).
     const sendOpeningCost =
-      hasAnyCost && openingCost.exchangeRateToBhd > 0
+      hasAnyCost && hasExchangeRate
         ? {
-            buyingCurrency: openingCost.buyingCurrency,
+            buyingCurrency: "INR",
             buyingPricePerPiece: 0,
-            exchangeRateToBhd: openingCost.exchangeRateToBhd,
-            exchangeRateDate: openingCost.exchangeRateDate,
-            exchangeRateSource: openingCost.exchangeRateSource,
-            extraImportCostBhd: openingCost.extraImportCostBhd,
+            exchangeRateToBhd: currentExchangeRate!,
+            exchangeRateDate: currentExchangeRateDate ?? new Date().toISOString().slice(0, 10),
+            exchangeRateSource: (currentExchangeRateSource ?? "manual") as "manual" | "bank" | "other",
           }
         : null;
 
@@ -515,7 +456,6 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
           minimumStock: v.minimumStock,
           status: "active",
           buyingPriceInr: v.buyingPriceInr,
-          landedCostOverrideBhd: v.landedCostOverrideBhd,
         })),
         images: [],
       });
@@ -779,13 +719,19 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
             </p>
           </CardHeader>
           <CardContent className="space-y-6">
+            {canEnterCost && !hasExchangeRate && (
+              <div className="rounded-md border border-musiva-warning/30 bg-musiva-warning/10 px-4 py-3 text-sm text-musiva-warning-foreground">
+                No INR to BHD exchange rate is set. Ask a manager to add today&apos;s rate in
+                Settings.
+              </div>
+            )}
 
             {/* ── Bulk setters (cost-entry users) ──────────────────── */}
             {canEnterCost ? (
               <div className="space-y-4 rounded-md bg-musiva-ivory p-4">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <div className="space-y-2">
-                    <Label htmlFor="bulk-price">Selling price (BHD)</Label>
+                    <Label htmlFor="bulk-price">Selling price for all options (BHD)</Label>
                     <Input
                       id="bulk-price"
                       min={0}
@@ -797,7 +743,7 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="bulk-buy-inr">Buying price (INR)</Label>
+                    <Label htmlFor="bulk-buy-inr">Buying price in India for all options (INR)</Label>
                     <Input
                       id="bulk-buy-inr"
                       min={0}
@@ -809,32 +755,12 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="exchange-rate">Exchange rate (1 INR = ? BHD)</Label>
-                    <Input
-                      id="exchange-rate"
-                      min={0}
-                      placeholder="0.004520"
-                      step="0.000001"
-                      type="number"
-                      value={openingCost.exchangeRateToBhd || ""}
-                      onChange={(e) =>
-                        updateCost("exchangeRateToBhd", Number(e.target.value) || 0)
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="import-cost">Import cost per piece (BHD)</Label>
-                    <Input
-                      id="import-cost"
-                      min={0}
-                      placeholder="0.000"
-                      step="0.001"
-                      type="number"
-                      value={openingCost.extraImportCostBhd || ""}
-                      onChange={(e) =>
-                        updateCost("extraImportCostBhd", Number(e.target.value) || 0)
-                      }
-                    />
+                    <Label>Exchange rate</Label>
+                    <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                      {hasExchangeRate
+                        ? `1 INR = BHD ${Number(currentExchangeRate).toFixed(6)}`
+                        : "Not set — see Settings"}
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="bulk-min">Low-stock alert (units)</Label>
@@ -861,38 +787,6 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
                     />
                   </div>
                 </div>
-
-                {/* Rate date + source — shown once exchange rate is entered */}
-                {openingCost.exchangeRateToBhd > 0 && (
-                  <div className="grid gap-4 border-t border-musiva-border/40 pt-3 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="rate-date">Rate date</Label>
-                      <Input
-                        id="rate-date"
-                        type="date"
-                        value={openingCost.exchangeRateDate}
-                        onChange={(e) => updateCost("exchangeRateDate", e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="rate-source">Rate source</Label>
-                      <Select
-                        id="rate-source"
-                        value={openingCost.exchangeRateSource}
-                        onChange={(e) =>
-                          updateCost(
-                            "exchangeRateSource",
-                            e.target.value as "manual" | "bank" | "other",
-                          )
-                        }
-                      >
-                        <option value="manual">Manual entry</option>
-                        <option value="bank">Bank rate</option>
-                        <option value="other">Other</option>
-                      </Select>
-                    </div>
-                  </div>
-                )}
 
                 <div className="flex items-center justify-between gap-4">
                   <Button type="button" variant="outline" onClick={applyBulkAll}>
@@ -946,7 +840,7 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
             {showBulkPreview && (
               <div className="rounded-md border border-musiva-border bg-musiva-ivory px-4 py-3 text-sm">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-musiva-gold">
-                  Cost preview (bulk)
+                  Buying cost preview (bulk)
                 </p>
                 <div className="grid gap-1 tabular-nums sm:grid-cols-2">
                   <div className="flex justify-between gap-4 text-muted-foreground">
@@ -958,33 +852,21 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
                   <div className="flex justify-between gap-4 text-muted-foreground">
                     <span>Exchange rate</span>
                     <span className="font-medium text-foreground">
-                      1 INR = BHD {openingCost.exchangeRateToBhd.toFixed(6)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-4 text-muted-foreground">
-                    <span>Converted cost</span>
-                    <span className="font-medium text-foreground">
-                      {formatBhd(bulkConvertedCost)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-4 text-muted-foreground">
-                    <span>Import cost</span>
-                    <span className="font-medium text-foreground">
-                      {formatBhd(openingCost.extraImportCostBhd)}
+                      1 INR = BHD {Number(currentExchangeRate).toFixed(6)}
                     </span>
                   </div>
                   <div className="col-span-full mt-1 flex justify-between gap-4 border-t border-musiva-border pt-2">
-                    <span className="font-semibold text-musiva-plum">Landed cost</span>
+                    <span className="font-semibold text-musiva-plum">Buying price (BHD)</span>
                     <span className="font-semibold text-musiva-plum">
-                      {formatBhd(bulkLandedCost)}
+                      {formatBhd(bulkConvertedCost)}
                     </span>
                   </div>
-                  {canViewProfit && bulkPrice > 0 && bulkLandedCost > 0 && (
+                  {canViewProfit && bulkPrice > 0 && bulkConvertedCost > 0 && (
                     <div className="col-span-full flex items-center gap-2 pt-1">
                       <span className="text-xs text-muted-foreground">Est. profit:</span>
                       <ProfitBadge
-                        margin={calcEstimatedMargin(bulkPrice, bulkLandedCost)}
-                        profit={calcEstimatedProfit(bulkPrice, bulkLandedCost)}
+                        margin={calcEstimatedMargin(bulkPrice, bulkConvertedCost)}
+                        profit={calcEstimatedProfit(bulkPrice, bulkConvertedCost)}
                       />
                     </div>
                   )}
@@ -1000,41 +882,27 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
                 </p>
               ) : (
                 step3.variants.map((v) => {
-                  const vConverted = deriveVariantConvertedCost(
-                    v.buyingPriceInr,
-                    openingCost.exchangeRateToBhd,
-                  );
-                  const vLanded = vConverted > 0
-                    ? deriveVariantLandedCost(
-                        v.buyingPriceInr,
-                        openingCost.exchangeRateToBhd,
-                        openingCost.extraImportCostBhd,
-                      )
-                    : 0;
-                  const effectiveLanded =
-                    v.landedCostOverrideBhd != null
-                      ? v.landedCostOverrideBhd
-                      : vLanded > 0
-                      ? vLanded
-                      : null;
+                  const vConverted = deriveVariantConvertedCost(v.buyingPriceInr, currentExchangeRate);
                   const profit =
-                    canViewProfit && effectiveLanded !== null && v.regularSellingPriceBhd > 0
-                      ? calcEstimatedProfit(v.regularSellingPriceBhd, effectiveLanded)
+                    canViewProfit && vConverted > 0 && v.regularSellingPriceBhd > 0
+                      ? calcEstimatedProfit(v.regularSellingPriceBhd, vConverted)
                       : null;
                   const margin =
-                    canViewProfit && effectiveLanded !== null && v.regularSellingPriceBhd > 0
-                      ? calcEstimatedMargin(v.regularSellingPriceBhd, effectiveLanded)
+                    canViewProfit && vConverted > 0 && v.regularSellingPriceBhd > 0
+                      ? calcEstimatedMargin(v.regularSellingPriceBhd, vConverted)
                       : null;
-                  const hasCostForVariant = canEnterCost && vConverted > 0;
+                  const belowCost =
+                    vConverted > 0 &&
+                    v.regularSellingPriceBhd > 0 &&
+                    v.regularSellingPriceBhd < vConverted;
 
                   return (
                     <div
                       key={`${v.color}-${v.size}`}
                       className="rounded-md border border-musiva-border bg-white"
                     >
-                      {/* Main row */}
                       {canEnterCost ? (
-                        <div className="grid items-end gap-2 p-3 sm:grid-cols-[1fr_100px_100px_64px_64px_32px_28px]">
+                        <div className="grid items-end gap-2 p-3 sm:grid-cols-[1fr_100px_100px_90px_64px_64px_32px]">
                           {/* Name + SKU + profit */}
                           <div className="min-w-0">
                             <p className="truncate font-medium text-musiva-plum">
@@ -1085,6 +953,13 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
                               }
                             />
                           </div>
+                          {/* Buying price BHD — calculated, read-only */}
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Buy (BHD)</Label>
+                            <div className="flex h-10 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
+                              {vConverted > 0 ? formatBhd(vConverted) : "—"}
+                            </div>
+                          </div>
                           {/* Starting qty */}
                           <div className="space-y-1">
                             <Label className="text-[11px]">Qty</Label>
@@ -1127,25 +1002,6 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
                             onClick={() => removeVariant(v.color, v.size)}
                           >
                             <Trash2 aria-hidden className="h-4 w-4" />
-                          </button>
-                          {/* Expand toggle */}
-                          <button
-                            aria-label={
-                              v.showCostDetails
-                                ? `Hide cost details for ${v.color} / ${v.size}`
-                                : `Show cost details for ${v.color} / ${v.size}`
-                            }
-                            className="flex h-9 w-7 items-center justify-center rounded text-muted-foreground hover:text-musiva-plum"
-                            type="button"
-                            onClick={() => toggleCostDetails(v.color, v.size)}
-                          >
-                            <ChevronDown
-                              aria-hidden
-                              className={cn(
-                                "h-4 w-4 transition-transform",
-                                v.showCostDetails ? "rotate-180" : "",
-                              )}
-                            />
                           </button>
                         </div>
                       ) : (
@@ -1217,100 +1073,10 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
                         </div>
                       )}
 
-                      {/* Per-variant cost details (expand) */}
-                      {canEnterCost && v.showCostDetails && (
-                        <div className="border-t border-dashed border-musiva-border px-4 pb-4 pt-3">
-                          <div className="space-y-3">
-                            {hasCostForVariant && (
-                              <div className="rounded bg-musiva-ivory px-3 py-2 text-sm tabular-nums">
-                                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-musiva-gold">
-                                  Cost breakdown
-                                </p>
-                                <div className="space-y-0.5">
-                                  <div className="flex justify-between gap-4 text-muted-foreground">
-                                    <span>Buying price</span>
-                                    <span className="font-medium text-foreground">
-                                      {formatInr(v.buyingPriceInr)}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between gap-4 text-muted-foreground">
-                                    <span>Converted cost</span>
-                                    <span className="font-medium text-foreground">
-                                      {formatBhd(vConverted)}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between gap-4 text-muted-foreground">
-                                    <span>Import cost</span>
-                                    <span className="font-medium text-foreground">
-                                      {formatBhd(openingCost.extraImportCostBhd)}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between gap-4 border-t border-musiva-border pt-1">
-                                    <span className="font-semibold text-musiva-plum">
-                                      Landed cost
-                                    </span>
-                                    <span className="font-semibold text-musiva-plum">
-                                      {formatBhd(vLanded)}
-                                    </span>
-                                  </div>
-                                  {profit !== null && margin !== null && (
-                                    <div className="flex items-center gap-2 pt-0.5">
-                                      <span className="text-xs text-muted-foreground">
-                                        Est. profit:
-                                      </span>
-                                      <ProfitBadge margin={margin} profit={profit} />
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Per-variant buying price override */}
-                            <div className="grid gap-3 sm:grid-cols-2">
-                              <div className="space-y-1">
-                                <Label className="text-xs">
-                                  Buying price for this option (INR)
-                                </Label>
-                                <Input
-                                  min={0}
-                                  placeholder="Leave blank to use bulk value"
-                                  step="0.01"
-                                  type="number"
-                                  value={v.buyingPriceInr || ""}
-                                  onChange={(e) =>
-                                    updateVariantBuyingPrice(
-                                      v.color,
-                                      v.size,
-                                      Number(e.target.value) || 0,
-                                    )
-                                  }
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <Label className="text-xs">
-                                  Landed cost override (BHD — optional)
-                                </Label>
-                                <Input
-                                  min={0}
-                                  placeholder={vLanded > 0 ? String(vLanded) : "0.000"}
-                                  step="0.001"
-                                  type="number"
-                                  value={v.landedCostOverrideBhd ?? ""}
-                                  onChange={(e) =>
-                                    updateVariantCostOverride(
-                                      v.color,
-                                      v.size,
-                                      e.target.value ? Number(e.target.value) : null,
-                                    )
-                                  }
-                                />
-                                <p className="text-[10px] text-muted-foreground">
-                                  Only set this if you want to override the calculated cost.
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
+                      {belowCost && (
+                        <p className="border-t border-dashed border-musiva-warning/30 bg-musiva-warning/10 px-3 py-1.5 text-xs text-musiva-warning-foreground">
+                          Selling price is below buying cost.
+                        </p>
                       )}
                     </div>
                   );
@@ -1318,15 +1084,84 @@ export function ProductWizard({ categories, userRole }: ProductWizardProps) {
               )}
             </div>
 
-            {/* ── Summary row ───────────────────────────────────────── */}
+            {/* ── Summary ───────────────────────────────────────────── */}
             {step3.variants.length > 0 && (
-              <div className="rounded-md bg-musiva-ivory p-4 text-sm">
+              <div className="space-y-2 rounded-md bg-musiva-ivory p-4 text-sm">
                 <p className="font-medium text-musiva-plum">
                   {step3.variants.length} option{step3.variants.length !== 1 ? "s" : ""}
                   {" · "}
                   {step3.variants.reduce((s, v) => s + v.stockQuantity, 0)} units starting stock
-                  {minPrice !== null ? ` · from ${formatBhd(minPrice)}` : ""}
                 </p>
+
+                {canEnterCost ? (
+                  (() => {
+                    const totalBuyingInr = step3.variants.reduce(
+                      (s, v) => s + v.buyingPriceInr * v.stockQuantity,
+                      0,
+                    );
+                    const totalBuyingBhd = step3.variants.reduce(
+                      (s, v) => s + deriveVariantConvertedCost(v.buyingPriceInr, currentExchangeRate) * v.stockQuantity,
+                      0,
+                    );
+                    const totalSellingBhd = step3.variants.reduce(
+                      (s, v) => s + v.regularSellingPriceBhd * v.stockQuantity,
+                      0,
+                    );
+                    const estProfit = totalSellingBhd - totalBuyingBhd;
+                    const estMargin = totalSellingBhd > 0 ? (estProfit / totalSellingBhd) * 100 : null;
+
+                    return (
+                      <div className="grid gap-1 border-t border-musiva-border pt-2 tabular-nums sm:grid-cols-2">
+                        <div className="flex justify-between gap-4 text-muted-foreground">
+                          <span>Total buying value (INR)</span>
+                          <span className="font-medium text-foreground">
+                            {formatInr(totalBuyingInr)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-4 text-muted-foreground">
+                          <span>Total buying value (BHD)</span>
+                          <span className="font-medium text-foreground">
+                            {formatBhd(totalBuyingBhd)}
+                          </span>
+                        </div>
+                        {minPrice !== null && (
+                          <div className="flex justify-between gap-4 text-muted-foreground">
+                            <span>From selling price</span>
+                            <span className="font-medium text-foreground">
+                              {formatBhd(minPrice)}
+                            </span>
+                          </div>
+                        )}
+                        {canViewProfit && (
+                          <>
+                            <div className="flex justify-between gap-4 text-muted-foreground">
+                              <span>Estimated selling value</span>
+                              <span className="font-medium text-foreground">
+                                {formatBhd(totalSellingBhd)}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-4 text-muted-foreground">
+                              <span>Estimated gross profit</span>
+                              <span className="font-medium text-foreground">
+                                {formatBhd(estProfit)}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-4 text-muted-foreground">
+                              <span>Estimated margin</span>
+                              <span className="font-medium text-foreground">
+                                {estMargin !== null ? `${estMargin.toFixed(2)}%` : "—"}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()
+                ) : (
+                  minPrice !== null && (
+                    <p className="text-muted-foreground">From {formatBhd(minPrice)}</p>
+                  )
+                )}
               </div>
             )}
           </CardContent>

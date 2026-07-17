@@ -22,24 +22,17 @@ export function convertToBhd(supplierAmount: number, exchangeRateToBhd: number):
   return supplierAmount * exchangeRateToBhd;
 }
 
-/** Final landed cost per piece in BHD.
- *  @param convertedBhd  Buying price already converted to BHD.
- *  @param extraImportCostBhd  Additional import costs per piece (shipping, customs, etc.).
- */
-export function calcLandedCost(convertedBhd: number, extraImportCostBhd: number): number {
-  return convertedBhd + extraImportCostBhd;
-}
-
-/** Estimated gross profit per piece (selling price minus landed cost). */
-export function calcEstimatedProfit(sellingPriceBhd: number, landedCostBhd: number): number {
-  return sellingPriceBhd - landedCostBhd;
+/** Estimated gross profit per piece (selling price minus buying price in BHD). No import
+ *  cost is added — the buying-cost workflow only converts currency, nothing else. */
+export function calcEstimatedProfit(sellingPriceBhd: number, buyingPriceBhd: number): number {
+  return sellingPriceBhd - buyingPriceBhd;
 }
 
 /** Estimated gross margin as a percentage (0–100).
  *  Returns null when selling price is 0 (division by zero guard). */
-export function calcEstimatedMargin(sellingPriceBhd: number, landedCostBhd: number): number | null {
+export function calcEstimatedMargin(sellingPriceBhd: number, buyingPriceBhd: number): number | null {
   if (sellingPriceBhd <= 0) return null;
-  return ((sellingPriceBhd - landedCostBhd) / sellingPriceBhd) * 100;
+  return ((sellingPriceBhd - buyingPriceBhd) / sellingPriceBhd) * 100;
 }
 
 /** Round a BHD amount to 3 decimal places (Bahraini Dinar standard). */

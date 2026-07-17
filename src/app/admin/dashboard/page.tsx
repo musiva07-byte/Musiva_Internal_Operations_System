@@ -19,7 +19,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getDashboardData } from "@/lib/services/dashboard.service";
+import { getCurrentAuthState } from "@/lib/auth/session";
+import { canViewCostData } from "@/lib/auth/permissions";
 import { formatBhd } from "@/lib/formatters/currency";
+import { formatInr } from "@/lib/utils/cost-conversion";
 import { formatDateTime } from "@/lib/formatters/date";
 import { titleize } from "@/lib/formatters/labels";
 
@@ -28,7 +31,8 @@ export const metadata: Metadata = {
 };
 
 export default async function DashboardPage() {
-  const dashboard = await getDashboardData();
+  const [dashboard, auth] = await Promise.all([getDashboardData(), getCurrentAuthState()]);
+  const showCostSummary = canViewCostData(auth.profile?.role ?? null);
   const maxSales = Math.max(...dashboard.salesChart.map((day) => day.total), 1);
   const codOrders = dashboard.paymentSummary.find((item) => item.status === "cod")?.count ?? 0;
   const allSalesZero = dashboard.salesChart.every((day) => day.total === 0);
@@ -513,6 +517,84 @@ export default async function DashboardPage() {
           </Card>
         </div>
       </section>
+
+      {showCostSummary && (
+        <section>
+          <Card className="shadow-soft">
+            <CardHeader>
+              <CardTitle>Product Cost Summary</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">Latest INR → BHD rate</p>
+                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                    {dashboard.latestExchangeRate !== null
+                      ? `1 INR = BHD ${Number(dashboard.latestExchangeRate).toFixed(6)}`
+                      : "Not set"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Total stock buying value (INR)</p>
+                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                    {formatInr(dashboard.totalStockBuyingValueInr)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Total stock buying value (BHD)</p>
+                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                    {formatBhd(dashboard.totalStockBuyingValueBhd)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Variants missing buying cost</p>
+                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                    {dashboard.productsMissingBuyingCost}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 border-t border-[hsl(var(--border))] pt-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">Estimated selling value</p>
+                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                    {formatBhd(dashboard.estimatedSellingValue)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Estimated gross profit</p>
+                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                    {formatBhd(dashboard.estimatedGrossProfit)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Estimated margin</p>
+                  <p className="mt-1 text-lg font-semibold text-musiva-plum">
+                    {dashboard.estimatedMarginPercent !== null
+                      ? `${dashboard.estimatedMarginPercent.toFixed(2)}%`
+                      : "—"}
+                  </p>
+                </div>
+              </div>
+
+              {dashboard.lowMarginVariants.length > 0 && (
+                <div className="border-t border-[hsl(var(--border))] pt-4">
+                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Low-margin options (under 20%)
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {dashboard.lowMarginVariants.map((item) => (
+                      <Badge key={item.name} variant="warning">
+                        {item.name}: {item.margin.toFixed(1)}%
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      )}
     </div>
   );
 }
