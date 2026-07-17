@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ORDER_STATUSES } from "@/lib/constants";
+import { getValidBuyingCost, calcEstimatedMargin } from "@/lib/utils/cost-conversion";
 import type {
   CustomerRow,
   ExpenseRow,
@@ -162,6 +163,94 @@ export async function getInventoryReport() {
     })),
     recentMovements: (movements ?? []) as StockMovementRow[],
   };
+}
+
+export type ProductCostReportRow = {
+  productId: string;
+  productName: string;
+  categoryName: string | null;
+  totalStock: number;
+  validCostCount: number;
+  missingCostCount: number;
+  totalBuyingValueInr: number;
+  totalBuyingValueBhd: number;
+  estimatedSellingValueBhd: number;
+  estimatedGrossProfitBhd: number;
+  estimatedMarginPercent: number | null;
+};
+
+type CostReportVariantRow = {
+  product_id: string;
+  stock_quantity: number;
+  latest_supplier_unit_cost_inr: number | null;
+  latest_exchange_rate_to_bhd: number | null;
+  regular_selling_price_bhd: number | null;
+  selling_price: number;
+  status: string;
+  products?: { name: string; categories?: { name: string } | null } | null;
+};
+
+/**
+ * Owner/manager/accountant-only report: one row per product, aggregated the same way as
+ * the dashboard/product-detail cost sections (see getValidBuyingCost's doc comment) — only
+ * variants with a valid INR + exchange rate contribute to totals, missing ones are counted
+ * separately and never assumed to be 0.
+ */
+export async function getProductCostReport(): Promise<ProductCostReportRow[]> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return [];
+
+  const { data } = await supabase
+    .from("product_variants")
+    .select(
+      "product_id, stock_quantity, latest_supplier_unit_cost_inr, latest_exchange_rate_to_bhd, regular_selling_price_bhd, selling_price, status, products(name, categories(name))",
+    )
+    .neq("status", "archived");
+
+  const rows = (data ?? []) as unknown as CostReportVariantRow[];
+  const byProduct = new Map<string, ProductCostReportRow>();
+
+  for (const row of rows) {
+    const existing = byProduct.get(row.product_id) ?? {
+      productId: row.product_id,
+      productName: row.products?.name ?? "Unknown product",
+      categoryName: row.products?.categories?.name ?? null,
+      totalStock: 0,
+      validCostCount: 0,
+      missingCostCount: 0,
+      totalBuyingValueInr: 0,
+      totalBuyingValueBhd: 0,
+      estimatedSellingValueBhd: 0,
+      estimatedGrossProfitBhd: 0,
+      estimatedMarginPercent: null,
+    };
+
+    existing.totalStock += row.stock_quantity;
+    const cost = getValidBuyingCost(row);
+    if (cost) {
+      existing.validCostCount += 1;
+      const sellingBhd = Number(row.regular_selling_price_bhd ?? row.selling_price);
+      existing.totalBuyingValueInr += cost.buyingPriceInr * row.stock_quantity;
+      existing.totalBuyingValueBhd += cost.buyingPriceBhd * row.stock_quantity;
+      existing.estimatedSellingValueBhd += sellingBhd * row.stock_quantity;
+    } else {
+      existing.missingCostCount += 1;
+    }
+
+    byProduct.set(row.product_id, existing);
+  }
+
+  return [...byProduct.values()].map((product) => {
+    const estimatedGrossProfitBhd = product.estimatedSellingValueBhd - product.totalBuyingValueBhd;
+    return {
+      ...product,
+      estimatedGrossProfitBhd,
+      estimatedMarginPercent:
+        product.validCostCount > 0
+          ? calcEstimatedMargin(product.estimatedSellingValueBhd, product.totalBuyingValueBhd)
+          : null,
+    };
+  });
 }
 
 export async function getCustomerReport(range: ReportRange) {

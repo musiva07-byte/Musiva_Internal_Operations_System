@@ -11,6 +11,7 @@ import { ProductThumbnail } from "@/components/products/product-thumbnail";
 import { ProductRowActions } from "@/components/products/product-row-actions";
 import { listCategories, listProducts } from "@/lib/services/product.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
+import { canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
 import { formatBhd } from "@/lib/formatters/currency";
 import { titleize } from "@/lib/formatters/labels";
 
@@ -44,6 +45,8 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   ]);
 
   const userRole = auth.profile?.role ?? null;
+  const showCostView = canViewBuyingCost(userRole);
+  const showProfit = canViewCostData(userRole);
 
   const hrefForPage = (nextPage: number) => {
     const next = new URLSearchParams();
@@ -241,6 +244,15 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                       productStatus={product.status}
                       variantsQuick={product.variants_quick}
                       userRole={userRole}
+                      costView={
+                        showCostView
+                          ? {
+                              totalStock: product.total_stock,
+                              costSummary: product.cost_summary,
+                              showProfit,
+                            }
+                          : undefined
+                      }
                     />
                   </TableCell>
                 </TableRow>

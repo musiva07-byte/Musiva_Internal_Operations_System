@@ -1,6 +1,8 @@
 import Link from "next/link";
-import { BarChart3, Boxes, CircleDollarSign, Users } from "lucide-react";
+import { BarChart3, Boxes, CircleDollarSign, Tag, Users } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getCurrentAuthState } from "@/lib/auth/session";
+import { canViewCostData } from "@/lib/auth/permissions";
 
 const reports = [
   {
@@ -29,7 +31,17 @@ const reports = [
   },
 ];
 
-export default function ReportsPage() {
+const costReport = {
+  title: "Product cost report",
+  href: "/admin/reports/product-costs",
+  description: "Buying cost, selling value, gross profit, and margin per product. Owner/manager/accountant only.",
+  icon: Tag,
+};
+
+export default async function ReportsPage() {
+  const auth = await getCurrentAuthState();
+  const showCostReport = canViewCostData(auth.profile?.role ?? null);
+  const visibleReports = showCostReport ? [...reports, costReport] : reports;
   return (
     <div className="space-y-6">
       <header>
@@ -41,7 +53,7 @@ export default function ReportsPage() {
       </header>
 
       <section className="grid gap-4 md:grid-cols-2">
-        {reports.map((report) => {
+        {visibleReports.map((report) => {
           const Icon = report.icon;
           return (
             <Link key={report.href} href={report.href}>

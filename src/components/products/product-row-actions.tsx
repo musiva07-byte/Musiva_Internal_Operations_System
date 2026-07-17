@@ -16,10 +16,31 @@ import { QuickAddStockDialog } from "@/components/products/quick-add-stock-dialo
 import { ProductArchiveDialog } from "@/components/products/product-archive-dialog";
 import { ProductRestoreDialog } from "@/components/products/product-restore-dialog";
 import { ProductDeleteDialog } from "@/components/products/product-delete-dialog";
+import { ProductCostDialog } from "@/components/products/product-cost-dialog";
 import type { StaffRole } from "@/lib/constants";
 import { canArchiveProducts, canDeleteProducts } from "@/lib/auth/permissions";
 
 type VariantQuick = { id: string; color: string; size: string; stock_quantity: number };
+
+type VariantCostRow = {
+  id: string;
+  color: string;
+  size: string;
+  stockQuantity: number;
+  buyingPriceInr: number | null;
+  exchangeRateToBhd: number | null;
+  buyingPriceBhd: number | null;
+  sellingPriceBhd: number;
+};
+
+type CostSummary = {
+  validCostCount: number;
+  missingCostCount: number;
+  totalBuyingValueInr: number;
+  totalBuyingValueBhd: number;
+  totalSellingValueBhd: number;
+  variants: VariantCostRow[];
+};
 
 type Props = {
   productId: string;
@@ -27,6 +48,14 @@ type Props = {
   productStatus: string;
   variantsQuick: VariantQuick[];
   userRole: StaffRole | null;
+  /** Only passed when the viewer's role is permitted (canViewBuyingCost) — omitted
+   *  entirely otherwise so cost data never reaches the client for unauthorized roles. */
+  costView?: {
+    totalStock: number;
+    costSummary: CostSummary;
+    /** Owner/manager/accountant only — gates selling value/profit/margin inside the dialog. */
+    showProfit: boolean;
+  };
 };
 
 type Dialog = "archive" | "restore" | "delete" | null;
@@ -37,6 +66,7 @@ export function ProductRowActions({
   productStatus,
   variantsQuick,
   userRole,
+  costView,
 }: Props) {
   const router = useRouter();
   const [openDialog, setOpenDialog] = useState<Dialog>(null);
@@ -91,6 +121,17 @@ export function ProductRowActions({
               Change image
             </Link>
           </DropdownMenuItem>
+
+          {costView && (
+            <DropdownMenuItem asChild={false} className="p-0">
+              <ProductCostDialog
+                productName={productName}
+                totalStock={costView.totalStock}
+                costSummary={costView.costSummary}
+                showProfit={costView.showProfit}
+              />
+            </DropdownMenuItem>
+          )}
 
           <DropdownMenuSeparator />
 

@@ -45,12 +45,34 @@ export type ProductListItem = ProductRow & {
   low_stock_count: number;
   out_of_stock_count: number;
   min_selling_price: number | null;
+  max_selling_price: number | null;
   /** True when any variant currently has an active discount. */
   has_active_discount: boolean;
   /** Minimal variant data for quick-action dialogs. */
   variants_quick: VariantQuick[];
   /** True when the product satisfies all required-for-publishing checks (see lib/validations/product-publishing.ts). */
   website_ready: boolean;
+  /** Buying-cost totals for the "View cost" drawer — always computed, only ever passed to
+   *  the client for roles permitted by canViewBuyingCost (see Product Catalog page). Profit-
+   *  related aggregates (totalSellingValueBhd) are computed here but the dialog only shows
+   *  them to canViewCostData roles — gate the render, not the computation. */
+  cost_summary: {
+    validCostCount: number;
+    missingCostCount: number;
+    totalBuyingValueInr: number;
+    totalBuyingValueBhd: number;
+    totalSellingValueBhd: number;
+    variants: {
+      id: string;
+      color: string;
+      size: string;
+      stockQuantity: number;
+      buyingPriceInr: number | null;
+      exchangeRateToBhd: number | null;
+      buyingPriceBhd: number | null;
+      sellingPriceBhd: number;
+    }[];
+  };
 };
 
 export type InventoryVariantItem = ProductVariantRow & {

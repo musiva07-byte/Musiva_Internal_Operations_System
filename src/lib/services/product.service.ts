@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth/permissions";
 import { PRODUCT_STATUSES, STOCK_MOVEMENT_TYPES } from "@/lib/constants";
 import { isDiscountActive } from "@/lib/pricing/calculations";
+import { getValidBuyingCost } from "@/lib/utils/cost-conversion";
 import { productSchema, type ProductInput } from "@/lib/validations/product.schema";
 import {
   checkPublishAttempt,
@@ -171,7 +172,7 @@ export async function listProducts(
     (productIds.length
       ? supabase
           .from("product_variants")
-          .select("id, product_id, variant_sku, color, size, stock_quantity, minimum_stock, selling_price, discount_price, discount_price_bhd, discount_start_at, discount_end_at, status, regular_selling_price_bhd")
+          .select("id, product_id, variant_sku, color, size, stock_quantity, minimum_stock, selling_price, discount_price, discount_price_bhd, discount_start_at, discount_end_at, status, regular_selling_price_bhd, latest_supplier_unit_cost_inr, latest_exchange_rate_to_bhd")
           .in("product_id", productIds)
       : Promise.resolve({ data: [] as ProductVariantRow[] })) as unknown as Promise<{ data: ProductVariantRow[] | null }>,
     productIds.length
@@ -225,6 +226,35 @@ export async function listProducts(
       hasImage: Boolean(primaryImage),
     }).ready;
 
+    let validCostCount = 0;
+    let missingCostCount = 0;
+    let totalBuyingValueInr = 0;
+    let totalBuyingValueBhd = 0;
+    let totalSellingValueBhd = 0;
+    const variantCostRows: ProductListItem["cost_summary"]["variants"] = [];
+    for (const variant of variantRows) {
+      const cost = getValidBuyingCost(variant);
+      const sellingPriceBhd = Number(variant.regular_selling_price_bhd ?? variant.selling_price);
+      if (cost) {
+        validCostCount += 1;
+        totalBuyingValueInr += cost.buyingPriceInr * variant.stock_quantity;
+        totalBuyingValueBhd += cost.buyingPriceBhd * variant.stock_quantity;
+        totalSellingValueBhd += sellingPriceBhd * variant.stock_quantity;
+      } else {
+        missingCostCount += 1;
+      }
+      variantCostRows.push({
+        id: variant.id,
+        color: variant.color,
+        size: variant.size,
+        stockQuantity: variant.stock_quantity,
+        buyingPriceInr: cost?.buyingPriceInr ?? null,
+        exchangeRateToBhd: cost?.exchangeRateToBhd ?? null,
+        buyingPriceBhd: cost?.buyingPriceBhd ?? null,
+        sellingPriceBhd,
+      });
+    }
+
     return {
       ...product,
       category_name: product.categories?.name ?? null,
@@ -234,9 +264,18 @@ export async function listProducts(
       low_stock_count: lowStockCount,
       out_of_stock_count: variantRows.filter((variant) => variant.stock_quantity === 0).length,
       min_selling_price: activePrices.length ? Math.min(...activePrices) : null,
+      max_selling_price: activePrices.length ? Math.max(...activePrices) : null,
       has_active_discount: hasActiveDiscount,
       variants_quick: variantsQuick,
       website_ready: websiteReady,
+      cost_summary: {
+        validCostCount,
+        missingCostCount,
+        totalBuyingValueInr,
+        totalBuyingValueBhd,
+        totalSellingValueBhd,
+        variants: variantCostRows,
+      },
     };
   });
 
