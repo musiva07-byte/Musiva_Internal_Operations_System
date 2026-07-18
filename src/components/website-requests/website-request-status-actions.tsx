@@ -10,7 +10,6 @@ import {
   getStatusHelperNote,
   getVisibleNextStatuses,
   requiresConfirmation,
-  showConvertToOrderPlaceholder,
 } from "@/lib/utils/website-request-ui";
 import { updateWebsiteRequestStatusAction } from "@/app/admin/website-requests/actions";
 import type { StaffRole } from "@/lib/constants";
@@ -60,7 +59,6 @@ export function WebsiteRequestStatusActions({
 
   const visibleNextStatuses = getVisibleNextStatuses(status, allowedNextStatuses);
   const helperNote = getStatusHelperNote(status, role);
-  const showConvertPlaceholder = showConvertToOrderPlaceholder(status, role);
 
   function submit(target: WebsiteOrderRequestStatus) {
     setError(null);
@@ -119,17 +117,12 @@ export function WebsiteRequestStatusActions({
           </Button>
         ))}
 
-        {showConvertPlaceholder && (
-          <Button size={size} variant="outline" disabled title="Coming in a later unit">
-            Convert to Order — coming next
-          </Button>
-        )}
       </div>
 
       {showConfirmHelper && (
         <p className="text-xs text-muted-foreground">
-          Confirming this request does not create an order yet. Convert to Order will be handled
-          next.
+          Confirming this request does not create an order yet. Use Convert to Order once it is
+          confirmed.
         </p>
       )}
 

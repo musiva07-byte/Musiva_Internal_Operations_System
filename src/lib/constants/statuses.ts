@@ -21,6 +21,8 @@ export const ORDER_SOURCES = {
   tiktok: "tiktok",
   referral: "referral",
   other: "other",
+  /** Created via Convert to Order from a confirmed website_order_requests row. */
+  websiteRequest: "website_request",
 } as const;
 
 export const INVENTORY_STATUSES = {

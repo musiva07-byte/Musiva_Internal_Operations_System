@@ -28,7 +28,15 @@ export type StockMovementType =
   | "damaged"
   | "manual_adjustment"
   | "cancelled_order_restore";
-export type OrderSource = "instagram" | "whatsapp" | "website" | "walk_in" | "tiktok" | "referral" | "other";
+export type OrderSource =
+  | "instagram"
+  | "whatsapp"
+  | "website"
+  | "walk_in"
+  | "tiktok"
+  | "referral"
+  | "other"
+  | "website_request";
 export type OrderStatus =
   // Current simplified statuses
   | "new"
@@ -438,6 +446,11 @@ export type WebsiteOrderRequestRow = {
   payment_preference: WebsiteRequestPaymentPreference;
   status: WebsiteOrderRequestStatus;
   whatsapp_message: string;
+  /** Set together, atomically, only by convertWebsiteRequestToOrder(). converted_order_id
+   *  is the idempotency guard — once set, this request can never be converted again. */
+  converted_order_id: string | null;
+  converted_at: string | null;
+  converted_by: string | null;
   created_at: string;
   updated_at: string;
 };

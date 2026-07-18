@@ -4,8 +4,11 @@ import { ArrowLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { WebsiteRequestStatusBadge } from "@/components/website-requests/website-request-status-badge";
 import { WebsiteRequestStatusActions } from "@/components/website-requests/website-request-status-actions";
+import { ConvertToOrderButton } from "@/components/website-requests/convert-to-order-button";
 import { getAllowedNextStatuses, getWebsiteRequest } from "@/lib/services/website-request.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
+import { canManageOrders } from "@/lib/auth/permissions";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatDateTime } from "@/lib/formatters/date";
 import { WEBSITE_REQUEST_PAYMENT_PREFERENCE_LABELS } from "@/lib/constants/statuses";
@@ -26,6 +29,17 @@ export default async function WebsiteRequestDetailPage({ params }: WebsiteReques
   const allowedNextStatuses = getAllowedNextStatuses(request.status, role);
   const paymentLabel =
     WEBSITE_REQUEST_PAYMENT_PREFERENCE_LABELS[request.payment_preference] ?? request.payment_preference;
+
+  let convertedOrderNumber: string | null = null;
+  if (request.converted_order_id) {
+    const supabase = await createSupabaseServerClient();
+    const { data: order } = (await supabase
+      ?.from("orders")
+      .select("order_number")
+      .eq("id", request.converted_order_id)
+      .maybeSingle()) ?? { data: null };
+    convertedOrderNumber = order?.order_number ?? null;
+  }
 
   return (
     <div className="space-y-6">
@@ -122,6 +136,15 @@ export default async function WebsiteRequestDetailPage({ params }: WebsiteReques
                 status={request.status}
                 allowedNextStatuses={allowedNextStatuses}
                 role={role}
+              />
+
+              <ConvertToOrderButton
+                requestId={request.id}
+                status={request.status}
+                canConvert={canManageOrders(role)}
+                convertedOrderId={request.converted_order_id}
+                convertedOrderNumber={convertedOrderNumber}
+                convertedAt={request.converted_at}
               />
 
               <div className="space-y-1 border-t border-[hsl(var(--border))] pt-3 text-xs text-muted-foreground">

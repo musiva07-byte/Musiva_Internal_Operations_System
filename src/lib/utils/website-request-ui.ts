@@ -1,4 +1,4 @@
-import { canDecideWebsiteRequest } from "@/lib/auth/permissions";
+import { canDecideWebsiteRequest, canManageOrders } from "@/lib/auth/permissions";
 import type { StaffRole } from "@/lib/constants";
 import type { WebsiteOrderRequestStatus } from "@/types/database";
 
@@ -11,24 +11,52 @@ export function requiresConfirmation(targetStatus: WebsiteOrderRequestStatus): b
  * Cosmetic, non-authoritative helper text shown next to the action buttons for a request.
  * Real permission is always enforced by getAllowedNextStatuses() / the server — this only
  * explains *why* a staff member without decision rights sees no Confirm/Cancel buttons.
+ *
+ * The "confirmed" note is only shown to staff who cannot actually convert the request
+ * (canManageOrders) — anyone who can convert sees the real Convert to Order button instead
+ * (see ConvertToOrderButton), so the two never appear together.
  */
 export function getStatusHelperNote(
   status: WebsiteOrderRequestStatus,
   role: StaffRole | null | undefined,
 ): string | null {
-  if (canDecideWebsiteRequest(role)) return null;
-
-  if (status === "contacted") return "Waiting for manager confirmation";
-  if (status === "confirmed") return "Ready for Convert to Order";
+  if (status === "contacted" && !canDecideWebsiteRequest(role)) {
+    return "Waiting for manager confirmation";
+  }
+  if (status === "confirmed" && !canManageOrders(role)) {
+    return "Ready for Convert to Order";
+  }
   return null;
 }
 
-/** Owner/manager see a "Convert to Order" placeholder once a request is confirmed. */
-export function showConvertToOrderPlaceholder(
+export type ConvertToOrderViewState =
+  | "converted"
+  | "cancelled"
+  | "needs_confirmation"
+  | "no_permission"
+  | "ready";
+
+/**
+ * Pure decision table for what the Convert to Order button/panel should show. Extracted so
+ * the exact visibility rules (item 1 of Unit 2G) are unit-testable without a component-
+ * testing library — ConvertToOrderButton just renders whichever state this returns.
+ *
+ *   converted          -> already converted; show the linked order, never a button
+ *   cancelled          -> cancelled requests can never be converted; show nothing
+ *   needs_confirmation -> new/contacted; show the "confirm first" note
+ *   no_permission      -> confirmed, but this viewer cannot convert; show nothing
+ *   ready              -> confirmed, unconverted, permitted; show the real button
+ */
+export function getConvertToOrderViewState(
   status: WebsiteOrderRequestStatus,
-  role: StaffRole | null | undefined,
-): boolean {
-  return status === "confirmed" && canDecideWebsiteRequest(role);
+  canConvert: boolean,
+  convertedOrderId: string | null,
+): ConvertToOrderViewState {
+  if (convertedOrderId) return "converted";
+  if (status === "cancelled") return "cancelled";
+  if (status !== "confirmed") return "needs_confirmation";
+  if (!canConvert) return "no_permission";
+  return "ready";
 }
 
 /**

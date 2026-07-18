@@ -50,6 +50,7 @@ export const createOrderSchema = z.object({
     ORDER_SOURCES.tiktok,
     ORDER_SOURCES.referral,
     ORDER_SOURCES.other,
+    ORDER_SOURCES.websiteRequest,
   ]),
   orderStatus: z.enum([
     ORDER_STATUSES.new,
