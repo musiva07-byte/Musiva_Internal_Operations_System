@@ -6,14 +6,27 @@ import { calcEstimatedMargin, getValidBuyingCost } from "@/lib/utils/cost-conver
 import type { OrderRow, PaymentStatus } from "@/types/database";
 
 type CostVariantRow = {
+  product_id: string;
   color: string;
   size: string;
   stock_quantity: number;
   latest_supplier_unit_cost_inr: number | null;
   latest_exchange_rate_to_bhd: number | null;
+  latest_additional_landed_cost_bhd: number | null;
   regular_selling_price_bhd: number | null;
   selling_price: number;
   products?: { name: string } | null;
+};
+
+export type ProductCostBreakdownRow = {
+  productId: string;
+  productName: string;
+  totalStock: number;
+  totalBuyingValueInr: number;
+  totalFinalCostBhd: number;
+  estimatedSellingValueBhd: number;
+  estimatedProfitBhd: number;
+  missingCostCount: number;
 };
 
 type OrderRelationRow = OrderRow & {
@@ -82,13 +95,15 @@ function emptyDashboard(loadError?: string) {
     latestWebsiteRequestAt: null as string | null,
     latestExchangeRate: null as number | null,
     validBuyingCostCount: 0,
-    productsMissingBuyingCost: 0,
-    totalStockBuyingValueInr: 0,
-    totalStockBuyingValueBhd: 0,
-    estimatedSellingValue: 0,
-    estimatedGrossProfit: 0,
+    missingCostVariantCount: 0,
+    totalStockUnits: 0,
+    totalBuyingValueInr: 0,
+    totalFinalCostBhd: 0,
+    estimatedSellingValueBhd: 0,
+    estimatedGrossProfitBhd: 0,
     estimatedMarginPercent: null as number | null,
     lowMarginVariants: [] as { name: string; margin: number }[],
+    productCostBreakdown: [] as ProductCostBreakdownRow[],
   };
 }
 
@@ -235,18 +250,30 @@ export async function getDashboardData() {
     supabase
       .from("product_variants")
       .select(
-        "color, size, stock_quantity, latest_supplier_unit_cost_inr, latest_exchange_rate_to_bhd, regular_selling_price_bhd, selling_price, products(name)",
+        "product_id, color, size, stock_quantity, latest_supplier_unit_cost_inr, latest_exchange_rate_to_bhd, latest_additional_landed_cost_bhd, regular_selling_price_bhd, selling_price, products(name)",
       )
       .neq("status", "archived"),
   ]);
 
   const costRows = (costVariants ?? []) as unknown as CostVariantRow[];
   let validBuyingCostCount = 0;
-  let productsMissingBuyingCost = 0;
-  let totalStockBuyingValueInr = 0;
-  let totalStockBuyingValueBhd = 0;
-  let estimatedSellingValue = 0;
+  let missingCostVariantCount = 0;
+  let totalStockUnits = 0;
+  let totalBuyingValueInr = 0;
+  let totalFinalCostBhd = 0;
+  let estimatedSellingValueBhd = 0;
   const lowMarginCandidates: { name: string; margin: number }[] = [];
+
+  type ProductAccumulator = {
+    productId: string;
+    productName: string;
+    totalStock: number;
+    totalBuyingValueInr: number;
+    totalFinalCostBhd: number;
+    estimatedSellingValueBhd: number;
+    missingCostCount: number;
+  };
+  const productMap = new Map<string, ProductAccumulator>();
 
   // Totals are computed only from variants with a valid buying cost (see
   // getValidBuyingCost's doc comment for why latest_landed_cost_bhd /
@@ -254,24 +281,46 @@ export async function getDashboardData() {
   // variants into the same total is exactly what produced impossible dashboard figures
   // before this fix.
   for (const row of costRows) {
+    totalStockUnits += row.stock_quantity;
+
+    const product = productMap.get(row.product_id) ?? {
+      productId: row.product_id,
+      productName: row.products?.name ?? "Unknown product",
+      totalStock: 0,
+      totalBuyingValueInr: 0,
+      totalFinalCostBhd: 0,
+      estimatedSellingValueBhd: 0,
+      missingCostCount: 0,
+    };
+    product.totalStock += row.stock_quantity;
+
     const cost = getValidBuyingCost(row);
 
     if (!cost) {
       if (row.stock_quantity > 0) {
-        productsMissingBuyingCost += 1;
+        missingCostVariantCount += 1;
+        product.missingCostCount += 1;
       }
+      productMap.set(row.product_id, product);
       continue;
     }
 
     validBuyingCostCount += 1;
     const sellingBhd = Number(row.regular_selling_price_bhd ?? row.selling_price);
 
-    totalStockBuyingValueInr += cost.buyingPriceInr * row.stock_quantity;
-    totalStockBuyingValueBhd += cost.buyingPriceBhd * row.stock_quantity;
-    estimatedSellingValue += sellingBhd * row.stock_quantity;
+    totalBuyingValueInr += cost.buyingPriceInr * row.stock_quantity;
+    // Uses the FINAL buying cost (converted + optional additional landed cost), never the
+    // converted figure alone — see getValidBuyingCost's doc comment.
+    totalFinalCostBhd += cost.finalUnitCostBhd * row.stock_quantity;
+    estimatedSellingValueBhd += sellingBhd * row.stock_quantity;
+
+    product.totalBuyingValueInr += cost.buyingPriceInr * row.stock_quantity;
+    product.totalFinalCostBhd += cost.finalUnitCostBhd * row.stock_quantity;
+    product.estimatedSellingValueBhd += sellingBhd * row.stock_quantity;
+    productMap.set(row.product_id, product);
 
     if (sellingBhd > 0) {
-      const margin = calcEstimatedMargin(sellingBhd, cost.buyingPriceBhd);
+      const margin = calcEstimatedMargin(sellingBhd, cost.finalUnitCostBhd);
       if (margin !== null && margin < 20) {
         lowMarginCandidates.push({
           name: `${row.products?.name ?? "Unknown product"} (${row.color} / ${row.size})`,
@@ -282,14 +331,32 @@ export async function getDashboardData() {
   }
 
   const hasAnyValidBuyingCost = validBuyingCostCount > 0;
-  const estimatedGrossProfit = hasAnyValidBuyingCost
-    ? estimatedSellingValue - totalStockBuyingValueBhd
+  const estimatedGrossProfitBhd = hasAnyValidBuyingCost
+    ? estimatedSellingValueBhd - totalFinalCostBhd
     : 0;
   const estimatedMarginPercent =
-    hasAnyValidBuyingCost && estimatedSellingValue > 0
-      ? (estimatedGrossProfit / estimatedSellingValue) * 100
+    hasAnyValidBuyingCost && estimatedSellingValueBhd > 0
+      ? (estimatedGrossProfitBhd / estimatedSellingValueBhd) * 100
       : null;
   const lowMarginVariants = lowMarginCandidates.sort((a, b) => a.margin - b.margin).slice(0, 5);
+
+  // Top 5 products by final stock cost — only products that contributed at least one
+  // valid-cost variant are ranked (an all-missing product would only ever show 0, which
+  // isn't a meaningful ranking signal and would crowd out products with real cost data).
+  const productCostBreakdown: ProductCostBreakdownRow[] = [...productMap.values()]
+    .filter((p) => p.totalFinalCostBhd > 0)
+    .sort((a, b) => b.totalFinalCostBhd - a.totalFinalCostBhd)
+    .slice(0, 5)
+    .map((p) => ({
+      productId: p.productId,
+      productName: p.productName,
+      totalStock: p.totalStock,
+      totalBuyingValueInr: p.totalBuyingValueInr,
+      totalFinalCostBhd: p.totalFinalCostBhd,
+      estimatedSellingValueBhd: p.estimatedSellingValueBhd,
+      estimatedProfitBhd: p.estimatedSellingValueBhd - p.totalFinalCostBhd,
+      missingCostCount: p.missingCostCount,
+    }));
 
   const todayOrderRows = (todayOrders ?? []) as Pick<OrderRow, "grand_total">[];
   const monthOrderRows = (monthOrders ?? []) as Pick<
@@ -353,12 +420,14 @@ export async function getDashboardData() {
     latestWebsiteRequestAt: latestWebsiteRequestRes.data?.created_at ?? null,
     latestExchangeRate: currentRate?.rate ?? null,
     validBuyingCostCount,
-    productsMissingBuyingCost,
-    totalStockBuyingValueInr,
-    totalStockBuyingValueBhd,
-    estimatedSellingValue,
-    estimatedGrossProfit,
+    missingCostVariantCount,
+    totalStockUnits,
+    totalBuyingValueInr,
+    totalFinalCostBhd,
+    estimatedSellingValueBhd,
+    estimatedGrossProfitBhd,
     estimatedMarginPercent,
     lowMarginVariants,
+    productCostBreakdown,
   };
 }

@@ -476,9 +476,9 @@ describe("getDashboardData", () => {
 
     const result = await getDashboardData();
     expect(result.validBuyingCostCount).toBe(0);
-    expect(result.productsMissingBuyingCost).toBe(1);
-    expect(result.totalStockBuyingValueInr).toBe(0);
-    expect(result.totalStockBuyingValueBhd).toBe(0);
+    expect(result.missingCostVariantCount).toBe(1);
+    expect(result.totalBuyingValueInr).toBe(0);
+    expect(result.totalFinalCostBhd).toBe(0);
   });
 
   it("excludes a variant with a missing exchange rate from totals and counts it as missing", async () => {
@@ -497,8 +497,8 @@ describe("getDashboardData", () => {
 
     const result = await getDashboardData();
     expect(result.validBuyingCostCount).toBe(0);
-    expect(result.productsMissingBuyingCost).toBe(1);
-    expect(result.totalStockBuyingValueBhd).toBe(0);
+    expect(result.missingCostVariantCount).toBe(1);
+    expect(result.totalFinalCostBhd).toBe(0);
   });
 
   it("computes total buying value INR/BHD from valid INR × rate × quantity only", async () => {
@@ -517,9 +517,29 @@ describe("getDashboardData", () => {
 
     const result = await getDashboardData();
     expect(result.validBuyingCostCount).toBe(1);
-    expect(result.productsMissingBuyingCost).toBe(0);
-    expect(result.totalStockBuyingValueInr).toBeCloseTo(1500 * 5, 3);
-    expect(result.totalStockBuyingValueBhd).toBeCloseTo(6.78 * 5, 3);
+    expect(result.missingCostVariantCount).toBe(0);
+    expect(result.totalBuyingValueInr).toBeCloseTo(1500 * 5, 3);
+    expect(result.totalFinalCostBhd).toBeCloseTo(6.78 * 5, 3);
+  });
+
+  it("uses the final buying cost (converted + optional additional landed cost) for totals", async () => {
+    mockProductVariantsAndRate([
+      {
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        latest_additional_landed_cost_bhd: 0.5,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    // converted = 6.780, final = 6.780 + 0.5 = 7.280
+    expect(result.totalFinalCostBhd).toBeCloseTo(7.28 * 5, 3);
   });
 
   it("never leaks a corrupted legacy landed-cost column into totals — that column is not even queried", async () => {
@@ -541,8 +561,118 @@ describe("getDashboardData", () => {
     ]);
 
     const result = await getDashboardData();
-    expect(result.totalStockBuyingValueBhd).toBeCloseTo(6.78 * 5, 3);
-    expect(result.totalStockBuyingValueBhd).toBeLessThan(1000);
+    expect(result.totalFinalCostBhd).toBeCloseTo(6.78 * 5, 3);
+    expect(result.totalFinalCostBhd).toBeLessThan(1000);
+  });
+
+  it("calculates estimated selling value as selling price × quantity, valid-cost variants only", async () => {
+    mockProductVariantsAndRate([
+      {
+        product_id: "product-1",
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+      {
+        product_id: "product-2",
+        color: "Beige",
+        size: "S",
+        stock_quantity: 100,
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+        regular_selling_price_bhd: 999,
+        selling_price: 999,
+        products: { name: "Linen Top" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    // Only the valid-cost variant (11 × 5 = 55) contributes; the missing-cost variant's
+    // huge selling value (999 × 100) must never be folded in.
+    expect(result.estimatedSellingValueBhd).toBeCloseTo(11 * 5, 3);
+  });
+
+  it("calculates gross profit as selling value minus final cost", async () => {
+    mockProductVariantsAndRate([
+      {
+        product_id: "product-1",
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    // selling value = 55.000, final cost = 33.900 (6.78 × 5) → profit = 21.100
+    expect(result.estimatedSellingValueBhd).toBeCloseTo(55, 3);
+    expect(result.totalFinalCostBhd).toBeCloseTo(33.9, 3);
+    expect(result.estimatedGrossProfitBhd).toBeCloseTo(21.1, 3);
+  });
+
+  it("does not divide by zero when a valid-cost variant has no selling price recorded", async () => {
+    mockProductVariantsAndRate([
+      {
+        product_id: "product-1",
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        regular_selling_price_bhd: 0,
+        selling_price: 0,
+        products: { name: "Satin Dress" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    expect(result.validBuyingCostCount).toBe(1);
+    expect(result.estimatedSellingValueBhd).toBe(0);
+    expect(result.estimatedMarginPercent).toBeNull();
+    expect(Number.isFinite(result.estimatedGrossProfitBhd)).toBe(true);
+  });
+
+  it("low-margin list only ever includes variants with a valid buying cost", async () => {
+    mockProductVariantsAndRate([
+      {
+        product_id: "product-1",
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        // Selling price barely above final cost (6.78) → low margin, valid cost.
+        regular_selling_price_bhd: 7,
+        selling_price: 7,
+        products: { name: "Satin Dress" },
+      },
+      {
+        product_id: "product-2",
+        color: "Beige",
+        size: "S",
+        stock_quantity: 5,
+        // Missing cost — even though selling price is very low, this must never appear
+        // as a "low margin" item since margin can't be computed without a valid cost.
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+        regular_selling_price_bhd: 1,
+        selling_price: 1,
+        products: { name: "Linen Top" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    expect(result.lowMarginVariants.length).toBe(1);
+    expect(result.lowMarginVariants[0].name).toContain("Satin Dress");
   });
 
   it("never shows an impossible negative gross profit or margin for reasonable valid costs", async () => {
@@ -560,7 +690,7 @@ describe("getDashboardData", () => {
     ]);
 
     const result = await getDashboardData();
-    expect(result.estimatedGrossProfit).toBeGreaterThan(-100);
+    expect(result.estimatedGrossProfitBhd).toBeGreaterThan(-100);
     expect(result.estimatedMarginPercent).not.toBeNull();
     expect(result.estimatedMarginPercent!).toBeGreaterThan(-1000);
   });
@@ -581,8 +711,8 @@ describe("getDashboardData", () => {
 
     const result = await getDashboardData();
     expect(result.validBuyingCostCount).toBe(0);
-    expect(result.estimatedSellingValue).toBe(0);
-    expect(result.estimatedGrossProfit).toBe(0);
+    expect(result.estimatedSellingValueBhd).toBe(0);
+    expect(result.estimatedGrossProfitBhd).toBe(0);
     expect(result.estimatedMarginPercent).toBeNull();
   });
 
@@ -596,5 +726,112 @@ describe("getDashboardData", () => {
     mockProductVariantsAndRate([], null);
     const result = await getDashboardData();
     expect(result.latestExchangeRate).toBeNull();
+  });
+
+  // ── Business Stock Value — total units, per-product breakdown ──────────────
+
+  it("counts total stock units across all variants, regardless of cost validity", async () => {
+    mockProductVariantsAndRate([
+      {
+        product_id: "product-1",
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+      {
+        product_id: "product-2",
+        color: "Beige",
+        size: "S",
+        stock_quantity: 9,
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+        regular_selling_price_bhd: 20,
+        selling_price: 20,
+        products: { name: "Linen Top" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    // 5 (valid cost) + 9 (missing cost) = 14 — missing-cost stock still counts as real stock.
+    expect(result.totalStockUnits).toBe(14);
+  });
+
+  it("returns an empty product cost breakdown when no product has a valid cost", async () => {
+    mockProductVariantsAndRate([
+      {
+        product_id: "product-2",
+        color: "Beige",
+        size: "S",
+        stock_quantity: 9,
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+        regular_selling_price_bhd: 20,
+        selling_price: 20,
+        products: { name: "Linen Top" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    expect(result.productCostBreakdown).toHaveLength(0);
+  });
+
+  it("aggregates the product cost breakdown per product and ranks by final stock cost", async () => {
+    mockProductVariantsAndRate([
+      {
+        product_id: "product-1",
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+      {
+        product_id: "product-1",
+        color: "Black",
+        size: "L",
+        // Missing cost — should count toward this product's missingCostCount but not its totals.
+        stock_quantity: 2,
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+        regular_selling_price_bhd: 11,
+        selling_price: 11,
+        products: { name: "Satin Dress" },
+      },
+      {
+        product_id: "product-2",
+        color: "Beige",
+        size: "S",
+        stock_quantity: 20,
+        latest_supplier_unit_cost_inr: 3000,
+        latest_exchange_rate_to_bhd: 0.00452,
+        regular_selling_price_bhd: 25,
+        selling_price: 25,
+        products: { name: "Linen Abaya" },
+      },
+    ]);
+
+    const result = await getDashboardData();
+    expect(result.productCostBreakdown).toHaveLength(2);
+
+    // Linen Abaya: final = 3000×0.00452=13.56, ×20 units = 271.2 → ranked first.
+    expect(result.productCostBreakdown[0].productName).toBe("Linen Abaya");
+    expect(result.productCostBreakdown[0].totalStock).toBe(20);
+    expect(result.productCostBreakdown[0].totalFinalCostBhd).toBeCloseTo(13.56 * 20, 2);
+    expect(result.productCostBreakdown[0].missingCostCount).toBe(0);
+
+    // Satin Dress: only the M variant (5 units) has a valid cost; L (2 units) is missing.
+    const satin = result.productCostBreakdown[1];
+    expect(satin.productName).toBe("Satin Dress");
+    expect(satin.totalStock).toBe(7); // both variants' stock counts toward total units
+    expect(satin.totalFinalCostBhd).toBeCloseTo(6.78 * 5, 3);
+    expect(satin.missingCostCount).toBe(1);
   });
 });
