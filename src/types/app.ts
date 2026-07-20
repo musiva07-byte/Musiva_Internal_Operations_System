@@ -60,7 +60,8 @@ export type ProductListItem = ProductRow & {
     validCostCount: number;
     missingCostCount: number;
     totalBuyingValueInr: number;
-    totalBuyingValueBhd: number;
+    /** Sum of finalUnitCostBhd × stockQuantity across valid-cost variants (converted + optional additional landed cost). */
+    totalFinalCostBhd: number;
     totalSellingValueBhd: number;
     variants: {
       id: string;
@@ -69,7 +70,10 @@ export type ProductListItem = ProductRow & {
       stockQuantity: number;
       buyingPriceInr: number | null;
       exchangeRateToBhd: number | null;
-      buyingPriceBhd: number | null;
+      convertedUnitCostBhd: number | null;
+      /** Optional advanced field — cargo/customs/packaging/etc per piece. 0 when not entered. */
+      additionalLandedCostBhd: number | null;
+      finalUnitCostBhd: number | null;
       sellingPriceBhd: number;
     }[];
   };

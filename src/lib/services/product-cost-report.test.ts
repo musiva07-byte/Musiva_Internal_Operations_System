@@ -87,7 +87,7 @@ describe("getProductCostReport", () => {
     expect(row.validCostCount).toBe(1);
     expect(row.missingCostCount).toBe(1);
     expect(row.totalBuyingValueInr).toBeCloseTo(1500 * 5, 3);
-    expect(row.totalBuyingValueBhd).toBeCloseTo(6.78 * 5, 3);
+    expect(row.totalFinalCostBhd).toBeCloseTo(6.78 * 5, 3);
     expect(row.estimatedSellingValueBhd).toBeCloseTo(11 * 5, 3);
     expect(row.estimatedGrossProfitBhd).toBeCloseTo(11 * 5 - 6.78 * 5, 3);
     expect(row.estimatedMarginPercent).not.toBeNull();
@@ -117,7 +117,7 @@ describe("getProductCostReport", () => {
 
     expect(row.validCostCount).toBe(0);
     expect(row.missingCostCount).toBe(1);
-    expect(row.totalBuyingValueBhd).toBe(0);
+    expect(row.totalFinalCostBhd).toBe(0);
     expect(row.estimatedSellingValueBhd).toBe(0);
     expect(row.estimatedMarginPercent).toBeNull();
     expect(row.categoryName).toBeNull();
@@ -146,7 +146,32 @@ describe("getProductCostReport", () => {
     );
 
     const result = await getProductCostReport();
-    expect(result[0].totalBuyingValueBhd).toBeCloseTo(6.78 * 5, 3);
-    expect(result[0].totalBuyingValueBhd).toBeLessThan(1000);
+    expect(result[0].totalFinalCostBhd).toBeCloseTo(6.78 * 5, 3);
+    expect(result[0].totalFinalCostBhd).toBeLessThan(1000);
+  });
+
+  it("includes the optional additional landed cost in the final cost total", async () => {
+    mockFrom.mockReturnValue(
+      chainResolveAll({
+        data: [
+          {
+            product_id: "product-4",
+            stock_quantity: 5,
+            latest_supplier_unit_cost_inr: 1500,
+            latest_exchange_rate_to_bhd: 0.00452,
+            latest_additional_landed_cost_bhd: 0.5,
+            regular_selling_price_bhd: 11,
+            selling_price: 11,
+            status: "active",
+            products: { name: "Satin Dress", categories: null },
+          },
+        ],
+        error: null,
+      }),
+    );
+
+    const result = await getProductCostReport();
+    // final = 6.780 + 0.5 = 7.280
+    expect(result[0].totalFinalCostBhd).toBeCloseTo(7.28 * 5, 3);
   });
 });

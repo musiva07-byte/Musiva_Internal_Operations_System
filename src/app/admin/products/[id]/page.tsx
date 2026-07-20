@@ -129,14 +129,14 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
           const rows = product.variants.map((variant) => {
             const cost = getValidBuyingCost(variant);
             const sellingBhd = Number(variant.regular_selling_price_bhd ?? variant.selling_price);
-            const profit = showProfit && cost ? calcEstimatedProfit(sellingBhd, cost.buyingPriceBhd) : null;
-            const margin = showProfit && cost ? calcEstimatedMargin(sellingBhd, cost.buyingPriceBhd) : null;
+            const profit = showProfit && cost ? calcEstimatedProfit(sellingBhd, cost.finalUnitCostBhd) : null;
+            const margin = showProfit && cost ? calcEstimatedMargin(sellingBhd, cost.finalUnitCostBhd) : null;
             return { variant, cost, sellingBhd, profit, margin };
           });
           const validCount = rows.filter((r) => r.cost !== null).length;
           const missingCount = rows.length - validCount;
           const totalBuyingInr = rows.reduce((sum, r) => sum + (r.cost ? r.cost.buyingPriceInr * r.variant.stock_quantity : 0), 0);
-          const totalBuyingBhd = rows.reduce((sum, r) => sum + (r.cost ? r.cost.buyingPriceBhd * r.variant.stock_quantity : 0), 0);
+          const totalFinalCostBhd = rows.reduce((sum, r) => sum + (r.cost ? r.cost.finalUnitCostBhd * r.variant.stock_quantity : 0), 0);
           const totalSellingBhd = rows.reduce((sum, r) => sum + (r.cost ? r.sellingBhd * r.variant.stock_quantity : 0), 0);
 
           return (
@@ -151,9 +151,11 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
                     <TableHead className="text-right">Qty</TableHead>
                     <TableHead className="text-right">Buy / piece (INR)</TableHead>
                     <TableHead>Rate used</TableHead>
-                    <TableHead className="text-right">Buy / piece (BHD)</TableHead>
+                    <TableHead className="text-right">Converted buy / piece (BHD)</TableHead>
+                    <TableHead className="text-right">Additional cost (BHD)</TableHead>
+                    <TableHead className="text-right">Final buy / piece (BHD)</TableHead>
                     <TableHead className="text-right">Total buy (INR)</TableHead>
-                    <TableHead className="text-right">Total buy (BHD)</TableHead>
+                    <TableHead className="text-right">Total final cost (BHD)</TableHead>
                     <TableHead className="text-right">Selling price (BHD)</TableHead>
                     {showProfit && <TableHead className="text-right">Profit / margin</TableHead>}
                   </TableRow>
@@ -173,7 +175,17 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
                       </TableCell>
                       <TableCell className="text-right">
                         {cost ? (
-                          formatBhd(cost.buyingPriceBhd)
+                          formatBhd(cost.convertedUnitCostBhd)
+                        ) : (
+                          <span className="italic text-muted-foreground">Not recorded</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {cost ? formatBhd(cost.additionalLandedCostBhd) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {cost ? (
+                          formatBhd(cost.finalUnitCostBhd)
                         ) : (
                           <span className="italic text-muted-foreground">Not recorded</span>
                         )}
@@ -182,7 +194,7 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
                         {cost ? formatInr(cost.buyingPriceInr * variant.stock_quantity) : "—"}
                       </TableCell>
                       <TableCell className="text-right">
-                        {cost ? formatBhd(cost.buyingPriceBhd * variant.stock_quantity) : "—"}
+                        {cost ? formatBhd(cost.finalUnitCostBhd * variant.stock_quantity) : "—"}
                       </TableCell>
                       <TableCell className="text-right">{formatBhd(sellingBhd)}</TableCell>
                       {showProfit && (
@@ -210,7 +222,7 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
                     <div>
                       <p className="font-medium text-musiva-plum">Total stock buying value</p>
                       <p className="mt-1 text-muted-foreground">
-                        {formatInr(totalBuyingInr)} / {formatBhd(totalBuyingBhd)}
+                        {formatInr(totalBuyingInr)} / {formatBhd(totalFinalCostBhd)}
                       </p>
                     </div>
                     {showProfit && (
@@ -222,14 +234,14 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
                         <div>
                           <p className="font-medium text-musiva-plum">Estimated gross profit</p>
                           <p className="mt-1 text-muted-foreground">
-                            {formatBhd(totalSellingBhd - totalBuyingBhd)}
+                            {formatBhd(totalSellingBhd - totalFinalCostBhd)}
                           </p>
                         </div>
                         <div>
                           <p className="font-medium text-musiva-plum">Estimated margin</p>
                           <p className="mt-1 text-muted-foreground">
                             {(() => {
-                              const margin = calcEstimatedMargin(totalSellingBhd, totalBuyingBhd);
+                              const margin = calcEstimatedMargin(totalSellingBhd, totalFinalCostBhd);
                               return margin !== null ? `${margin.toFixed(2)}%` : "—";
                             })()}
                           </p>

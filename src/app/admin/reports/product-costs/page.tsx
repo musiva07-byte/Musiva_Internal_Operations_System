@@ -122,7 +122,7 @@ export default async function ProductCostReportPage({ searchParams }: PageProps)
               <TableHead className="text-right">Valid cost</TableHead>
               <TableHead className="text-right">Missing cost</TableHead>
               <TableHead className="text-right">Buying value (INR)</TableHead>
-              <TableHead className="text-right">Buying value (BHD)</TableHead>
+              <TableHead className="text-right">Final cost (BHD)</TableHead>
               <TableHead className="text-right">Selling value (BHD)</TableHead>
               <TableHead className="text-right">Gross profit</TableHead>
               <TableHead className="text-right">Margin</TableHead>
@@ -159,7 +159,7 @@ export default async function ProductCostReportPage({ searchParams }: PageProps)
                     {row.validCostCount > 0 ? formatInr(row.totalBuyingValueInr) : "—"}
                   </TableCell>
                   <TableCell className="text-right">
-                    {row.validCostCount > 0 ? formatBhd(row.totalBuyingValueBhd) : "—"}
+                    {row.validCostCount > 0 ? formatBhd(row.totalFinalCostBhd) : "—"}
                   </TableCell>
                   <TableCell className="text-right">
                     {row.validCostCount > 0 ? formatBhd(row.estimatedSellingValueBhd) : "—"}

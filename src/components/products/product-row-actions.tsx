@@ -29,7 +29,9 @@ type VariantCostRow = {
   stockQuantity: number;
   buyingPriceInr: number | null;
   exchangeRateToBhd: number | null;
-  buyingPriceBhd: number | null;
+  convertedUnitCostBhd: number | null;
+  additionalLandedCostBhd: number | null;
+  finalUnitCostBhd: number | null;
   sellingPriceBhd: number;
 };
 
@@ -37,7 +39,7 @@ type CostSummary = {
   validCostCount: number;
   missingCostCount: number;
   totalBuyingValueInr: number;
-  totalBuyingValueBhd: number;
+  totalFinalCostBhd: number;
   totalSellingValueBhd: number;
   variants: VariantCostRow[];
 };

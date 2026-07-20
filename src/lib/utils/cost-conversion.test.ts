@@ -74,7 +74,50 @@ describe("getValidBuyingCost", () => {
     expect(result).not.toBeNull();
     expect(result!.buyingPriceInr).toBe(1500);
     expect(result!.exchangeRateToBhd).toBe(0.00452);
-    expect(result!.buyingPriceBhd).toBe(6.78);
+    expect(result!.convertedUnitCostBhd).toBe(6.78);
+  });
+
+  it("additional landed cost defaults to 0 when absent, and final cost equals converted cost", () => {
+    const result = getValidBuyingCost({
+      latest_supplier_unit_cost_inr: 1500,
+      latest_exchange_rate_to_bhd: 0.00452,
+    });
+    expect(result).not.toBeNull();
+    expect(result!.additionalLandedCostBhd).toBe(0);
+    expect(result!.finalUnitCostBhd).toBe(result!.convertedUnitCostBhd);
+  });
+
+  it("final cost = converted cost + additional landed cost when the additional cost is entered", () => {
+    const result = getValidBuyingCost({
+      latest_supplier_unit_cost_inr: 1500,
+      latest_exchange_rate_to_bhd: 0.00452,
+      latest_additional_landed_cost_bhd: 0.5,
+    });
+    expect(result).not.toBeNull();
+    expect(result!.convertedUnitCostBhd).toBe(6.78);
+    expect(result!.additionalLandedCostBhd).toBe(0.5);
+    expect(result!.finalUnitCostBhd).toBe(7.28);
+  });
+
+  it("treats a negative additional landed cost as 0 rather than subtracting it", () => {
+    const result = getValidBuyingCost({
+      latest_supplier_unit_cost_inr: 1500,
+      latest_exchange_rate_to_bhd: 0.00452,
+      latest_additional_landed_cost_bhd: -5,
+    });
+    expect(result).not.toBeNull();
+    expect(result!.additionalLandedCostBhd).toBe(0);
+    expect(result!.finalUnitCostBhd).toBe(result!.convertedUnitCostBhd);
+  });
+
+  it("additional landed cost alone never makes an otherwise-missing base cost valid", () => {
+    expect(
+      getValidBuyingCost({
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+        latest_additional_landed_cost_bhd: 5,
+      }),
+    ).toBeNull();
   });
 
   it("returns null when INR is missing (null)", () => {
@@ -117,8 +160,8 @@ describe("getValidBuyingCost", () => {
       latest_landed_cost_bhd: 6012099.002,
     };
     const result = getValidBuyingCost(withHugeLegacyValue);
-    expect(result!.buyingPriceBhd).toBe(6.78);
-    expect(result!.buyingPriceBhd).not.toBe(6012099.002);
+    expect(result!.convertedUnitCostBhd).toBe(6.78);
+    expect(result!.convertedUnitCostBhd).not.toBe(6012099.002);
   });
 });
 

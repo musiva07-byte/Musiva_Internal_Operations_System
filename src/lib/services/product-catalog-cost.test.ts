@@ -84,6 +84,7 @@ describe("listProducts — cost_summary", () => {
         status: "active",
         latest_supplier_unit_cost_inr: 1500,
         latest_exchange_rate_to_bhd: 0.00452,
+        latest_additional_landed_cost_bhd: 0,
       },
     ]);
 
@@ -93,7 +94,7 @@ describe("listProducts — cost_summary", () => {
     expect(product.cost_summary.validCostCount).toBe(1);
     expect(product.cost_summary.missingCostCount).toBe(0);
     expect(product.cost_summary.totalBuyingValueInr).toBeCloseTo(1500 * 5, 3);
-    expect(product.cost_summary.totalBuyingValueBhd).toBeCloseTo(6.78 * 5, 3);
+    expect(product.cost_summary.totalFinalCostBhd).toBeCloseTo(6.78 * 5, 3);
     expect(product.cost_summary.totalSellingValueBhd).toBeCloseTo(11 * 5, 3);
     expect(product.cost_summary.variants).toHaveLength(1);
     expect(product.cost_summary.variants[0]).toMatchObject({
@@ -102,8 +103,44 @@ describe("listProducts — cost_summary", () => {
       stockQuantity: 5,
       buyingPriceInr: 1500,
       exchangeRateToBhd: 0.00452,
-      buyingPriceBhd: 6.78,
+      convertedUnitCostBhd: 6.78,
+      additionalLandedCostBhd: 0,
+      finalUnitCostBhd: 6.78,
       sellingPriceBhd: 11,
+    });
+  });
+
+  it("adds the optional additional landed cost on top of the converted price in totals and per-variant rows", async () => {
+    mockCatalog([
+      {
+        id: "v1",
+        product_id: "product-1",
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        minimum_stock: 1,
+        selling_price: 11,
+        regular_selling_price_bhd: 11,
+        discount_price: null,
+        discount_price_bhd: null,
+        discount_start_at: null,
+        discount_end_at: null,
+        status: "active",
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        latest_additional_landed_cost_bhd: 0.5,
+      },
+    ]);
+
+    const result = await listProducts({});
+    const product = result.data[0];
+
+    // converted = 6.780, final = 6.780 + 0.5 = 7.280
+    expect(product.cost_summary.totalFinalCostBhd).toBeCloseTo(7.28 * 5, 3);
+    expect(product.cost_summary.variants[0]).toMatchObject({
+      convertedUnitCostBhd: 6.78,
+      additionalLandedCostBhd: 0.5,
+      finalUnitCostBhd: 7.28,
     });
   });
 
@@ -134,12 +171,14 @@ describe("listProducts — cost_summary", () => {
     expect(product.cost_summary.validCostCount).toBe(0);
     expect(product.cost_summary.missingCostCount).toBe(1);
     expect(product.cost_summary.totalBuyingValueInr).toBe(0);
-    expect(product.cost_summary.totalBuyingValueBhd).toBe(0);
+    expect(product.cost_summary.totalFinalCostBhd).toBe(0);
     expect(product.cost_summary.totalSellingValueBhd).toBe(0);
     expect(product.cost_summary.variants[0]).toMatchObject({
       buyingPriceInr: null,
       exchangeRateToBhd: null,
-      buyingPriceBhd: null,
+      convertedUnitCostBhd: null,
+      additionalLandedCostBhd: null,
+      finalUnitCostBhd: null,
     });
   });
 
@@ -234,7 +273,7 @@ describe("listProducts — cost_summary", () => {
     expect(product.cost_summary.validCostCount).toBe(1);
     expect(product.cost_summary.missingCostCount).toBe(1);
     expect(product.cost_summary.totalBuyingValueInr).toBeCloseTo(1500 * 5, 3);
-    expect(product.cost_summary.totalBuyingValueBhd).toBeCloseTo(6.78 * 5, 3);
+    expect(product.cost_summary.totalFinalCostBhd).toBeCloseTo(6.78 * 5, 3);
     expect(product.cost_summary.totalSellingValueBhd).toBeCloseTo(11 * 5, 3);
     expect(product.cost_summary.variants).toHaveLength(2);
   });

@@ -61,19 +61,29 @@ export function formatInr(value: number): string {
 export type BuyingCostSource = {
   latest_supplier_unit_cost_inr: number | null;
   latest_exchange_rate_to_bhd: number | null;
+  /** Optional advanced field. Missing/null is treated as 0 — it never invalidates an
+   *  otherwise-valid cost the way a missing INR price or rate does. */
+  latest_additional_landed_cost_bhd?: number | null;
 };
 
 export type ValidBuyingCost = {
   buyingPriceInr: number;
   exchangeRateToBhd: number;
-  /** Always recalculated as buyingPriceInr × exchangeRateToBhd — never a stored value. */
-  buyingPriceBhd: number;
+  additionalLandedCostBhd: number;
+  /** buyingPriceInr × exchangeRateToBhd — always recalculated, never a stored value. */
+  convertedUnitCostBhd: number;
+  /** convertedUnitCostBhd + additionalLandedCostBhd — the cost basis for profit/margin. */
+  finalUnitCostBhd: number;
 };
 
 /**
- * Returns the variant's buying cost only when both the INR price and the exchange rate
- * are present and greater than 0. Returns null (treat as "missing") otherwise — including
- * when a stored converted/landed BHD figure exists but the INR or rate behind it doesn't.
+ * Returns the variant's buying cost only when the INR price and the exchange rate are both
+ * present and greater than 0. Returns null (treat as "missing") otherwise — including when a
+ * stored converted/landed BHD figure exists but the INR or rate behind it doesn't.
+ *
+ * The optional additional landed cost is added on top when present and >= 0 (never negative,
+ * defaults to 0) — it can never by itself make an otherwise-missing cost "valid", and it
+ * never makes an otherwise-valid cost "invalid".
  */
 export function getValidBuyingCost(variant: BuyingCostSource): ValidBuyingCost | null {
   const inr = variant.latest_supplier_unit_cost_inr;
@@ -82,9 +92,20 @@ export function getValidBuyingCost(variant: BuyingCostSource): ValidBuyingCost |
   if (inr === null || inr === undefined || inr <= 0) return null;
   if (rate === null || rate === undefined || rate <= 0) return null;
 
+  const rawAdditional = variant.latest_additional_landed_cost_bhd;
+  const additionalLandedCostBhd =
+    rawAdditional === null || rawAdditional === undefined || rawAdditional < 0
+      ? 0
+      : rawAdditional;
+
+  const convertedUnitCostBhd = roundBhd(convertToBhd(inr, rate));
+  const finalUnitCostBhd = roundBhd(convertedUnitCostBhd + additionalLandedCostBhd);
+
   return {
     buyingPriceInr: inr,
     exchangeRateToBhd: rate,
-    buyingPriceBhd: roundBhd(convertToBhd(inr, rate)),
+    additionalLandedCostBhd,
+    convertedUnitCostBhd,
+    finalUnitCostBhd,
   };
 }

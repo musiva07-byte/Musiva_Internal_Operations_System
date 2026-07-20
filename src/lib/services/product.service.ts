@@ -229,7 +229,7 @@ export async function listProducts(
     let validCostCount = 0;
     let missingCostCount = 0;
     let totalBuyingValueInr = 0;
-    let totalBuyingValueBhd = 0;
+    let totalFinalCostBhd = 0;
     let totalSellingValueBhd = 0;
     const variantCostRows: ProductListItem["cost_summary"]["variants"] = [];
     for (const variant of variantRows) {
@@ -238,7 +238,7 @@ export async function listProducts(
       if (cost) {
         validCostCount += 1;
         totalBuyingValueInr += cost.buyingPriceInr * variant.stock_quantity;
-        totalBuyingValueBhd += cost.buyingPriceBhd * variant.stock_quantity;
+        totalFinalCostBhd += cost.finalUnitCostBhd * variant.stock_quantity;
         totalSellingValueBhd += sellingPriceBhd * variant.stock_quantity;
       } else {
         missingCostCount += 1;
@@ -250,7 +250,9 @@ export async function listProducts(
         stockQuantity: variant.stock_quantity,
         buyingPriceInr: cost?.buyingPriceInr ?? null,
         exchangeRateToBhd: cost?.exchangeRateToBhd ?? null,
-        buyingPriceBhd: cost?.buyingPriceBhd ?? null,
+        convertedUnitCostBhd: cost?.convertedUnitCostBhd ?? null,
+        additionalLandedCostBhd: cost?.additionalLandedCostBhd ?? null,
+        finalUnitCostBhd: cost?.finalUnitCostBhd ?? null,
         sellingPriceBhd,
       });
     }
@@ -272,7 +274,7 @@ export async function listProducts(
         validCostCount,
         missingCostCount,
         totalBuyingValueInr,
-        totalBuyingValueBhd,
+        totalFinalCostBhd,
         totalSellingValueBhd,
         variants: variantCostRows,
       },
@@ -430,14 +432,18 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       (variant.buyingPriceInr ?? 0) > 0
         ? variant.buyingPriceInr!
         : (openingCost?.buyingPricePerPiece ?? 0);
+    const variantAdditionalCost = variant.additionalLandedCostBhd ?? 0;
 
-    // Buying price BHD is a pure currency conversion — no import/shipping/customs cost
-    // is added in this workflow. "Landed cost" columns are reused for the converted BHD
-    // figure (landed = converted here) so the existing weighted-average-cost RPC keeps
-    // working unchanged when a later purchase order also receives stock for this variant.
-    let buyingPriceBhd: number | null = null;
+    // Converted buying price is a pure currency conversion. The optional additional landed
+    // cost (cargo/customs/packaging/etc — staff-entered, defaults to 0, never required) is
+    // added on top to get the final buying cost. "Landed cost" columns are reused for the
+    // final BHD figure so the existing weighted-average-cost RPC keeps working unchanged
+    // when a later purchase order also receives stock for this variant.
+    let convertedUnitCostBhd: number | null = null;
+    let finalUnitCostBhd: number | null = null;
     if (openingCost && variantBuyingPrice > 0) {
-      buyingPriceBhd = roundBhd(convertToBhd(variantBuyingPrice, openingCost.exchangeRateToBhd));
+      convertedUnitCostBhd = roundBhd(convertToBhd(variantBuyingPrice, openingCost.exchangeRateToBhd));
+      finalUnitCostBhd = roundBhd(convertedUnitCostBhd + variantAdditionalCost);
     }
 
     const { data: createdVariant, error: variantError } = await supabase
@@ -455,10 +461,11 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
         discount_price_bhd: variant.discountPriceBhd ?? null,
         discount_start_at: variant.discountStartAt ?? null,
         discount_end_at: variant.discountEndAt ?? null,
-        latest_landed_cost_bhd: buyingPriceBhd,
-        average_landed_cost_bhd: buyingPriceBhd,
-        latest_supplier_unit_cost_inr: buyingPriceBhd != null ? variantBuyingPrice : null,
-        latest_exchange_rate_to_bhd: buyingPriceBhd != null ? openingCost!.exchangeRateToBhd : null,
+        latest_landed_cost_bhd: finalUnitCostBhd,
+        average_landed_cost_bhd: finalUnitCostBhd,
+        latest_supplier_unit_cost_inr: finalUnitCostBhd != null ? variantBuyingPrice : null,
+        latest_exchange_rate_to_bhd: finalUnitCostBhd != null ? openingCost!.exchangeRateToBhd : null,
+        latest_additional_landed_cost_bhd: finalUnitCostBhd != null ? variantAdditionalCost : 0,
         stock_quantity: 0,
         minimum_stock: variant.minimumStock,
         status: variant.status,
@@ -485,7 +492,7 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       }
 
       // If we have cost data, record an opening-stock inventory batch.
-      if (buyingPriceBhd != null && openingCost) {
+      if (finalUnitCostBhd != null && convertedUnitCostBhd != null && openingCost) {
         await supabase.from("inventory_batches").insert({
           purchase_order_item_id: null,
           product_variant_id: createdVariant.id,
@@ -497,9 +504,9 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
           exchange_rate_to_bhd: openingCost.exchangeRateToBhd,
           exchange_rate_date: openingCost.exchangeRateDate,
           exchange_rate_source: openingCost.exchangeRateSource,
-          converted_unit_cost_bhd: buyingPriceBhd,
-          allocated_import_cost_bhd: 0,
-          landed_unit_cost_bhd: buyingPriceBhd,
+          converted_unit_cost_bhd: convertedUnitCostBhd,
+          allocated_import_cost_bhd: variantAdditionalCost,
+          landed_unit_cost_bhd: finalUnitCostBhd,
           batch_type: "opening_stock",
           received_at: new Date().toISOString(),
         });
@@ -679,6 +686,7 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
           average_landed_cost_bhd: null,
           latest_supplier_unit_cost_inr: null,
           latest_exchange_rate_to_bhd: null,
+          latest_additional_landed_cost_bhd: 0,
           stock_quantity: 0,
           minimum_stock: variant.minimumStock,
           status: variant.status,

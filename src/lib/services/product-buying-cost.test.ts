@@ -86,6 +86,7 @@ function baseInput(overrides: Partial<ProductInput> = {}): ProductInput {
         minimumStock: 1,
         status: "active",
         buyingPriceInr: 1500,
+        additionalLandedCostBhd: 0,
       },
     ],
     ...overrides,
@@ -161,6 +162,79 @@ describe("createProduct — buying cost", () => {
       average_landed_cost_bhd: 6.78,
       latest_supplier_unit_cost_inr: 1500,
       latest_exchange_rate_to_bhd: 0.00452,
+      latest_additional_landed_cost_bhd: 0,
+    });
+  });
+
+  it("adds the optional additional landed cost on top of the converted price (final cost)", async () => {
+    mockHappyPath();
+
+    const variantInsertCalls: unknown[] = [];
+    let batchInsertPayload: Record<string, unknown> | null = null;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "products") {
+        return {
+          select: () => ({ eq: () => Promise.resolve({ count: 0 }) }),
+          insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: productRow, error: null }) }) }),
+        };
+      }
+      if (table === "product_variants") {
+        return {
+          insert: (payload: unknown) => {
+            variantInsertCalls.push(payload);
+            return { select: () => ({ single: () => Promise.resolve({ data: variantRow, error: null }) }) };
+          },
+        };
+      }
+      if (table === "inventory_batches") {
+        return {
+          insert: (payload: Record<string, unknown>) => {
+            batchInsertPayload = payload;
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
+      return { insert: () => Promise.resolve({ error: null }) };
+    });
+
+    const input = baseInput({
+      variants: [
+        {
+          variantSku: "MSV-10001-BLK-M",
+          barcode: null,
+          color: "Black",
+          size: "M",
+          costPrice: 0,
+          sellingPrice: 11,
+          discountPrice: null,
+          regularSellingPriceBhd: 11,
+          discountPriceBhd: null,
+          discountStartAt: null,
+          discountEndAt: null,
+          stockQuantity: 5,
+          minimumStock: 1,
+          status: "active",
+          buyingPriceInr: 1500,
+          additionalLandedCostBhd: 0.5,
+        },
+      ],
+    });
+
+    const result = await createProduct(input);
+
+    expect(result.error).toBeNull();
+    // converted = 1500 × 0.00452 = 6.780; final = 6.780 + 0.5 = 7.280
+    expect(variantInsertCalls[0]).toMatchObject({
+      latest_landed_cost_bhd: 7.28,
+      average_landed_cost_bhd: 7.28,
+      latest_supplier_unit_cost_inr: 1500,
+      latest_exchange_rate_to_bhd: 0.00452,
+      latest_additional_landed_cost_bhd: 0.5,
+    });
+    expect(batchInsertPayload).toMatchObject({
+      converted_unit_cost_bhd: 6.78,
+      allocated_import_cost_bhd: 0.5,
+      landed_unit_cost_bhd: 7.28,
     });
   });
 
@@ -207,7 +281,7 @@ describe("createProduct — buying cost", () => {
     });
   });
 
-  it("never writes an import/shipping/customs cost — allocated_import_cost_bhd is always 0", async () => {
+  it("additional landed cost defaults to 0 (allocated_import_cost_bhd) when not entered", async () => {
     mockHappyPath();
 
     let batchInsertPayload: Record<string, unknown> | null = null;
@@ -234,7 +308,7 @@ describe("createProduct — buying cost", () => {
       return { insert: () => Promise.resolve({ error: null }) };
     });
 
-    // openingCost has no extraImportCostBhd field at all — the type doesn't allow it.
+    // baseInput's variant leaves additionalLandedCostBhd at its default (0).
     await createProduct(baseInput());
 
     expect(batchInsertPayload).not.toBeNull();
@@ -293,6 +367,7 @@ describe("createProduct — buying cost", () => {
           minimumStock: 1,
           status: "active",
           buyingPriceInr: 0,
+          additionalLandedCostBhd: 0,
         },
       ],
     });

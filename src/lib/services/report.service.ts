@@ -173,7 +173,8 @@ export type ProductCostReportRow = {
   validCostCount: number;
   missingCostCount: number;
   totalBuyingValueInr: number;
-  totalBuyingValueBhd: number;
+  /** Sum of finalUnitCostBhd × stock_quantity (converted + optional additional landed cost). */
+  totalFinalCostBhd: number;
   estimatedSellingValueBhd: number;
   estimatedGrossProfitBhd: number;
   estimatedMarginPercent: number | null;
@@ -184,6 +185,7 @@ type CostReportVariantRow = {
   stock_quantity: number;
   latest_supplier_unit_cost_inr: number | null;
   latest_exchange_rate_to_bhd: number | null;
+  latest_additional_landed_cost_bhd: number | null;
   regular_selling_price_bhd: number | null;
   selling_price: number;
   status: string;
@@ -203,7 +205,7 @@ export async function getProductCostReport(): Promise<ProductCostReportRow[]> {
   const { data } = await supabase
     .from("product_variants")
     .select(
-      "product_id, stock_quantity, latest_supplier_unit_cost_inr, latest_exchange_rate_to_bhd, regular_selling_price_bhd, selling_price, status, products(name, categories(name))",
+      "product_id, stock_quantity, latest_supplier_unit_cost_inr, latest_exchange_rate_to_bhd, latest_additional_landed_cost_bhd, regular_selling_price_bhd, selling_price, status, products(name, categories(name))",
     )
     .neq("status", "archived");
 
@@ -219,7 +221,7 @@ export async function getProductCostReport(): Promise<ProductCostReportRow[]> {
       validCostCount: 0,
       missingCostCount: 0,
       totalBuyingValueInr: 0,
-      totalBuyingValueBhd: 0,
+      totalFinalCostBhd: 0,
       estimatedSellingValueBhd: 0,
       estimatedGrossProfitBhd: 0,
       estimatedMarginPercent: null,
@@ -231,7 +233,7 @@ export async function getProductCostReport(): Promise<ProductCostReportRow[]> {
       existing.validCostCount += 1;
       const sellingBhd = Number(row.regular_selling_price_bhd ?? row.selling_price);
       existing.totalBuyingValueInr += cost.buyingPriceInr * row.stock_quantity;
-      existing.totalBuyingValueBhd += cost.buyingPriceBhd * row.stock_quantity;
+      existing.totalFinalCostBhd += cost.finalUnitCostBhd * row.stock_quantity;
       existing.estimatedSellingValueBhd += sellingBhd * row.stock_quantity;
     } else {
       existing.missingCostCount += 1;
@@ -241,13 +243,13 @@ export async function getProductCostReport(): Promise<ProductCostReportRow[]> {
   }
 
   return [...byProduct.values()].map((product) => {
-    const estimatedGrossProfitBhd = product.estimatedSellingValueBhd - product.totalBuyingValueBhd;
+    const estimatedGrossProfitBhd = product.estimatedSellingValueBhd - product.totalFinalCostBhd;
     return {
       ...product,
       estimatedGrossProfitBhd,
       estimatedMarginPercent:
         product.validCostCount > 0
-          ? calcEstimatedMargin(product.estimatedSellingValueBhd, product.totalBuyingValueBhd)
+          ? calcEstimatedMargin(product.estimatedSellingValueBhd, product.totalFinalCostBhd)
           : null,
     };
   });

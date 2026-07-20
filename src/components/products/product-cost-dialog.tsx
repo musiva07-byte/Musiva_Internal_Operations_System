@@ -22,7 +22,10 @@ type VariantCostRow = {
   stockQuantity: number;
   buyingPriceInr: number | null;
   exchangeRateToBhd: number | null;
-  buyingPriceBhd: number | null;
+  convertedUnitCostBhd: number | null;
+  /** Optional advanced field — cargo/customs/packaging/etc per piece. 0 when not entered. */
+  additionalLandedCostBhd: number | null;
+  finalUnitCostBhd: number | null;
   sellingPriceBhd: number;
 };
 
@@ -30,7 +33,7 @@ type CostSummary = {
   validCostCount: number;
   missingCostCount: number;
   totalBuyingValueInr: number;
-  totalBuyingValueBhd: number;
+  totalFinalCostBhd: number;
   totalSellingValueBhd: number;
   variants: VariantCostRow[];
 };
@@ -46,9 +49,9 @@ type Props = {
 export function ProductCostDialog({ productName, totalStock, costSummary, showProfit }: Props) {
   const [open, setOpen] = useState(false);
   const hasValidCost = costSummary.validCostCount > 0;
-  const estimatedGrossProfit = costSummary.totalSellingValueBhd - costSummary.totalBuyingValueBhd;
+  const estimatedGrossProfit = costSummary.totalSellingValueBhd - costSummary.totalFinalCostBhd;
   const estimatedMargin = hasValidCost
-    ? calcEstimatedMargin(costSummary.totalSellingValueBhd, costSummary.totalBuyingValueBhd)
+    ? calcEstimatedMargin(costSummary.totalSellingValueBhd, costSummary.totalFinalCostBhd)
     : null;
 
   return (
@@ -92,9 +95,9 @@ export function ProductCostDialog({ productName, totalStock, costSummary, showPr
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Total buying value (BHD)</p>
+                  <p className="text-xs text-muted-foreground">Total final cost (BHD)</p>
                   <p className="mt-1 font-medium text-musiva-plum">
-                    {formatBhd(costSummary.totalBuyingValueBhd)}
+                    {formatBhd(costSummary.totalFinalCostBhd)}
                   </p>
                 </div>
                 {showProfit && (
@@ -131,16 +134,18 @@ export function ProductCostDialog({ productName, totalStock, costSummary, showPr
                   <TableHead className="text-right">Qty</TableHead>
                   <TableHead className="text-right">Buy/piece (INR)</TableHead>
                   <TableHead>Rate</TableHead>
-                  <TableHead className="text-right">Buy/piece (BHD)</TableHead>
+                  <TableHead className="text-right">Converted (BHD)</TableHead>
+                  <TableHead className="text-right">Additional cost (BHD)</TableHead>
+                  <TableHead className="text-right">Final buy/piece (BHD)</TableHead>
                   <TableHead className="text-right">Total buy (INR)</TableHead>
-                  <TableHead className="text-right">Total buy (BHD)</TableHead>
+                  <TableHead className="text-right">Total final (BHD)</TableHead>
                   <TableHead className="text-right">Sell (BHD)</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {costSummary.variants.map((variant) => {
-                  const hasCost = variant.buyingPriceBhd !== null;
+                  const hasCost = variant.finalUnitCostBhd !== null;
                   return (
                     <TableRow key={variant.id}>
                       <TableCell>
@@ -156,8 +161,18 @@ export function ProductCostDialog({ productName, totalStock, costSummary, showPr
                           : "—"}
                       </TableCell>
                       <TableCell className="text-right">
+                        {variant.convertedUnitCostBhd !== null ? (
+                          formatBhd(variant.convertedUnitCostBhd)
+                        ) : (
+                          <span className="italic text-muted-foreground">Not recorded</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {hasCost ? formatBhd(variant.additionalLandedCostBhd ?? 0) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
                         {hasCost ? (
-                          formatBhd(variant.buyingPriceBhd!)
+                          formatBhd(variant.finalUnitCostBhd!)
                         ) : (
                           <span className="italic text-muted-foreground">Not recorded</span>
                         )}
@@ -168,7 +183,7 @@ export function ProductCostDialog({ productName, totalStock, costSummary, showPr
                           : "—"}
                       </TableCell>
                       <TableCell className="text-right">
-                        {hasCost ? formatBhd(variant.buyingPriceBhd! * variant.stockQuantity) : "—"}
+                        {hasCost ? formatBhd(variant.finalUnitCostBhd! * variant.stockQuantity) : "—"}
                       </TableCell>
                       <TableCell className="text-right">{formatBhd(variant.sellingPriceBhd)}</TableCell>
                       <TableCell>

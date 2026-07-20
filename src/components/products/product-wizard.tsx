@@ -68,10 +68,13 @@ type Step2Data = {
   sizes: string[];
 };
 
-/** Extension of GeneratedVariant that carries per-variant buying price. Buying price BHD
- *  is always calculated (converted from INR) — there is no manual override. */
+/** Extension of GeneratedVariant that carries per-variant buying price. Converted buying
+ *  price BHD is always calculated (converted from INR) — there is no manual override.
+ *  additionalLandedCostBhd is an OPTIONAL advanced field (cargo/customs/packaging/etc per
+ *  piece) — defaults to 0, staff are never required to enter it. */
 type WizardVariant = GeneratedVariant & {
   buyingPriceInr: number;
+  additionalLandedCostBhd: number;
 };
 
 type Step3Data = {
@@ -88,6 +91,19 @@ function deriveVariantConvertedCost(
 ): number {
   if (!buyingPriceInr || !exchangeRateToBhd || exchangeRateToBhd <= 0) return 0;
   return roundBhd(convertToBhd(buyingPriceInr, exchangeRateToBhd));
+}
+
+/** Final buying cost BHD = converted buying price + optional additional landed cost.
+ *  Returns 0 when there is no valid converted cost yet — the additional cost can never
+ *  make an otherwise-missing base cost "valid" on its own. */
+function deriveVariantFinalCost(
+  buyingPriceInr: number,
+  exchangeRateToBhd: number | null,
+  additionalLandedCostBhd: number,
+): number {
+  const converted = deriveVariantConvertedCost(buyingPriceInr, exchangeRateToBhd);
+  if (converted <= 0) return 0;
+  return roundBhd(converted + (additionalLandedCostBhd || 0));
 }
 
 // ── chip input ─────────────────────────────────────────────────────────────────
@@ -277,12 +293,20 @@ export function ProductWizard({
   // bulk setter inputs
   const [bulkPrice, setBulkPrice] = useState<number>(0);
   const [bulkBuyingPriceInr, setBulkBuyingPriceInr] = useState<number>(0);
+  const [bulkAdditionalCostBhd, setBulkAdditionalCostBhd] = useState<number>(0);
   const [bulkMinStock, setBulkMinStock] = useState<number>(1);
   const [bulkStartingQty, setBulkStartingQty] = useState<number>(0);
+  // Collapsed by default — additional landed cost is an optional advanced field.
+  const [showAdvancedCost, setShowAdvancedCost] = useState(false);
 
   // ── derived values ───────────────────────────────────────────────────────────
 
   const bulkConvertedCost = deriveVariantConvertedCost(bulkBuyingPriceInr, effectiveExchangeRate);
+  const bulkFinalCost = deriveVariantFinalCost(
+    bulkBuyingPriceInr,
+    effectiveExchangeRate,
+    bulkAdditionalCostBhd,
+  );
   const showBulkPreview = canEnterCost && bulkConvertedCost > 0;
 
   // ── step 1 ───────────────────────────────────────────────────────────────────
@@ -341,6 +365,7 @@ export function ProductWizard({
       variants: generated.map((v) => ({
         ...v,
         buyingPriceInr: 0,
+        additionalLandedCostBhd: 0,
       })),
     });
     setStep(3);
@@ -381,6 +406,14 @@ export function ProductWizard({
     }));
   }
 
+  function updateVariantAdditionalCost(color: string, size: string, value: number) {
+    setStep3((prev) => ({
+      variants: prev.variants.map((v) =>
+        v.color === color && v.size === size ? { ...v, additionalLandedCostBhd: value } : v,
+      ),
+    }));
+  }
+
   function applyBulkAll() {
     setStep3((prev) => ({
       variants: prev.variants.map((v) => ({
@@ -389,6 +422,7 @@ export function ProductWizard({
           ? { regularSellingPriceBhd: bulkPrice, sellingPrice: bulkPrice }
           : {}),
         ...(bulkBuyingPriceInr > 0 ? { buyingPriceInr: bulkBuyingPriceInr } : {}),
+        ...(bulkAdditionalCostBhd > 0 ? { additionalLandedCostBhd: bulkAdditionalCostBhd } : {}),
         ...(bulkMinStock > 0 ? { minimumStock: bulkMinStock } : {}),
         ...(bulkStartingQty > 0 ? { stockQuantity: bulkStartingQty } : {}),
       })),
@@ -470,6 +504,7 @@ export function ProductWizard({
           minimumStock: v.minimumStock,
           status: "active",
           buyingPriceInr: v.buyingPriceInr,
+          additionalLandedCostBhd: v.additionalLandedCostBhd,
         })),
         images: [],
       });
@@ -826,6 +861,41 @@ export function ProductWizard({
                     Only non-zero fields are applied. Future purchases use Purchases → New Purchase.
                   </p>
                 </div>
+
+                {/* ── Advanced cost, optional ──────────────────────────── */}
+                <div className="rounded-md border border-dashed border-musiva-border">
+                  <button
+                    className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-muted-foreground hover:text-musiva-plum"
+                    type="button"
+                    onClick={() => setShowAdvancedCost((v) => !v)}
+                  >
+                    <span>Advanced cost, optional</span>
+                    <ChevronRight
+                      aria-hidden
+                      className={cn("h-4 w-4 transition-transform", showAdvancedCost ? "rotate-90" : "")}
+                    />
+                  </button>
+                  {showAdvancedCost && (
+                    <div className="space-y-2 border-t border-dashed border-musiva-border px-4 pb-4 pt-3">
+                      <Label htmlFor="bulk-additional-cost">
+                        Additional landed cost per piece (BHD) — for all options
+                      </Label>
+                      <Input
+                        id="bulk-additional-cost"
+                        min={0}
+                        placeholder="0.000"
+                        step="0.001"
+                        type="number"
+                        value={bulkAdditionalCostBhd || ""}
+                        onChange={(e) => setBulkAdditionalCostBhd(Number(e.target.value) || 0)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Optional extra cost such as cargo, customs, packaging, or other
+                        purchase-related cost per piece. Leave 0 if not needed.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               /* ── Bulk setters (view-only users) ─────────────────── */
@@ -886,17 +956,37 @@ export function ProductWizard({
                     </span>
                   </div>
                   <div className="col-span-full mt-1 flex justify-between gap-4 border-t border-musiva-border pt-2">
-                    <span className="font-semibold text-musiva-plum">Buying price (BHD)</span>
-                    <span className="font-semibold text-musiva-plum">
+                    <span className="font-medium text-foreground">Converted buying price (BHD)</span>
+                    <span className="font-medium text-foreground">
                       {formatBhd(bulkConvertedCost)}
                     </span>
                   </div>
-                  {canViewProfit && bulkPrice > 0 && bulkConvertedCost > 0 && (
+                  {bulkAdditionalCostBhd > 0 && (
+                    <div className="flex justify-between gap-4 text-muted-foreground">
+                      <span>Additional landed cost (BHD)</span>
+                      <span className="font-medium text-foreground">
+                        {formatBhd(bulkAdditionalCostBhd)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="col-span-full flex justify-between gap-4 border-t border-musiva-border pt-2">
+                    <span className="font-semibold text-musiva-plum">Final buying cost (BHD)</span>
+                    <span className="font-semibold text-musiva-plum">
+                      {formatBhd(bulkFinalCost)}
+                    </span>
+                  </div>
+                  {bulkPrice > 0 && (
+                    <div className="flex justify-between gap-4 text-muted-foreground">
+                      <span>Selling price (BHD)</span>
+                      <span className="font-medium text-foreground">{formatBhd(bulkPrice)}</span>
+                    </div>
+                  )}
+                  {canViewProfit && bulkPrice > 0 && bulkFinalCost > 0 && (
                     <div className="col-span-full flex items-center gap-2 pt-1">
                       <span className="text-xs text-muted-foreground">Est. profit:</span>
                       <ProfitBadge
-                        margin={calcEstimatedMargin(bulkPrice, bulkConvertedCost)}
-                        profit={calcEstimatedProfit(bulkPrice, bulkConvertedCost)}
+                        margin={calcEstimatedMargin(bulkPrice, bulkFinalCost)}
+                        profit={calcEstimatedProfit(bulkPrice, bulkFinalCost)}
                       />
                     </div>
                   )}
@@ -913,18 +1003,23 @@ export function ProductWizard({
               ) : (
                 step3.variants.map((v) => {
                   const vConverted = deriveVariantConvertedCost(v.buyingPriceInr, effectiveExchangeRate);
+                  const vFinal = deriveVariantFinalCost(
+                    v.buyingPriceInr,
+                    effectiveExchangeRate,
+                    v.additionalLandedCostBhd,
+                  );
                   const profit =
-                    canViewProfit && vConverted > 0 && v.regularSellingPriceBhd > 0
-                      ? calcEstimatedProfit(v.regularSellingPriceBhd, vConverted)
+                    canViewProfit && vFinal > 0 && v.regularSellingPriceBhd > 0
+                      ? calcEstimatedProfit(v.regularSellingPriceBhd, vFinal)
                       : null;
                   const margin =
-                    canViewProfit && vConverted > 0 && v.regularSellingPriceBhd > 0
-                      ? calcEstimatedMargin(v.regularSellingPriceBhd, vConverted)
+                    canViewProfit && vFinal > 0 && v.regularSellingPriceBhd > 0
+                      ? calcEstimatedMargin(v.regularSellingPriceBhd, vFinal)
                       : null;
                   const belowCost =
-                    vConverted > 0 &&
+                    vFinal > 0 &&
                     v.regularSellingPriceBhd > 0 &&
-                    v.regularSellingPriceBhd < vConverted;
+                    v.regularSellingPriceBhd < vFinal;
 
                   return (
                     <div
@@ -1103,9 +1198,41 @@ export function ProductWizard({
                         </div>
                       )}
 
+                      {canEnterCost && showAdvancedCost && (
+                        <div className="flex flex-wrap items-end gap-3 border-t border-dashed border-musiva-border bg-musiva-ivory/60 px-3 py-2">
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Additional cost (BHD)</Label>
+                            <Input
+                              className="h-8 w-28 text-xs"
+                              min={0}
+                              step="0.001"
+                              type="number"
+                              value={v.additionalLandedCostBhd || ""}
+                              onChange={(e) =>
+                                updateVariantAdditionalCost(
+                                  v.color,
+                                  v.size,
+                                  Number(e.target.value) || 0,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Final buy (BHD)</Label>
+                            <div className="flex h-8 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
+                              {vFinal > 0 ? (
+                                formatBhd(vFinal)
+                              ) : (
+                                <span className="italic">Not recorded</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {belowCost && (
                         <p className="border-t border-dashed border-musiva-warning/30 bg-musiva-warning/10 px-3 py-1.5 text-xs text-musiva-warning-foreground">
-                          Selling price is below buying cost.
+                          Selling price is below final buying cost.
                         </p>
                       )}
                     </div>
@@ -1129,15 +1256,22 @@ export function ProductWizard({
                       (s, v) => s + v.buyingPriceInr * v.stockQuantity,
                       0,
                     );
-                    const totalBuyingBhd = step3.variants.reduce(
-                      (s, v) => s + deriveVariantConvertedCost(v.buyingPriceInr, effectiveExchangeRate) * v.stockQuantity,
+                    const totalFinalCostBhd = step3.variants.reduce(
+                      (s, v) =>
+                        s +
+                        deriveVariantFinalCost(
+                          v.buyingPriceInr,
+                          effectiveExchangeRate,
+                          v.additionalLandedCostBhd,
+                        ) *
+                          v.stockQuantity,
                       0,
                     );
                     const totalSellingBhd = step3.variants.reduce(
                       (s, v) => s + v.regularSellingPriceBhd * v.stockQuantity,
                       0,
                     );
-                    const estProfit = totalSellingBhd - totalBuyingBhd;
+                    const estProfit = totalSellingBhd - totalFinalCostBhd;
                     const estMargin = totalSellingBhd > 0 ? (estProfit / totalSellingBhd) * 100 : null;
 
                     return (
@@ -1149,9 +1283,9 @@ export function ProductWizard({
                           </span>
                         </div>
                         <div className="flex justify-between gap-4 text-muted-foreground">
-                          <span>Total buying value (BHD)</span>
+                          <span>Total final cost (BHD)</span>
                           <span className="font-medium text-foreground">
-                            {formatBhd(totalBuyingBhd)}
+                            {formatBhd(totalFinalCostBhd)}
                           </span>
                         </div>
                         {minPrice !== null && (

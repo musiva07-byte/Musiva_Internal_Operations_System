@@ -93,6 +93,8 @@ export const productVariantSchema = z
     status: z.enum([PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.archived, PRODUCT_STATUSES.draft]),
     /** Buying price in INR for this specific variant (per-variant cost entry). */
     buyingPriceInr: z.coerce.number().min(0).optional().default(0),
+    /** Optional advanced field — cargo/customs/packaging/etc per piece. Never required. */
+    additionalLandedCostBhd: z.coerce.number().min(0).optional().default(0),
   })
   .refine(
     (v) =>

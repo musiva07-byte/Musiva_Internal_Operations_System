@@ -230,6 +230,9 @@ export type ProductVariantRow = {
   latest_supplier_unit_cost_inr: number | null;
   /** 1 INR expressed in BHD, as used for latest_landed_cost_bhd. */
   latest_exchange_rate_to_bhd: number | null;
+  /** Optional advanced field (cargo/customs/packaging/etc per piece). Never null — 0 means
+   *  "not entered". Never trusted on its own; only meaningful alongside a valid INR + rate. */
+  latest_additional_landed_cost_bhd: number;
   stock_quantity: number;
   minimum_stock: number;
   status: ProductStatus;

@@ -208,17 +208,25 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
                           <div className="space-y-0.5 text-xs">
                             <p className="text-muted-foreground">
                               Buy: <span className="font-medium text-foreground">{formatInr(cost.buyingPriceInr)}</span>
-                              {" / "}
-                              <span className="font-medium text-foreground">{formatBhd(cost.buyingPriceBhd)}</span>
+                              {" → "}
+                              <span className="font-medium text-foreground">{formatBhd(cost.convertedUnitCostBhd)}</span>
+                            </p>
+                            {cost.additionalLandedCostBhd > 0 && (
+                              <p className="text-muted-foreground">
+                                + Additional:{" "}
+                                <span className="font-medium text-foreground">
+                                  {formatBhd(cost.additionalLandedCostBhd)}
+                                </span>
+                              </p>
+                            )}
+                            <p className="text-muted-foreground">
+                              Final:{" "}
+                              <span className="font-medium text-foreground">{formatBhd(cost.finalUnitCostBhd)}</span>
                             </p>
                             <p className="text-muted-foreground">
-                              Total:{" "}
+                              Total final cost:{" "}
                               <span className="font-medium text-foreground">
-                                {formatInr(cost.buyingPriceInr * variant.stock_quantity)}
-                              </span>
-                              {" / "}
-                              <span className="font-medium text-foreground">
-                                {formatBhd(cost.buyingPriceBhd * variant.stock_quantity)}
+                                {formatBhd(cost.finalUnitCostBhd * variant.stock_quantity)}
                               </span>
                             </p>
                             <Badge className="text-[10px]" variant="success">Recorded</Badge>
