@@ -22,6 +22,7 @@ import {
 } from "@/lib/validations/product-publishing";
 import { convertToBhd, roundBhd } from "@/lib/utils/cost-conversion";
 import { generateUniqueProductSlug, slugify } from "@/lib/utils/slug";
+import { generateProductSku, generateVariantSku, resolveUniqueSku } from "@/lib/utils/sku";
 import { createAuditLog } from "./audit.service";
 import { serviceError, serviceSuccess, type ServiceResult } from "./service-result";
 import type {
@@ -88,6 +89,96 @@ async function resolveProductSlug(
 
   const generated = await generateUniqueProductSlug(name, sku, isTaken);
   return { slug: generated, error: null };
+}
+
+const SKU_CONFLICT_ERROR =
+  "Could not create this product option because the option code already exists. Please change the product code or contact the administrator.";
+
+/**
+ * Resolve the product SKU/code to save: a staff-typed code is used exactly
+ * as entered (never silently changed — a collision is reported so staff can
+ * pick a different code themselves). A blank code is auto-generated from the
+ * product name and, since that value was never chosen by staff, silently
+ * suffixed ("-2", "-3", ...) if it happens to collide.
+ */
+async function resolveProductSku(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  typedSku: string,
+  name: string,
+  excludeProductId?: string,
+): Promise<{ ok: true; sku: string } | { ok: false; error: string }> {
+  async function isTaken(candidate: string): Promise<boolean> {
+    let query = supabase
+      .from("products")
+      .select("id", { count: "exact", head: true })
+      .eq("sku", candidate);
+    if (excludeProductId) {
+      query = query.neq("id", excludeProductId);
+    }
+    const { count } = await query;
+    return (count ?? 0) > 0;
+  }
+
+  const trimmed = typedSku.trim();
+  if (trimmed) {
+    if (await isTaken(trimmed)) {
+      return {
+        ok: false,
+        error: `A product with the code "${trimmed}" already exists. Please use a different product code.`,
+      };
+    }
+    return { ok: true, sku: trimmed };
+  }
+
+  const base = generateProductSku(name);
+  const resolved = await resolveUniqueSku(base, isTaken);
+  if (!resolved) {
+    return { ok: false, error: SKU_CONFLICT_ERROR };
+  }
+  return { ok: true, sku: resolved };
+}
+
+/**
+ * Resolve a unique variant SKU ("option code") derived from the product
+ * SKU/color/size. Variant SKU is never staff-typed in the product wizard
+ * (it is shown as a read-only preview only), so it is always safe to
+ * auto-suffix on collision. `reserved` tracks codes already assigned earlier
+ * in the same create/update call, since those rows don't exist in the
+ * database yet to be caught by the uniqueness check.
+ */
+async function resolveVariantSku(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  productSku: string,
+  color: string,
+  size: string,
+  reserved: Set<string>,
+): Promise<string | null> {
+  const base = generateVariantSku(productSku, color, size);
+  const isTaken = async (candidate: string): Promise<boolean> => {
+    if (reserved.has(candidate)) return true;
+    const { count } = await supabase
+      .from("product_variants")
+      .select("id", { count: "exact", head: true })
+      .eq("variant_sku", candidate);
+    return (count ?? 0) > 0;
+  };
+
+  const resolved = await resolveUniqueSku(base, isTaken);
+  if (resolved) {
+    reserved.add(resolved);
+  }
+  return resolved;
+}
+
+/** Never store an empty string as a barcode — NULL is the "no barcode" value,
+ *  and unlike NULL, multiple rows with barcode = "" would collide on the
+ *  unique index. */
+function normalizeBarcode(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
 }
 
 type ProductRelationRow = ProductRow & {
@@ -429,10 +520,16 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       ? productInput.openingCost
       : null;
 
+  const skuResult = await resolveProductSku(supabase, productInput.sku, productInput.name);
+  if (!skuResult.ok) {
+    return serviceError(skuResult.error);
+  }
+  const resolvedSku = skuResult.sku;
+
   const slugResult = await resolveProductSlug(
     supabase,
     productInput.name,
-    productInput.sku,
+    resolvedSku,
     productInput.slug,
   );
   if (slugResult.error) {
@@ -464,7 +561,7 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
     .from("products")
     .insert({
       name: productInput.name,
-      sku: productInput.sku,
+      sku: resolvedSku,
       category_id: productInput.categoryId ?? null,
       collection: productInput.collection ?? null,
       description: productInput.description ?? null,
@@ -489,7 +586,28 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
     return serviceError("Product could not be created. Please check the SKU and try again.");
   }
 
+  /** Best-effort cleanup so a mid-loop failure never leaves a half-created product
+   *  behind — variants and images cascade-delete with the product row. */
+  const newProductId = product.id;
+  async function rollbackProduct() {
+    await supabase.from("products").delete().eq("id", newProductId);
+  }
+
+  const reservedVariantSkus = new Set<string>();
+
   for (const variant of productInput.variants) {
+    const resolvedVariantSku = await resolveVariantSku(
+      supabase,
+      resolvedSku,
+      variant.color,
+      variant.size,
+      reservedVariantSkus,
+    );
+    if (!resolvedVariantSku) {
+      await rollbackProduct();
+      return serviceError(SKU_CONFLICT_ERROR);
+    }
+
     // Per-variant buying price takes priority over the shared (legacy) price.
     const variantBuyingPrice =
       (variant.buyingPriceInr ?? 0) > 0
@@ -514,8 +632,8 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       .from("product_variants")
       .insert({
         product_id: product.id,
-        variant_sku: variant.variantSku,
-        barcode: variant.barcode ?? null,
+        variant_sku: resolvedVariantSku,
+        barcode: normalizeBarcode(variant.barcode),
         color: variant.color,
         size: variant.size,
         cost_price: variant.costPrice,
@@ -538,7 +656,8 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       .single();
 
     if (variantError || !createdVariant) {
-      return serviceError("Product variant could not be created. Please check SKU and barcode values.");
+      await rollbackProduct();
+      return serviceError("Could not create this product option. Please check the product details and try again.");
     }
 
     if (variant.stockQuantity > 0) {
@@ -643,10 +762,16 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
   const wasPublished =
     existingProduct?.online_status === "published" || existingProduct?.website_visible === true;
 
+  const skuResult = await resolveProductSku(supabase, productInput.sku, productInput.name, productId);
+  if (!skuResult.ok) {
+    return serviceError(skuResult.error);
+  }
+  const resolvedSku = skuResult.sku;
+
   const slugResult = await resolveProductSlug(
     supabase,
     productInput.name,
-    productInput.sku,
+    resolvedSku,
     productInput.slug,
     productId,
   );
@@ -679,7 +804,7 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
     .from("products")
     .update({
       name: productInput.name,
-      sku: productInput.sku,
+      sku: resolvedSku,
       category_id: productInput.categoryId ?? null,
       collection: productInput.collection ?? null,
       description: productInput.description ?? null,
@@ -711,7 +836,7 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
         .from("product_variants")
         .update({
           variant_sku: variant.variantSku,
-          barcode: variant.barcode ?? null,
+          barcode: normalizeBarcode(variant.barcode),
           color: variant.color,
           size: variant.size,
           cost_price: variant.costPrice,
@@ -736,7 +861,7 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
         .insert({
           product_id: productId,
           variant_sku: variant.variantSku,
-          barcode: variant.barcode ?? null,
+          barcode: normalizeBarcode(variant.barcode),
           color: variant.color,
           size: variant.size,
           cost_price: variant.costPrice,

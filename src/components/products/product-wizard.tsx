@@ -17,8 +17,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CategorySelect } from "@/components/products/category-select";
+import {
+  PriceConfirmationDialog,
+  type PriceConfirmationRow,
+} from "@/components/products/price-confirmation-dialog";
 import { generateProductSku } from "@/lib/utils/sku";
 import { generateVariants, type GeneratedVariant } from "@/lib/utils/variant-generator";
 import { createProductAction } from "@/app/admin/products/actions";
@@ -66,16 +71,41 @@ type Step1Data = {
 
 type Step2Data = {
   colors: string[];
-  sizes: string[];
+  /** Sizes typed by staff while "Use specific sizes" is active. Kept separate from the
+   *  effective sizes used for generation so toggling Free Size on and back off never
+   *  loses what staff already typed — see resolveStep2Sizes. */
+  specificSizes: string[];
+  isFreeSize: boolean;
 };
 
-/** Extension of GeneratedVariant that carries per-variant buying price. Converted buying
- *  price BHD is always calculated (converted from INR) — there is no manual override.
- *  importCostBhd is an OPTIONAL field (cargo/customs/packing/transfer/delivery from India
- *  to Bahrain, per piece) — defaults to 0, staff are never required to enter it. */
+/** The exact label stored and displayed everywhere (variant.size, order snapshots, the
+ *  public site) when a product has no specific sizes — never abbreviated to "FREE". */
+export const FREE_SIZE_LABEL = "Free Size";
+
+/** The sizes actually used for variant generation: a single "Free Size" entry when the
+ *  toggle is on, otherwise whatever staff typed into the specific-sizes chip input. */
+export function resolveStep2Sizes(isFreeSize: boolean, specificSizes: string[]): string[] {
+  return isFreeSize ? [FREE_SIZE_LABEL] : specificSizes;
+}
+
+/** Case-insensitive, trim-insensitive duplicate check for the colors/sizes chip inputs —
+ *  "Black" and "black", "XL" and "xl" are the same entry. */
+export function isDuplicateChip(existing: string[], candidate: string): boolean {
+  const normalized = candidate.trim().toLowerCase();
+  return existing.some((chip) => chip.trim().toLowerCase() === normalized);
+}
+
+/** Extension of GeneratedVariant that carries per-variant cost/profit inputs. Converted
+ *  buying/import cost BHD is always calculated (converted from INR) — there is no manual
+ *  override of those. importCostInr is OPTIONAL (cargo/customs/packing/transfer/delivery
+ *  from India to Bahrain, per piece) — defaults to 0, staff are never required to enter it.
+ *  profitInput is the desired profit (BHD amount or margin %, per the wizard-level
+ *  profitType) used to suggest regularSellingPriceBhd — staff can still override the
+ *  resulting price directly in the confirmation popup before creating the product. */
 type WizardVariant = GeneratedVariant & {
   buyingPriceInr: number;
-  importCostBhd: number;
+  importCostInr: number;
+  profitInput: number;
 };
 
 type Step3Data = {
@@ -83,8 +113,8 @@ type Step3Data = {
 };
 
 // ── derived cost calculations ─────────────────────────────────────────────────
-// Exported (not just internal helpers) so the import-cost simplification introduced here
-// can be unit-tested without a component-rendering library — see product-wizard-import-cost.test.ts.
+// Exported (not just internal helpers) so the cost/profit calculator introduced here can be
+// unit-tested without a component-rendering library — see product-wizard-price-suggestion.test.ts.
 
 /** Buying price converted to BHD. Returns 0 without a valid (>0) exchange rate — buying
  *  price can never be converted without one, per the buying-cost workflow's rules. */
@@ -96,36 +126,64 @@ export function deriveVariantConvertedCost(
   return roundBhd(convertToBhd(buyingPriceInr, exchangeRateToBhd));
 }
 
-/** Final cost in Bahrain = converted buying cost + optional import cost. Returns 0 when
- *  there is no valid converted cost yet — the import cost can never make an otherwise-
- *  missing base cost "valid" on its own. */
+/** Import cost converted to BHD — staff enter it in INR (the India-side amount they actually
+ *  know), the same conversion rule as buying price. Only the converted BHD figure is ever
+ *  saved (product_variants.latest_additional_landed_cost_bhd) — the raw INR figure is a
+ *  Step 3 input only, not persisted separately. */
+export function deriveImportCostBhd(
+  importCostInr: number,
+  exchangeRateToBhd: number | null,
+): number {
+  if (!importCostInr || !exchangeRateToBhd || exchangeRateToBhd <= 0) return 0;
+  return roundBhd(convertToBhd(importCostInr, exchangeRateToBhd));
+}
+
+/** Final cost in Bahrain = converted buying cost + converted import cost (both entered in
+ *  INR). Returns 0 when there is no valid converted buying cost yet — import cost can never
+ *  make an otherwise-missing base cost "valid" on its own. */
 export function deriveVariantFinalCost(
   buyingPriceInr: number,
   exchangeRateToBhd: number | null,
-  importCostBhd: number,
+  importCostInr: number,
 ): number {
   const converted = deriveVariantConvertedCost(buyingPriceInr, exchangeRateToBhd);
   if (converted <= 0) return 0;
-  return roundBhd(converted + (importCostBhd || 0));
+  return roundBhd(converted + deriveImportCostBhd(importCostInr, exchangeRateToBhd));
 }
 
-/** Which of the three import-cost UI states to show:
- *  - "add"     — nothing recorded and the editor is closed. Bulk section shows a small
- *                "+ Add import cost" link; variant rows show nothing at all (no clutter).
- *  - "compact" — a value is already recorded but the editor is closed. Bulk section shows
- *                "Import cost: BHD X · Edit"; variant rows show a compact read-only line.
- *  - "editor"  — the editor is open. Both the bulk section and every variant row show the
- *                editable "Import cost per piece (BHD)" field.
- *  This one rule drives both the bulk control and every variant row, so opening/closing
- *  the editor is a single global toggle rather than per-row state. */
-export type ImportCostDisplayMode = "add" | "compact" | "editor";
+/** How staff express their desired profit: a flat BHD amount added on top of cost, or a
+ *  target margin percentage of the selling price. Default is "amount" — simpler to reason
+ *  about for staff unfamiliar with margin math. */
+export type ProfitType = "amount" | "margin";
 
-export function getImportCostDisplayMode(
-  importCostBhd: number,
-  editorOpen: boolean,
-): ImportCostDisplayMode {
-  if (editorOpen) return "editor";
-  return importCostBhd > 0 ? "compact" : "add";
+/** A margin percentage must be 0–99.999...% — 100% or more implies an infinite or negative
+ *  selling price (cost / (1 - 1) or worse), which is never a sane input. Returns a
+ *  staff-facing error message, or null when the value is valid. */
+export function validateMarginPercent(marginPercent: number): string | null {
+  if (marginPercent < 0) return "Margin percentage cannot be negative.";
+  if (marginPercent >= 100) return "Margin percentage must be less than 100%.";
+  return null;
+}
+
+/** Suggested selling price from final cost + desired profit, per the chosen profit type:
+ *  - "amount": finalCost + desired profit (BHD)
+ *  - "margin": finalCost / (1 - margin / 100)
+ *  Returns 0 when there is no valid final cost yet (nothing to base a suggestion on), or
+ *  when the margin input is invalid — callers show the actual validation message via
+ *  validateMarginPercent, this never throws or returns a negative/infinite price. */
+export function deriveSuggestedSellingPrice(
+  finalCostBhd: number,
+  profitType: ProfitType,
+  profitInput: number,
+): number {
+  if (finalCostBhd <= 0) return 0;
+
+  if (profitType === "amount") {
+    return roundBhd(finalCostBhd + Math.max(0, profitInput || 0));
+  }
+
+  if (validateMarginPercent(profitInput) !== null) return 0;
+  return roundBhd(finalCostBhd / (1 - profitInput / 100));
 }
 
 // ── chip input ─────────────────────────────────────────────────────────────────
@@ -138,7 +196,7 @@ function ChipInput({
   onAdd,
   onRemove,
 }: {
-  label: string;
+  label?: string;
   hint?: string;
   chips: string[];
   placeholder: string;
@@ -149,7 +207,7 @@ function ChipInput({
 
   function commit() {
     const trimmed = input.trim();
-    if (trimmed && !chips.includes(trimmed)) {
+    if (trimmed && !isDuplicateChip(chips, trimmed)) {
       onAdd(trimmed);
     }
     setInput("");
@@ -157,7 +215,7 @@ function ChipInput({
 
   return (
     <div className="space-y-2">
-      <Label>{label}</Label>
+      {label ? <Label>{label}</Label> : null}
       {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
       <div className="flex gap-2">
         <Input
@@ -309,18 +367,27 @@ export function ProductWizard({
     careInstructions: "",
     sku: "",
   });
-  const [step2, setStep2] = useState<Step2Data>({ colors: [], sizes: [] });
+  const [step2, setStep2] = useState<Step2Data>({
+    colors: [],
+    specificSizes: [],
+    isFreeSize: false,
+  });
   const [step3, setStep3] = useState<Step3Data>({ variants: [] });
 
   // bulk setter inputs
   const [bulkPrice, setBulkPrice] = useState<number>(0);
   const [bulkBuyingPriceInr, setBulkBuyingPriceInr] = useState<number>(0);
-  const [bulkImportCostBhd, setBulkImportCostBhd] = useState<number>(0);
+  const [bulkImportCostInr, setBulkImportCostInr] = useState<number>(0);
+  const [bulkProfitInput, setBulkProfitInput] = useState<number>(0);
+  const [profitType, setProfitType] = useState<ProfitType>("amount");
   const [bulkMinStock, setBulkMinStock] = useState<number>(1);
   const [bulkStartingQty, setBulkStartingQty] = useState<number>(0);
-  // Collapsed by default — import cost is optional and most staff never touch it. Only
-  // true while the small "Add import cost" field is actively open for editing.
-  const [importCostEditorOpen, setImportCostEditorOpen] = useState(false);
+
+  // Confirmation popup shown before creating the product — only for staff who can view
+  // profit/margin (canViewProfit below). Staff who can only enter buying cost, but not view
+  // profit, keep the simpler direct-create flow they had before (they type selling price
+  // manually in Step 3 itself, same as always).
+  const [showPriceConfirmation, setShowPriceConfirmation] = useState(false);
 
   // ── derived values ───────────────────────────────────────────────────────────
 
@@ -328,10 +395,15 @@ export function ProductWizard({
   const bulkFinalCost = deriveVariantFinalCost(
     bulkBuyingPriceInr,
     effectiveExchangeRate,
-    bulkImportCostBhd,
+    bulkImportCostInr,
   );
+  const bulkImportCostBhd = deriveImportCostBhd(bulkImportCostInr, effectiveExchangeRate);
+  const bulkMarginError = profitType === "margin" ? validateMarginPercent(bulkProfitInput) : null;
+  const bulkSuggestedPrice =
+    bulkMarginError === null
+      ? deriveSuggestedSellingPrice(bulkFinalCost, profitType, bulkProfitInput)
+      : 0;
   const showBulkPreview = canEnterCost && bulkConvertedCost > 0;
-  const bulkImportCostMode = getImportCostDisplayMode(bulkImportCostBhd, importCostEditorOpen);
 
   // ── step 1 ───────────────────────────────────────────────────────────────────
 
@@ -360,27 +432,37 @@ export function ProductWizard({
     [],
   );
   const addSize = useCallback(
-    (size: string) => setStep2((prev) => ({ ...prev, sizes: [...prev.sizes, size] })),
+    (size: string) =>
+      setStep2((prev) => ({ ...prev, specificSizes: [...prev.specificSizes, size] })),
     [],
   );
   const removeSize = useCallback(
     (size: string) =>
-      setStep2((prev) => ({ ...prev, sizes: prev.sizes.filter((s) => s !== size) })),
+      setStep2((prev) => ({
+        ...prev,
+        specificSizes: prev.specificSizes.filter((s) => s !== size),
+      })),
     [],
   );
+  const setFreeSize = useCallback(
+    (isFreeSize: boolean) => setStep2((prev) => ({ ...prev, isFreeSize })),
+    [],
+  );
+
+  const step2Sizes = resolveStep2Sizes(step2.isFreeSize, step2.specificSizes);
 
   function goToStep3() {
     if (step2.colors.length === 0) {
       setFormError("Add at least one color.");
       return;
     }
-    if (step2.sizes.length === 0) {
+    if (step2Sizes.length === 0) {
       setFormError("Add at least one size.");
       return;
     }
     setFormError(null);
     const productSku = step1.sku.trim() || generateProductSku(step1.name);
-    const generated = generateVariants(productSku, step2.colors, step2.sizes, {
+    const generated = generateVariants(productSku, step2.colors, step2Sizes, {
       regularSellingPriceBhd: 0,
       stockQuantity: 0,
       minimumStock: bulkMinStock,
@@ -389,7 +471,8 @@ export function ProductWizard({
       variants: generated.map((v) => ({
         ...v,
         buyingPriceInr: 0,
-        importCostBhd: 0,
+        importCostInr: 0,
+        profitInput: 0,
       })),
     });
     setStep(3);
@@ -433,36 +516,83 @@ export function ProductWizard({
   function updateVariantImportCost(color: string, size: string, value: number) {
     setStep3((prev) => ({
       variants: prev.variants.map((v) =>
-        v.color === color && v.size === size ? { ...v, importCostBhd: value } : v,
+        v.color === color && v.size === size ? { ...v, importCostInr: value } : v,
       ),
     }));
   }
 
+  function updateVariantProfitInput(color: string, size: string, value: number) {
+    setStep3((prev) => ({
+      variants: prev.variants.map((v) =>
+        v.color === color && v.size === size ? { ...v, profitInput: value } : v,
+      ),
+    }));
+  }
+
+  /** Only non-zero bulk fields are applied — a field left at 0 is indistinguishable from
+   *  "untouched" in a plain number input, so applying it would silently overwrite whatever
+   *  staff already customized per-option. This matches the existing convention for every
+   *  other bulk field here; per-option rows remain the way to set a genuine 0 on a single
+   *  option. Selling price becomes a suggestion (from cost + desired profit) for staff who
+   *  can view profit — for everyone else it's still the plain bulk price, as before. */
   function applyBulkAll() {
     setStep3((prev) => ({
-      variants: prev.variants.map((v) => ({
-        ...v,
-        ...(bulkPrice > 0
-          ? { regularSellingPriceBhd: bulkPrice, sellingPrice: bulkPrice }
-          : {}),
-        ...(bulkBuyingPriceInr > 0 ? { buyingPriceInr: bulkBuyingPriceInr } : {}),
-        ...(bulkImportCostBhd > 0 ? { importCostBhd: bulkImportCostBhd } : {}),
-        ...(bulkMinStock > 0 ? { minimumStock: bulkMinStock } : {}),
-        ...(bulkStartingQty > 0 ? { stockQuantity: bulkStartingQty } : {}),
-      })),
+      variants: prev.variants.map((v) => {
+        const nextBuyingPriceInr = bulkBuyingPriceInr > 0 ? bulkBuyingPriceInr : v.buyingPriceInr;
+        const nextImportCostInr = bulkImportCostInr > 0 ? bulkImportCostInr : v.importCostInr;
+        const nextProfitInput = bulkProfitInput > 0 ? bulkProfitInput : v.profitInput;
+
+        const next: WizardVariant = {
+          ...v,
+          buyingPriceInr: nextBuyingPriceInr,
+          importCostInr: nextImportCostInr,
+          profitInput: nextProfitInput,
+          ...(bulkMinStock > 0 ? { minimumStock: bulkMinStock } : {}),
+          ...(bulkStartingQty > 0 ? { stockQuantity: bulkStartingQty } : {}),
+        };
+
+        if (canViewProfit) {
+          const finalCost = deriveVariantFinalCost(
+            nextBuyingPriceInr,
+            effectiveExchangeRate,
+            nextImportCostInr,
+          );
+          const marginError =
+            profitType === "margin" ? validateMarginPercent(nextProfitInput) : null;
+          const suggested =
+            marginError === null
+              ? deriveSuggestedSellingPrice(finalCost, profitType, nextProfitInput)
+              : 0;
+          if (suggested > 0) {
+            next.regularSellingPriceBhd = suggested;
+            next.sellingPrice = suggested;
+          }
+        } else if (bulkPrice > 0) {
+          next.regularSellingPriceBhd = bulkPrice;
+          next.sellingPrice = bulkPrice;
+        }
+
+        return next;
+      }),
     }));
   }
 
   // ── submit ───────────────────────────────────────────────────────────────────
 
-  function handleSubmit() {
-    if (step3.variants.length === 0) {
+  /** Accepts an explicit variant list so the price-confirmation popup can pass its own
+   *  (possibly staff-edited) prices straight through — reading step3.variants here instead
+   *  would race the setStep3() call the popup makes on confirm, since React state updates
+   *  aren't applied synchronously. */
+  function handleSubmit(variantsOverride?: WizardVariant[]) {
+    const variantsToSubmit = variantsOverride ?? step3.variants;
+
+    if (variantsToSubmit.length === 0) {
       setFormError("At least one size/color option is required.");
       return;
     }
 
     // Validate cost fields when any variant has a buying price.
-    const hasAnyCost = canEnterCost && step3.variants.some((v) => v.buyingPriceInr > 0);
+    const hasAnyCost = canEnterCost && variantsToSubmit.some((v) => v.buyingPriceInr > 0);
     if (hasAnyCost && !hasEffectiveRate) {
       setFormError("Enter the INR to BHD exchange rate before saving buying cost.");
       return;
@@ -513,7 +643,7 @@ export function ProductWizard({
         featured: false,
         newArrival: false,
         sortOrder: 0,
-        variants: step3.variants.map((v) => ({
+        variants: variantsToSubmit.map((v) => ({
           variantSku: v.variantSku,
           barcode: null,
           color: v.color,
@@ -529,7 +659,10 @@ export function ProductWizard({
           minimumStock: v.minimumStock,
           status: "active",
           buyingPriceInr: v.buyingPriceInr,
-          importCostBhd: v.importCostBhd,
+          // Staff enter import cost in INR (the amount they actually know) — only the
+          // converted BHD figure is ever saved, matching the existing
+          // latest_additional_landed_cost_bhd column's contract.
+          importCostBhd: deriveImportCostBhd(v.importCostInr, effectiveExchangeRate),
         })),
         images: [],
       });
@@ -542,6 +675,76 @@ export function ProductWizard({
       setCreatedProductId(result.id);
       setStep(4);
     });
+  }
+
+  function buildConfirmationRows(): PriceConfirmationRow[] {
+    return step3.variants.map((v) => {
+      const finalCostBhd = deriveVariantFinalCost(
+        v.buyingPriceInr,
+        effectiveExchangeRate,
+        v.importCostInr,
+      );
+      const marginError = profitType === "margin" ? validateMarginPercent(v.profitInput) : null;
+      const suggestedPriceBhd =
+        marginError === null
+          ? deriveSuggestedSellingPrice(finalCostBhd, profitType, v.profitInput)
+          : 0;
+      return {
+        key: `${v.color}__${v.size}`,
+        optionLabel: `${v.color} / ${v.size}`,
+        buyingPriceInr: v.buyingPriceInr,
+        importCostInr: v.importCostInr,
+        finalCostBhd,
+        suggestedPriceBhd,
+      };
+    });
+  }
+
+  /** Staff who can view profit/margin get a review popup before the product is actually
+   *  created (see section 8 of the spec) — everyone else keeps the direct-create flow they
+   *  already had, since they type selling price manually and there's no suggestion to
+   *  review. */
+  function handleCreateClick() {
+    if (step3.variants.length === 0) {
+      setFormError("At least one size/color option is required.");
+      return;
+    }
+
+    if (!canViewProfit) {
+      handleSubmit();
+      return;
+    }
+
+    if (profitType === "margin") {
+      const invalid = step3.variants.find((v) => {
+        const finalCost = deriveVariantFinalCost(
+          v.buyingPriceInr,
+          effectiveExchangeRate,
+          v.importCostInr,
+        );
+        return finalCost > 0 && validateMarginPercent(v.profitInput) !== null;
+      });
+      if (invalid) {
+        setFormError(validateMarginPercent(invalid.profitInput));
+        return;
+      }
+    }
+
+    setFormError(null);
+    setShowPriceConfirmation(true);
+  }
+
+  /** Merge the popup's (possibly staff-edited) prices back into step3 for display, then
+   *  submit using that exact same list — handleSubmit takes an explicit override so this
+   *  never races the setStep3() call above (state updates aren't synchronous). */
+  function handleConfirmFromPopup(prices: Record<string, number>) {
+    const finalVariants = step3.variants.map((v) => {
+      const price = prices[`${v.color}__${v.size}`] ?? v.regularSellingPriceBhd;
+      return { ...v, regularSellingPriceBhd: price, sellingPrice: price };
+    });
+    setStep3({ variants: finalVariants });
+    setShowPriceConfirmation(false);
+    handleSubmit(finalVariants);
   }
 
   // ── step 4 — image ───────────────────────────────────────────────────────────
@@ -737,31 +940,55 @@ export function ProductWizard({
           </CardHeader>
           <CardContent className="space-y-6">
             <ChipInput
-              hint='Type a color and press Enter or "+" to add it.'
+              hint='Type a color and press Enter or "+" to add it. Mixed colors like "Black &amp; White" or "Rani Pink" are fine.'
               chips={step2.colors}
               label="Colors"
-              placeholder="e.g. Black, Beige, Rose"
+              placeholder="e.g. Black, Black & White, Rani Pink"
               onAdd={addColor}
               onRemove={removeColor}
             />
-            <ChipInput
-              hint='Type a size and press Enter or "+" to add it.'
-              chips={step2.sizes}
-              label="Sizes"
-              placeholder="e.g. XS, S, M, L, XL"
-              onAdd={addSize}
-              onRemove={removeSize}
-            />
 
-            {step2.colors.length > 0 && step2.sizes.length > 0 && (
+            <div className="space-y-2">
+              <Label>Sizes</Label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-musiva-plum">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-musiva-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  checked={step2.isFreeSize}
+                  onChange={(e) => setFreeSize(e.target.checked)}
+                />
+                This product is Free Size
+              </label>
+
+              {step2.isFreeSize ? (
+                <div className="space-y-1.5 pt-1">
+                  <span className="inline-flex w-fit items-center rounded-full border border-musiva-border bg-musiva-ivory px-3 py-1 text-sm font-medium text-musiva-plum">
+                    {FREE_SIZE_LABEL}
+                  </span>
+                  <p className="text-xs text-muted-foreground">
+                    Free Size will be used for all color options.
+                  </p>
+                </div>
+              ) : (
+                <ChipInput
+                  hint='Type a size and press Enter or "+" to add it.'
+                  chips={step2.specificSizes}
+                  placeholder="e.g. XS, S, M, L, XL"
+                  onAdd={addSize}
+                  onRemove={removeSize}
+                />
+              )}
+            </div>
+
+            {step2.colors.length > 0 && step2Sizes.length > 0 && (
               <div className="rounded-md bg-musiva-ivory p-4">
                 <p className="text-sm font-medium text-musiva-plum">
-                  {step2.colors.length * step2.sizes.length} option
-                  {step2.colors.length * step2.sizes.length !== 1 ? "s" : ""} will be created:
+                  Options to be created — {step2.colors.length * step2Sizes.length} option
+                  {step2.colors.length * step2Sizes.length !== 1 ? "s" : ""}:
                 </p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {step2.colors.flatMap((color) =>
-                    step2.sizes.map((size) => (
+                    step2Sizes.map((size) => (
                       <span
                         key={`${color}-${size}`}
                         className="rounded border border-musiva-border bg-white px-2 py-1 text-xs text-musiva-plum"
@@ -817,18 +1044,6 @@ export function ProductWizard({
               <div className="space-y-4 rounded-md bg-musiva-ivory p-4">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <div className="space-y-2">
-                    <Label htmlFor="bulk-price">Selling price for all options (BHD)</Label>
-                    <Input
-                      id="bulk-price"
-                      min={0}
-                      placeholder="0.000"
-                      step="0.001"
-                      type="number"
-                      value={bulkPrice || ""}
-                      onChange={(e) => setBulkPrice(Number(e.target.value) || 0)}
-                    />
-                  </div>
-                  <div className="space-y-2">
                     <Label htmlFor="bulk-buy-inr">Buying price in India for all options (INR)</Label>
                     <Input
                       id="bulk-buy-inr"
@@ -841,6 +1056,30 @@ export function ProductWizard({
                     />
                   </div>
                   <div className="space-y-2">
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="bulk-import-inr">Import cost from India per piece (INR)</Label>
+                      <span
+                        aria-label="What is import cost?"
+                        className="text-muted-foreground/70"
+                        title="Extra cost per piece for cargo, customs, packing, transfer, or delivery from India to Bahrain."
+                      >
+                        <Info aria-hidden className="h-3.5 w-3.5" />
+                      </span>
+                    </div>
+                    <Input
+                      id="bulk-import-inr"
+                      min={0}
+                      placeholder="0.00"
+                      step="0.01"
+                      type="number"
+                      value={bulkImportCostInr || ""}
+                      onChange={(e) => setBulkImportCostInr(Number(e.target.value) || 0)}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Optional. Leave 0 if not needed.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
                     <Label>Exchange rate</Label>
                     <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
                       {hasEffectiveRate
@@ -848,6 +1087,55 @@ export function ProductWizard({
                         : "Not set — see Settings"}
                     </div>
                   </div>
+
+                  {canViewProfit ? (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="bulk-profit">
+                          Desired profit {profitType === "amount" ? "(BHD)" : "(%)"}
+                        </Label>
+                        <Input
+                          id="bulk-profit"
+                          min={0}
+                          placeholder={profitType === "amount" ? "0.000" : "0"}
+                          step={profitType === "amount" ? "0.001" : "0.1"}
+                          type="number"
+                          value={bulkProfitInput || ""}
+                          onChange={(e) => setBulkProfitInput(Number(e.target.value) || 0)}
+                        />
+                        {bulkMarginError && (
+                          <p className="text-xs text-destructive">{bulkMarginError}</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="profit-type">Profit type</Label>
+                        <Select
+                          id="profit-type"
+                          value={profitType}
+                          onChange={(e) => setProfitType(e.target.value as ProfitType)}
+                        >
+                          <option value="amount">Profit amount (BHD)</option>
+                          <option value="margin">Margin percentage (%)</option>
+                        </Select>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label htmlFor="bulk-price">
+                        Selling price / Final customer price for all options (BHD)
+                      </Label>
+                      <Input
+                        id="bulk-price"
+                        min={0}
+                        placeholder="0.000"
+                        step="0.001"
+                        type="number"
+                        value={bulkPrice || ""}
+                        onChange={(e) => setBulkPrice(Number(e.target.value) || 0)}
+                      />
+                    </div>
+                  )}
+
                   <div className="space-y-2">
                     <Label htmlFor="bulk-min">Low-stock alert (units)</Label>
                     <Input
@@ -881,72 +1169,6 @@ export function ProductWizard({
                   <p className="text-[11px] text-muted-foreground">
                     Only non-zero fields are applied. Future purchases use Purchases → New Purchase.
                   </p>
-                </div>
-
-                {/* ── Import cost — small, secondary, optional ─────────── */}
-                <div>
-                  {bulkImportCostMode === "editor" ? (
-                    <div className="max-w-xs space-y-1">
-                      <div className="flex items-center gap-1.5">
-                        <Label className="text-xs" htmlFor="bulk-import-cost">
-                          Import cost per piece (BHD)
-                        </Label>
-                        <span
-                          aria-label="What is import cost?"
-                          className="text-muted-foreground/70"
-                          title="Extra cost per piece for cargo, customs, packing, transfer, or delivery from India to Bahrain."
-                        >
-                          <Info aria-hidden className="h-3.5 w-3.5" />
-                        </span>
-                      </div>
-                      <Input
-                        id="bulk-import-cost"
-                        autoFocus
-                        min={0}
-                        placeholder="0.000"
-                        step="0.001"
-                        type="number"
-                        value={bulkImportCostBhd || ""}
-                        onChange={(e) => setBulkImportCostBhd(Number(e.target.value) || 0)}
-                      />
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-[11px] text-muted-foreground">
-                          Optional. Leave 0 if not needed.
-                        </p>
-                        <button
-                          className="text-[11px] font-medium text-musiva-plum hover:underline"
-                          type="button"
-                          onClick={() => setImportCostEditorOpen(false)}
-                        >
-                          Done
-                        </button>
-                      </div>
-                    </div>
-                  ) : bulkImportCostMode === "compact" ? (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>
-                        Import cost:{" "}
-                        <span className="font-medium text-foreground">
-                          {formatBhd(bulkImportCostBhd)}
-                        </span>
-                      </span>
-                      <button
-                        className="font-medium text-musiva-plum hover:underline"
-                        type="button"
-                        onClick={() => setImportCostEditorOpen(true)}
-                      >
-                        Edit
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      className="text-xs font-medium text-musiva-plum hover:underline"
-                      type="button"
-                      onClick={() => setImportCostEditorOpen(true)}
-                    >
-                      + Add import cost
-                    </button>
-                  )}
                 </div>
               </div>
             ) : (
@@ -1036,20 +1258,33 @@ export function ProductWizard({
                       </span>
                     </div>
                   )}
-                  {bulkPrice > 0 && (
-                    <div className="flex justify-between gap-4 text-muted-foreground">
-                      <span>Selling price (BHD)</span>
-                      <span className="font-medium text-foreground">{formatBhd(bulkPrice)}</span>
-                    </div>
-                  )}
-                  {canViewProfit && bulkPrice > 0 && bulkFinalCost > 0 && (
-                    <div className="col-span-full flex items-center gap-2 pt-1">
-                      <span className="text-xs text-muted-foreground">Est. profit:</span>
-                      <ProfitBadge
-                        margin={calcEstimatedMargin(bulkPrice, bulkFinalCost)}
-                        profit={calcEstimatedProfit(bulkPrice, bulkFinalCost)}
-                      />
-                    </div>
+                  {canViewProfit ? (
+                    <>
+                      {bulkSuggestedPrice > 0 && (
+                        <div className="flex justify-between gap-4 text-muted-foreground">
+                          <span>Suggested selling price (BHD)</span>
+                          <span className="font-medium text-foreground">
+                            {formatBhd(bulkSuggestedPrice)}
+                          </span>
+                        </div>
+                      )}
+                      {bulkSuggestedPrice > 0 && bulkFinalCost > 0 && (
+                        <div className="col-span-full flex items-center gap-2 pt-1">
+                          <span className="text-xs text-muted-foreground">Est. profit:</span>
+                          <ProfitBadge
+                            margin={calcEstimatedMargin(bulkSuggestedPrice, bulkFinalCost)}
+                            profit={calcEstimatedProfit(bulkSuggestedPrice, bulkFinalCost)}
+                          />
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    bulkPrice > 0 && (
+                      <div className="flex justify-between gap-4 text-muted-foreground">
+                        <span>Selling price (BHD)</span>
+                        <span className="font-medium text-foreground">{formatBhd(bulkPrice)}</span>
+                      </div>
+                    )
                   )}
                 </div>
               </div>
@@ -1063,13 +1298,17 @@ export function ProductWizard({
                 </p>
               ) : (
                 step3.variants.map((v) => {
-                  const vConverted = deriveVariantConvertedCost(v.buyingPriceInr, effectiveExchangeRate);
                   const vFinal = deriveVariantFinalCost(
                     v.buyingPriceInr,
                     effectiveExchangeRate,
-                    v.importCostBhd,
+                    v.importCostInr,
                   );
-                  const vImportCostMode = getImportCostDisplayMode(v.importCostBhd, importCostEditorOpen);
+                  const vMarginError =
+                    profitType === "margin" ? validateMarginPercent(v.profitInput) : null;
+                  const vSuggested =
+                    vMarginError === null
+                      ? deriveSuggestedSellingPrice(vFinal, profitType, v.profitInput)
+                      : 0;
                   const profit =
                     canViewProfit && vFinal > 0 && v.regularSellingPriceBhd > 0
                       ? calcEstimatedProfit(v.regularSellingPriceBhd, vFinal)
@@ -1088,9 +1327,9 @@ export function ProductWizard({
                       key={`${v.color}-${v.size}`}
                       className="rounded-md border border-musiva-border bg-white"
                     >
-                      {canEnterCost ? (
-                        <div className="grid items-end gap-2 p-3 sm:grid-cols-[1fr_100px_100px_90px_64px_64px_32px]">
-                          {/* Name + SKU + profit */}
+                      {canEnterCost && canViewProfit ? (
+                        /* Cost + profit calculator row */
+                        <div className="grid items-end gap-2 p-3 sm:grid-cols-[1fr_90px_90px_90px_64px_64px_32px]">
                           <div className="min-w-0">
                             <p className="truncate font-medium text-musiva-plum">
                               {v.color} / {v.size}
@@ -1098,14 +1337,110 @@ export function ProductWizard({
                             <p className="mt-0.5 truncate text-xs text-muted-foreground">
                               {v.variantSku}
                             </p>
-                            {profit !== null && margin !== null && (
-                              <div className="mt-1 flex flex-wrap items-center gap-1">
-                                <span className="text-[11px] text-muted-foreground">Profit:</span>
-                                <ProfitBadge margin={margin} profit={profit} />
-                              </div>
-                            )}
                           </div>
-                          {/* Selling price */}
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Buy India (INR)</Label>
+                            <Input
+                              min={0}
+                              step="0.01"
+                              type="number"
+                              value={v.buyingPriceInr || ""}
+                              onChange={(e) =>
+                                updateVariantBuyingPrice(
+                                  v.color,
+                                  v.size,
+                                  Number(e.target.value) || 0,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Import India (INR)</Label>
+                            <Input
+                              min={0}
+                              step="0.01"
+                              type="number"
+                              value={v.importCostInr || ""}
+                              onChange={(e) =>
+                                updateVariantImportCost(
+                                  v.color,
+                                  v.size,
+                                  Number(e.target.value) || 0,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">
+                              {profitType === "amount" ? "Profit (BHD)" : "Margin (%)"}
+                            </Label>
+                            <Input
+                              min={0}
+                              step={profitType === "amount" ? "0.001" : "0.1"}
+                              type="number"
+                              value={v.profitInput || ""}
+                              onChange={(e) =>
+                                updateVariantProfitInput(
+                                  v.color,
+                                  v.size,
+                                  Number(e.target.value) || 0,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Qty</Label>
+                            <Input
+                              min={0}
+                              type="number"
+                              value={v.stockQuantity || ""}
+                              onChange={(e) =>
+                                updateVariantField(
+                                  v.color,
+                                  v.size,
+                                  "stockQuantity",
+                                  Math.max(0, Number(e.target.value) || 0),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Min</Label>
+                            <Input
+                              min={0}
+                              type="number"
+                              value={v.minimumStock}
+                              onChange={(e) =>
+                                updateVariantField(
+                                  v.color,
+                                  v.size,
+                                  "minimumStock",
+                                  Math.max(0, Number(e.target.value) || 0),
+                                )
+                              }
+                            />
+                          </div>
+                          <button
+                            aria-label={`Remove ${v.color} / ${v.size}`}
+                            className="flex h-9 w-9 items-center justify-center rounded-md border border-musiva-border text-muted-foreground hover:border-destructive hover:text-destructive"
+                            type="button"
+                            onClick={() => removeVariant(v.color, v.size)}
+                          >
+                            <Trash2 aria-hidden className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : canEnterCost ? (
+                        /* Cost-entry row without profit visibility — selling price stays a
+                           manually-typed field (no suggestion to show without profit data). */
+                        <div className="grid items-end gap-2 p-3 sm:grid-cols-[1fr_90px_90px_90px_64px_64px_32px]">
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-musiva-plum">
+                              {v.color} / {v.size}
+                            </p>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                              {v.variantSku}
+                            </p>
+                          </div>
                           <div className="space-y-1">
                             <Label className="text-[11px]">Sell (BHD)</Label>
                             <Input
@@ -1123,7 +1458,6 @@ export function ProductWizard({
                               }
                             />
                           </div>
-                          {/* Buying price INR */}
                           <div className="space-y-1">
                             <Label className="text-[11px]">Buy India (INR)</Label>
                             <Input
@@ -1140,14 +1474,22 @@ export function ProductWizard({
                               }
                             />
                           </div>
-                          {/* Buying price BHD — calculated, read-only */}
                           <div className="space-y-1">
-                            <Label className="text-[11px]">Buy Bahrain (BHD)</Label>
-                            <div className="flex h-10 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
-                              {vConverted > 0 ? formatBhd(vConverted) : "—"}
-                            </div>
+                            <Label className="text-[11px]">Import India (INR)</Label>
+                            <Input
+                              min={0}
+                              step="0.01"
+                              type="number"
+                              value={v.importCostInr || ""}
+                              onChange={(e) =>
+                                updateVariantImportCost(
+                                  v.color,
+                                  v.size,
+                                  Number(e.target.value) || 0,
+                                )
+                              }
+                            />
                           </div>
-                          {/* Starting qty */}
                           <div className="space-y-1">
                             <Label className="text-[11px]">Qty</Label>
                             <Input
@@ -1164,7 +1506,6 @@ export function ProductWizard({
                               }
                             />
                           </div>
-                          {/* Min stock */}
                           <div className="space-y-1">
                             <Label className="text-[11px]">Min</Label>
                             <Input
@@ -1181,7 +1522,6 @@ export function ProductWizard({
                               }
                             />
                           </div>
-                          {/* Trash */}
                           <button
                             aria-label={`Remove ${v.color} / ${v.size}`}
                             className="flex h-9 w-9 items-center justify-center rounded-md border border-musiva-border text-muted-foreground hover:border-destructive hover:text-destructive"
@@ -1260,48 +1600,33 @@ export function ProductWizard({
                         </div>
                       )}
 
-                      {canEnterCost && vImportCostMode === "editor" && (
-                        <div className="flex flex-wrap items-end gap-3 border-t border-dashed border-musiva-border bg-musiva-ivory/60 px-3 py-2">
-                          <div className="space-y-1">
-                            <Label className="text-[11px]">Import (BHD)</Label>
-                            <Input
-                              className="h-8 w-28 text-xs"
-                              min={0}
-                              step="0.001"
-                              type="number"
-                              value={v.importCostBhd || ""}
-                              onChange={(e) =>
-                                updateVariantImportCost(
-                                  v.color,
-                                  v.size,
-                                  Number(e.target.value) || 0,
-                                )
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-[11px]">Final cost (BHD)</Label>
-                            <div className="flex h-8 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
-                              {vFinal > 0 ? (
-                                formatBhd(vFinal)
-                              ) : (
-                                <span className="italic">Not recorded</span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Already has an import cost, but the editor is collapsed — show a
-                          compact read-only line instead of hiding it entirely. */}
-                      {canEnterCost && vImportCostMode === "compact" && (
-                        <div className="flex items-center gap-3 border-t border-dashed border-musiva-border bg-musiva-ivory/60 px-3 py-1.5 text-[11px] text-muted-foreground">
+                      {/* Compact read-only cost/profit recap — keeps the input grid above from
+                          getting overloaded with extra read-only columns (see spec: "if space
+                          is tight, show cost summary below each row in a compact line"). */}
+                      {canEnterCost && (vFinal > 0 || v.importCostInr > 0) && (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-dashed border-musiva-border bg-musiva-ivory/60 px-3 py-1.5 text-[11px] text-muted-foreground">
                           <span>
-                            Import: <span className="font-medium text-foreground">{formatBhd(v.importCostBhd)}</span>
+                            Cost Bahrain:{" "}
+                            <span className="font-medium text-foreground">
+                              {vFinal > 0 ? formatBhd(vFinal) : "Not recorded"}
+                            </span>
                           </span>
-                          <span>
-                            Final: <span className="font-medium text-foreground">{formatBhd(vFinal)}</span>
-                          </span>
+                          {canViewProfit && vSuggested > 0 && (
+                            <span>
+                              Suggested price:{" "}
+                              <span className="font-medium text-foreground">
+                                {formatBhd(vSuggested)}
+                              </span>
+                            </span>
+                          )}
+                          {profit !== null && margin !== null && (
+                            <span className="flex items-center gap-1">
+                              Profit: <ProfitBadge margin={margin} profit={profit} />
+                            </span>
+                          )}
+                          {vMarginError && (
+                            <span className="text-destructive">{vMarginError}</span>
+                          )}
                         </div>
                       )}
 
@@ -1337,7 +1662,7 @@ export function ProductWizard({
                         deriveVariantFinalCost(
                           v.buyingPriceInr,
                           effectiveExchangeRate,
-                          v.importCostBhd,
+                          v.importCostInr,
                         ) *
                           v.stockQuantity,
                       0,
@@ -1496,9 +1821,13 @@ export function ProductWizard({
             <Button
               disabled={isPending || step3.variants.length === 0}
               type="button"
-              onClick={handleSubmit}
+              onClick={handleCreateClick}
             >
-              {isPending ? "Creating…" : "Create product"}
+              {isPending
+                ? "Creating…"
+                : canViewProfit
+                  ? "Review & create"
+                  : "Create product"}
             </Button>
           )}
           {step === 4 && (
@@ -1529,6 +1858,16 @@ export function ProductWizard({
           )}
         </div>
       </div>
+
+      {canViewProfit && (
+        <PriceConfirmationDialog
+          open={showPriceConfirmation}
+          rows={buildConfirmationRows()}
+          isSubmitting={isPending}
+          onBack={() => setShowPriceConfirmation(false)}
+          onConfirm={handleConfirmFromPopup}
+        />
+      )}
     </div>
   );
 }

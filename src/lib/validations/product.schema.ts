@@ -128,7 +128,9 @@ export const productImageSchema = z.object({
 export const productSchema = z.object({
   id: z.string().uuid().optional(),
   name: z.string().trim().min(2, "Product name is required."),
-  sku: z.string().trim().min(1, "Product SKU is required."),
+  /** Optional — staff may type a product code, or leave blank to auto-generate
+   *  one from the product name (see resolveProductSku in product.service.ts). */
+  sku: z.string().trim().optional().default(""),
   categoryId: optionalUuid,
   collection: optionalText,
   description: optionalText,

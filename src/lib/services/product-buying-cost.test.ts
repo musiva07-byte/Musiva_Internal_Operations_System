@@ -103,6 +103,7 @@ function mockHappyPath() {
     }
     if (table === "product_variants") {
       return {
+        select: () => ({ eq: () => Promise.resolve({ count: 0 }) }),
         insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: variantRow, error: null }) }) }),
       };
     }
@@ -141,6 +142,7 @@ describe("createProduct — buying cost", () => {
       }
       if (table === "product_variants") {
         return {
+          select: () => ({ eq: () => Promise.resolve({ count: 0 }) }),
           insert: (payload: unknown) => {
             variantInsertCalls.push(payload);
             return { select: () => ({ single: () => Promise.resolve({ data: variantRow, error: null }) }) };
@@ -180,6 +182,7 @@ describe("createProduct — buying cost", () => {
       }
       if (table === "product_variants") {
         return {
+          select: () => ({ eq: () => Promise.resolve({ count: 0 }) }),
           insert: (payload: unknown) => {
             variantInsertCalls.push(payload);
             return { select: () => ({ single: () => Promise.resolve({ data: variantRow, error: null }) }) };
@@ -251,6 +254,7 @@ describe("createProduct — buying cost", () => {
       }
       if (table === "product_variants") {
         return {
+          select: () => ({ eq: () => Promise.resolve({ count: 0 }) }),
           insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: variantRow, error: null }) }) }),
         };
       }
@@ -294,6 +298,7 @@ describe("createProduct — buying cost", () => {
       }
       if (table === "product_variants") {
         return {
+          select: () => ({ eq: () => Promise.resolve({ count: 0 }) }),
           insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: variantRow, error: null }) }) }),
         };
       }
@@ -338,6 +343,7 @@ describe("createProduct — buying cost", () => {
       }
       if (table === "product_variants") {
         return {
+          select: () => ({ eq: () => Promise.resolve({ count: 0 }) }),
           insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: variantRow, error: null }) }) }),
         };
       }
