@@ -522,7 +522,7 @@ describe("getDashboardData", () => {
     expect(result.totalFinalCostBhd).toBeCloseTo(6.78 * 5, 3);
   });
 
-  it("uses the final buying cost (converted + optional additional landed cost) for totals", async () => {
+  it("uses the final cost in Bahrain (converted + optional import cost) for totals", async () => {
     mockProductVariantsAndRate([
       {
         color: "Black",

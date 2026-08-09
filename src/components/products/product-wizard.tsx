@@ -6,6 +6,7 @@ import {
   Check,
   ChevronRight,
   ImageOff,
+  Info,
   Loader2,
   Plus,
   Trash2,
@@ -70,11 +71,11 @@ type Step2Data = {
 
 /** Extension of GeneratedVariant that carries per-variant buying price. Converted buying
  *  price BHD is always calculated (converted from INR) — there is no manual override.
- *  additionalLandedCostBhd is an OPTIONAL advanced field (cargo/customs/packaging/etc per
- *  piece) — defaults to 0, staff are never required to enter it. */
+ *  importCostBhd is an OPTIONAL field (cargo/customs/packing/transfer/delivery from India
+ *  to Bahrain, per piece) — defaults to 0, staff are never required to enter it. */
 type WizardVariant = GeneratedVariant & {
   buyingPriceInr: number;
-  additionalLandedCostBhd: number;
+  importCostBhd: number;
 };
 
 type Step3Data = {
@@ -82,10 +83,12 @@ type Step3Data = {
 };
 
 // ── derived cost calculations ─────────────────────────────────────────────────
+// Exported (not just internal helpers) so the import-cost simplification introduced here
+// can be unit-tested without a component-rendering library — see product-wizard-import-cost.test.ts.
 
 /** Buying price converted to BHD. Returns 0 without a valid (>0) exchange rate — buying
  *  price can never be converted without one, per the buying-cost workflow's rules. */
-function deriveVariantConvertedCost(
+export function deriveVariantConvertedCost(
   buyingPriceInr: number,
   exchangeRateToBhd: number | null,
 ): number {
@@ -93,17 +96,36 @@ function deriveVariantConvertedCost(
   return roundBhd(convertToBhd(buyingPriceInr, exchangeRateToBhd));
 }
 
-/** Final buying cost BHD = converted buying price + optional additional landed cost.
- *  Returns 0 when there is no valid converted cost yet — the additional cost can never
- *  make an otherwise-missing base cost "valid" on its own. */
-function deriveVariantFinalCost(
+/** Final cost in Bahrain = converted buying cost + optional import cost. Returns 0 when
+ *  there is no valid converted cost yet — the import cost can never make an otherwise-
+ *  missing base cost "valid" on its own. */
+export function deriveVariantFinalCost(
   buyingPriceInr: number,
   exchangeRateToBhd: number | null,
-  additionalLandedCostBhd: number,
+  importCostBhd: number,
 ): number {
   const converted = deriveVariantConvertedCost(buyingPriceInr, exchangeRateToBhd);
   if (converted <= 0) return 0;
-  return roundBhd(converted + (additionalLandedCostBhd || 0));
+  return roundBhd(converted + (importCostBhd || 0));
+}
+
+/** Which of the three import-cost UI states to show:
+ *  - "add"     — nothing recorded and the editor is closed. Bulk section shows a small
+ *                "+ Add import cost" link; variant rows show nothing at all (no clutter).
+ *  - "compact" — a value is already recorded but the editor is closed. Bulk section shows
+ *                "Import cost: BHD X · Edit"; variant rows show a compact read-only line.
+ *  - "editor"  — the editor is open. Both the bulk section and every variant row show the
+ *                editable "Import cost per piece (BHD)" field.
+ *  This one rule drives both the bulk control and every variant row, so opening/closing
+ *  the editor is a single global toggle rather than per-row state. */
+export type ImportCostDisplayMode = "add" | "compact" | "editor";
+
+export function getImportCostDisplayMode(
+  importCostBhd: number,
+  editorOpen: boolean,
+): ImportCostDisplayMode {
+  if (editorOpen) return "editor";
+  return importCostBhd > 0 ? "compact" : "add";
 }
 
 // ── chip input ─────────────────────────────────────────────────────────────────
@@ -293,11 +315,12 @@ export function ProductWizard({
   // bulk setter inputs
   const [bulkPrice, setBulkPrice] = useState<number>(0);
   const [bulkBuyingPriceInr, setBulkBuyingPriceInr] = useState<number>(0);
-  const [bulkAdditionalCostBhd, setBulkAdditionalCostBhd] = useState<number>(0);
+  const [bulkImportCostBhd, setBulkImportCostBhd] = useState<number>(0);
   const [bulkMinStock, setBulkMinStock] = useState<number>(1);
   const [bulkStartingQty, setBulkStartingQty] = useState<number>(0);
-  // Collapsed by default — additional landed cost is an optional advanced field.
-  const [showAdvancedCost, setShowAdvancedCost] = useState(false);
+  // Collapsed by default — import cost is optional and most staff never touch it. Only
+  // true while the small "Add import cost" field is actively open for editing.
+  const [importCostEditorOpen, setImportCostEditorOpen] = useState(false);
 
   // ── derived values ───────────────────────────────────────────────────────────
 
@@ -305,9 +328,10 @@ export function ProductWizard({
   const bulkFinalCost = deriveVariantFinalCost(
     bulkBuyingPriceInr,
     effectiveExchangeRate,
-    bulkAdditionalCostBhd,
+    bulkImportCostBhd,
   );
   const showBulkPreview = canEnterCost && bulkConvertedCost > 0;
+  const bulkImportCostMode = getImportCostDisplayMode(bulkImportCostBhd, importCostEditorOpen);
 
   // ── step 1 ───────────────────────────────────────────────────────────────────
 
@@ -365,7 +389,7 @@ export function ProductWizard({
       variants: generated.map((v) => ({
         ...v,
         buyingPriceInr: 0,
-        additionalLandedCostBhd: 0,
+        importCostBhd: 0,
       })),
     });
     setStep(3);
@@ -406,10 +430,10 @@ export function ProductWizard({
     }));
   }
 
-  function updateVariantAdditionalCost(color: string, size: string, value: number) {
+  function updateVariantImportCost(color: string, size: string, value: number) {
     setStep3((prev) => ({
       variants: prev.variants.map((v) =>
-        v.color === color && v.size === size ? { ...v, additionalLandedCostBhd: value } : v,
+        v.color === color && v.size === size ? { ...v, importCostBhd: value } : v,
       ),
     }));
   }
@@ -422,7 +446,7 @@ export function ProductWizard({
           ? { regularSellingPriceBhd: bulkPrice, sellingPrice: bulkPrice }
           : {}),
         ...(bulkBuyingPriceInr > 0 ? { buyingPriceInr: bulkBuyingPriceInr } : {}),
-        ...(bulkAdditionalCostBhd > 0 ? { additionalLandedCostBhd: bulkAdditionalCostBhd } : {}),
+        ...(bulkImportCostBhd > 0 ? { importCostBhd: bulkImportCostBhd } : {}),
         ...(bulkMinStock > 0 ? { minimumStock: bulkMinStock } : {}),
         ...(bulkStartingQty > 0 ? { stockQuantity: bulkStartingQty } : {}),
       })),
@@ -504,7 +528,7 @@ export function ProductWizard({
           minimumStock: v.minimumStock,
           status: "active",
           buyingPriceInr: v.buyingPriceInr,
-          additionalLandedCostBhd: v.additionalLandedCostBhd,
+          importCostBhd: v.importCostBhd,
         })),
         images: [],
       });
@@ -862,38 +886,69 @@ export function ProductWizard({
                   </p>
                 </div>
 
-                {/* ── Advanced cost, optional ──────────────────────────── */}
-                <div className="rounded-md border border-dashed border-musiva-border">
-                  <button
-                    className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-muted-foreground hover:text-musiva-plum"
-                    type="button"
-                    onClick={() => setShowAdvancedCost((v) => !v)}
-                  >
-                    <span>Advanced cost, optional</span>
-                    <ChevronRight
-                      aria-hidden
-                      className={cn("h-4 w-4 transition-transform", showAdvancedCost ? "rotate-90" : "")}
-                    />
-                  </button>
-                  {showAdvancedCost && (
-                    <div className="space-y-2 border-t border-dashed border-musiva-border px-4 pb-4 pt-3">
-                      <Label htmlFor="bulk-additional-cost">
-                        Additional landed cost per piece (BHD) — for all options
-                      </Label>
+                {/* ── Import cost — small, secondary, optional ─────────── */}
+                <div>
+                  {bulkImportCostMode === "editor" ? (
+                    <div className="max-w-xs space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <Label className="text-xs" htmlFor="bulk-import-cost">
+                          Import cost per piece (BHD)
+                        </Label>
+                        <span
+                          aria-label="What is import cost?"
+                          className="text-muted-foreground/70"
+                          title="Extra cost per piece for cargo, customs, packing, transfer, or delivery from India to Bahrain."
+                        >
+                          <Info aria-hidden className="h-3.5 w-3.5" />
+                        </span>
+                      </div>
                       <Input
-                        id="bulk-additional-cost"
+                        id="bulk-import-cost"
+                        autoFocus
                         min={0}
                         placeholder="0.000"
                         step="0.001"
                         type="number"
-                        value={bulkAdditionalCostBhd || ""}
-                        onChange={(e) => setBulkAdditionalCostBhd(Number(e.target.value) || 0)}
+                        value={bulkImportCostBhd || ""}
+                        onChange={(e) => setBulkImportCostBhd(Number(e.target.value) || 0)}
                       />
-                      <p className="text-xs text-muted-foreground">
-                        Optional extra cost such as cargo, customs, packaging, or other
-                        purchase-related cost per piece. Leave 0 if not needed.
-                      </p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] text-muted-foreground">
+                          Optional. Leave 0 if not needed.
+                        </p>
+                        <button
+                          className="text-[11px] font-medium text-musiva-plum hover:underline"
+                          type="button"
+                          onClick={() => setImportCostEditorOpen(false)}
+                        >
+                          Done
+                        </button>
+                      </div>
                     </div>
+                  ) : bulkImportCostMode === "compact" ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Import cost:{" "}
+                        <span className="font-medium text-foreground">
+                          {formatBhd(bulkImportCostBhd)}
+                        </span>
+                      </span>
+                      <button
+                        className="font-medium text-musiva-plum hover:underline"
+                        type="button"
+                        onClick={() => setImportCostEditorOpen(true)}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="text-xs font-medium text-musiva-plum hover:underline"
+                      type="button"
+                      onClick={() => setImportCostEditorOpen(true)}
+                    >
+                      + Add import cost
+                    </button>
                   )}
                 </div>
               </div>
@@ -955,26 +1010,35 @@ export function ProductWizard({
                       1 INR = BHD {Number(effectiveExchangeRate).toFixed(6)}
                     </span>
                   </div>
-                  <div className="col-span-full mt-1 flex justify-between gap-4 border-t border-musiva-border pt-2">
-                    <span className="font-medium text-foreground">Converted buying price (BHD)</span>
-                    <span className="font-medium text-foreground">
-                      {formatBhd(bulkConvertedCost)}
-                    </span>
-                  </div>
-                  {bulkAdditionalCostBhd > 0 && (
-                    <div className="flex justify-between gap-4 text-muted-foreground">
-                      <span>Additional landed cost (BHD)</span>
-                      <span className="font-medium text-foreground">
-                        {formatBhd(bulkAdditionalCostBhd)}
+                  {bulkImportCostBhd > 0 ? (
+                    <>
+                      <div className="col-span-full mt-1 flex justify-between gap-4 border-t border-musiva-border pt-2">
+                        <span className="font-medium text-foreground">Converted buying cost (BHD)</span>
+                        <span className="font-medium text-foreground">
+                          {formatBhd(bulkConvertedCost)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-4 text-muted-foreground">
+                        <span>Import cost (BHD)</span>
+                        <span className="font-medium text-foreground">
+                          {formatBhd(bulkImportCostBhd)}
+                        </span>
+                      </div>
+                      <div className="col-span-full flex justify-between gap-4 border-t border-musiva-border pt-2">
+                        <span className="font-semibold text-musiva-plum">Final cost in Bahrain (BHD)</span>
+                        <span className="font-semibold text-musiva-plum">
+                          {formatBhd(bulkFinalCost)}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="col-span-full mt-1 flex justify-between gap-4 border-t border-musiva-border pt-2">
+                      <span className="font-semibold text-musiva-plum">Converted buying cost (BHD)</span>
+                      <span className="font-semibold text-musiva-plum">
+                        {formatBhd(bulkConvertedCost)}
                       </span>
                     </div>
                   )}
-                  <div className="col-span-full flex justify-between gap-4 border-t border-musiva-border pt-2">
-                    <span className="font-semibold text-musiva-plum">Final buying cost (BHD)</span>
-                    <span className="font-semibold text-musiva-plum">
-                      {formatBhd(bulkFinalCost)}
-                    </span>
-                  </div>
                   {bulkPrice > 0 && (
                     <div className="flex justify-between gap-4 text-muted-foreground">
                       <span>Selling price (BHD)</span>
@@ -1006,8 +1070,9 @@ export function ProductWizard({
                   const vFinal = deriveVariantFinalCost(
                     v.buyingPriceInr,
                     effectiveExchangeRate,
-                    v.additionalLandedCostBhd,
+                    v.importCostBhd,
                   );
+                  const vImportCostMode = getImportCostDisplayMode(v.importCostBhd, importCostEditorOpen);
                   const profit =
                     canViewProfit && vFinal > 0 && v.regularSellingPriceBhd > 0
                       ? calcEstimatedProfit(v.regularSellingPriceBhd, vFinal)
@@ -1063,7 +1128,7 @@ export function ProductWizard({
                           </div>
                           {/* Buying price INR */}
                           <div className="space-y-1">
-                            <Label className="text-[11px]">Buy (INR)</Label>
+                            <Label className="text-[11px]">Buy India (INR)</Label>
                             <Input
                               min={0}
                               step="0.01"
@@ -1080,7 +1145,7 @@ export function ProductWizard({
                           </div>
                           {/* Buying price BHD — calculated, read-only */}
                           <div className="space-y-1">
-                            <Label className="text-[11px]">Buy (BHD)</Label>
+                            <Label className="text-[11px]">Buy Bahrain (BHD)</Label>
                             <div className="flex h-10 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
                               {vConverted > 0 ? formatBhd(vConverted) : "—"}
                             </div>
@@ -1198,18 +1263,18 @@ export function ProductWizard({
                         </div>
                       )}
 
-                      {canEnterCost && showAdvancedCost && (
+                      {canEnterCost && vImportCostMode === "editor" && (
                         <div className="flex flex-wrap items-end gap-3 border-t border-dashed border-musiva-border bg-musiva-ivory/60 px-3 py-2">
                           <div className="space-y-1">
-                            <Label className="text-[11px]">Additional cost (BHD)</Label>
+                            <Label className="text-[11px]">Import (BHD)</Label>
                             <Input
                               className="h-8 w-28 text-xs"
                               min={0}
                               step="0.001"
                               type="number"
-                              value={v.additionalLandedCostBhd || ""}
+                              value={v.importCostBhd || ""}
                               onChange={(e) =>
-                                updateVariantAdditionalCost(
+                                updateVariantImportCost(
                                   v.color,
                                   v.size,
                                   Number(e.target.value) || 0,
@@ -1218,7 +1283,7 @@ export function ProductWizard({
                             />
                           </div>
                           <div className="space-y-1">
-                            <Label className="text-[11px]">Final buy (BHD)</Label>
+                            <Label className="text-[11px]">Final cost (BHD)</Label>
                             <div className="flex h-8 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
                               {vFinal > 0 ? (
                                 formatBhd(vFinal)
@@ -1230,9 +1295,22 @@ export function ProductWizard({
                         </div>
                       )}
 
+                      {/* Already has an import cost, but the editor is collapsed — show a
+                          compact read-only line instead of hiding it entirely. */}
+                      {canEnterCost && vImportCostMode === "compact" && (
+                        <div className="flex items-center gap-3 border-t border-dashed border-musiva-border bg-musiva-ivory/60 px-3 py-1.5 text-[11px] text-muted-foreground">
+                          <span>
+                            Import: <span className="font-medium text-foreground">{formatBhd(v.importCostBhd)}</span>
+                          </span>
+                          <span>
+                            Final: <span className="font-medium text-foreground">{formatBhd(vFinal)}</span>
+                          </span>
+                        </div>
+                      )}
+
                       {belowCost && (
                         <p className="border-t border-dashed border-musiva-warning/30 bg-musiva-warning/10 px-3 py-1.5 text-xs text-musiva-warning-foreground">
-                          Selling price is below final buying cost.
+                          Selling price is below final cost.
                         </p>
                       )}
                     </div>
@@ -1262,7 +1340,7 @@ export function ProductWizard({
                         deriveVariantFinalCost(
                           v.buyingPriceInr,
                           effectiveExchangeRate,
-                          v.additionalLandedCostBhd,
+                          v.importCostBhd,
                         ) *
                           v.stockQuantity,
                       0,

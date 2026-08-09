@@ -30,7 +30,7 @@ type VariantCostRow = {
   buyingPriceInr: number | null;
   exchangeRateToBhd: number | null;
   convertedUnitCostBhd: number | null;
-  additionalLandedCostBhd: number | null;
+  importCostBhd: number | null;
   finalUnitCostBhd: number | null;
   sellingPriceBhd: number;
 };
@@ -48,6 +48,7 @@ type Props = {
   productId: string;
   productName: string;
   productStatus: string;
+  categoryName: string | null;
   variantsQuick: VariantQuick[];
   userRole: StaffRole | null;
   /** Only passed when the viewer's role is permitted (canViewBuyingCost) — omitted
@@ -66,6 +67,7 @@ export function ProductRowActions({
   productId,
   productName,
   productStatus,
+  categoryName,
   variantsQuick,
   userRole,
   costView,
@@ -127,7 +129,9 @@ export function ProductRowActions({
           {costView && (
             <DropdownMenuItem asChild={false} className="p-0">
               <ProductCostDialog
+                productId={productId}
                 productName={productName}
+                categoryName={categoryName}
                 totalStock={costView.totalStock}
                 costSummary={costView.costSummary}
                 showProfit={costView.showProfit}

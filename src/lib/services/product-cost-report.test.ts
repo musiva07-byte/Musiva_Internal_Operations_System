@@ -150,7 +150,7 @@ describe("getProductCostReport", () => {
     expect(result[0].totalFinalCostBhd).toBeLessThan(1000);
   });
 
-  it("includes the optional additional landed cost in the final cost total", async () => {
+  it("includes the optional import cost in the final cost total", async () => {
     mockFrom.mockReturnValue(
       chainResolveAll({
         data: [

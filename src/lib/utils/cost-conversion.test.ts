@@ -21,6 +21,10 @@ import {
   roundBhd,
   formatInr,
   getValidBuyingCost,
+  getBuyingCostStatus,
+  getCostSummaryBadge,
+  computeProductCostSummary,
+  type ProductVariantCostInput,
 } from "./cost-conversion";
 import { formatBhd, formatSupplierCurrency } from "@/lib/formatters/currency";
 import { canEnterBuyingCost, canViewCostData, canViewBuyingCost } from "@/lib/auth/permissions";
@@ -77,17 +81,17 @@ describe("getValidBuyingCost", () => {
     expect(result!.convertedUnitCostBhd).toBe(6.78);
   });
 
-  it("additional landed cost defaults to 0 when absent, and final cost equals converted cost", () => {
+  it("import cost defaults to 0 when absent, and final cost equals converted cost", () => {
     const result = getValidBuyingCost({
       latest_supplier_unit_cost_inr: 1500,
       latest_exchange_rate_to_bhd: 0.00452,
     });
     expect(result).not.toBeNull();
-    expect(result!.additionalLandedCostBhd).toBe(0);
+    expect(result!.importCostBhd).toBe(0);
     expect(result!.finalUnitCostBhd).toBe(result!.convertedUnitCostBhd);
   });
 
-  it("final cost = converted cost + additional landed cost when the additional cost is entered", () => {
+  it("final cost = converted cost + import cost when the import cost is entered", () => {
     const result = getValidBuyingCost({
       latest_supplier_unit_cost_inr: 1500,
       latest_exchange_rate_to_bhd: 0.00452,
@@ -95,22 +99,22 @@ describe("getValidBuyingCost", () => {
     });
     expect(result).not.toBeNull();
     expect(result!.convertedUnitCostBhd).toBe(6.78);
-    expect(result!.additionalLandedCostBhd).toBe(0.5);
+    expect(result!.importCostBhd).toBe(0.5);
     expect(result!.finalUnitCostBhd).toBe(7.28);
   });
 
-  it("treats a negative additional landed cost as 0 rather than subtracting it", () => {
+  it("treats a negative import cost as 0 rather than subtracting it", () => {
     const result = getValidBuyingCost({
       latest_supplier_unit_cost_inr: 1500,
       latest_exchange_rate_to_bhd: 0.00452,
       latest_additional_landed_cost_bhd: -5,
     });
     expect(result).not.toBeNull();
-    expect(result!.additionalLandedCostBhd).toBe(0);
+    expect(result!.importCostBhd).toBe(0);
     expect(result!.finalUnitCostBhd).toBe(result!.convertedUnitCostBhd);
   });
 
-  it("additional landed cost alone never makes an otherwise-missing base cost valid", () => {
+  it("import cost alone never makes an otherwise-missing base cost valid", () => {
     expect(
       getValidBuyingCost({
         latest_supplier_unit_cost_inr: null,
@@ -162,6 +166,227 @@ describe("getValidBuyingCost", () => {
     const result = getValidBuyingCost(withHugeLegacyValue);
     expect(result!.convertedUnitCostBhd).toBe(6.78);
     expect(result!.convertedUnitCostBhd).not.toBe(6012099.002);
+  });
+});
+
+// ── getBuyingCostStatus — Stock Management "View cost" simplification ───────────
+// A UI-only refinement on top of getValidBuyingCost(): distinguishes "never entered"
+// (missing) from "partially/inconsistently entered" (invalid), so the simplified Stock
+// Management table can show "Not recorded" vs "Invalid cost · Review cost" appropriately.
+
+describe("getBuyingCostStatus", () => {
+  it("returns 'recorded' when INR and rate are both present and positive", () => {
+    expect(
+      getBuyingCostStatus({
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+      }),
+    ).toBe("recorded");
+  });
+
+  it("returns 'recorded' regardless of import cost being 0 or positive", () => {
+    expect(
+      getBuyingCostStatus({
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        latest_additional_landed_cost_bhd: 0,
+      }),
+    ).toBe("recorded");
+    expect(
+      getBuyingCostStatus({
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        latest_additional_landed_cost_bhd: 0.5,
+      }),
+    ).toBe("recorded");
+  });
+
+  it("returns 'missing' when neither INR nor rate was ever entered", () => {
+    expect(
+      getBuyingCostStatus({
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+      }),
+    ).toBe("missing");
+    expect(
+      getBuyingCostStatus({
+        latest_supplier_unit_cost_inr: 0,
+        latest_exchange_rate_to_bhd: 0,
+      }),
+    ).toBe("missing");
+  });
+
+  it("returns 'invalid' when only the INR price was entered (rate missing)", () => {
+    expect(
+      getBuyingCostStatus({
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: null,
+      }),
+    ).toBe("invalid");
+  });
+
+  it("returns 'invalid' when only the exchange rate was entered (INR missing)", () => {
+    expect(
+      getBuyingCostStatus({
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: 0.00452,
+      }),
+    ).toBe("invalid");
+  });
+
+  it("never trusts a huge legacy landed-cost figure into masking a missing/invalid status", () => {
+    const withHugeLegacyValue = {
+      latest_supplier_unit_cost_inr: null,
+      latest_exchange_rate_to_bhd: null,
+      // Simulates a corrupted legacy column that must never influence the result.
+      latest_landed_cost_bhd: 6012099.002,
+    };
+    expect(getBuyingCostStatus(withHugeLegacyValue)).toBe("missing");
+  });
+});
+
+// ── getCostSummaryBadge — Product Catalog "Cost status" column + popup badge ────
+// Drives both the new Product Catalog "Cost status" column and the "Cost status" line in
+// the Product Business Summary popup — one rule, one place, so the two surfaces can never
+// disagree about what a product's cost status looks like.
+
+describe("getCostSummaryBadge", () => {
+  it("shows 'Cost complete' when every variant has a valid cost", () => {
+    const badge = getCostSummaryBadge(6, 0);
+    expect(badge.variant).toBe("success");
+    expect(badge.label).toBe("Cost complete");
+  });
+
+  it("shows 'Missing cost: X' when some variants have a valid cost and some do not", () => {
+    const badge = getCostSummaryBadge(6, 2);
+    expect(badge.variant).toBe("warning");
+    expect(badge.label).toBe("Missing cost: 2");
+  });
+
+  it("shows 'Cost not recorded' when no variant has a valid cost at all", () => {
+    const badge = getCostSummaryBadge(0, 3);
+    expect(badge.variant).toBe("danger");
+    expect(badge.label).toBe("Cost not recorded");
+  });
+
+  it("shows 'Cost not recorded' for zero variants total — validCount 0 means nothing is recorded", () => {
+    const badge = getCostSummaryBadge(0, 0);
+    expect(badge.variant).toBe("danger");
+    expect(badge.label).toBe("Cost not recorded");
+  });
+});
+
+// ── computeProductCostSummary — Product Detail "Business summary" totals ────────
+// Shared by the top Business summary card and the detailed Buying Cost table on the
+// Product Detail page. Profit/margin are always computed here; the page only decides
+// whether to render them (canViewCostData(role)) — so these tests cover "shows totals"
+// directly, while "hides profit/margin from non-owner roles" / "owner sees them" are
+// covered by the already-exhaustive canViewCostData/canViewBuyingCost tests below, since
+// the page's render-gating is a plain `showProfit &&` on top of this same data.
+
+function variant(overrides: Partial<ProductVariantCostInput> = {}): ProductVariantCostInput {
+  return {
+    id: "v1",
+    color: "Black",
+    size: "M",
+    stock_quantity: 5,
+    selling_price: 11,
+    regular_selling_price_bhd: 11,
+    latest_supplier_unit_cost_inr: 1500,
+    latest_exchange_rate_to_bhd: 0.00452,
+    ...overrides,
+  };
+}
+
+describe("computeProductCostSummary", () => {
+  it("shows correct totals when every variant has a valid cost", () => {
+    const summary = computeProductCostSummary([variant()]);
+    expect(summary.validCostCount).toBe(1);
+    expect(summary.missingCostCount).toBe(0);
+    expect(summary.hasValidCost).toBe(true);
+    // buying = 1500 × 5 = 7500 INR; final = 6.78 × 5 = 33.90 BHD; selling = 11 × 5 = 55
+    expect(summary.totalBuyingValueInr).toBeCloseTo(7500, 3);
+    expect(summary.totalFinalCostBhd).toBeCloseTo(33.9, 3);
+    expect(summary.totalSellingValueBhd).toBeCloseTo(55, 3);
+    expect(summary.estimatedGrossProfit).toBeCloseTo(55 - 33.9, 3);
+    expect(summary.estimatedMarginPercent).not.toBeNull();
+  });
+
+  it("counts missing-cost variants separately and excludes them from totals", () => {
+    const summary = computeProductCostSummary([
+      variant({ id: "v1" }),
+      variant({
+        id: "v2",
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+        stock_quantity: 100,
+        selling_price: 999,
+        regular_selling_price_bhd: 999,
+      }),
+    ]);
+    expect(summary.validCostCount).toBe(1);
+    expect(summary.missingCostCount).toBe(1);
+    // v2's huge stock/selling price must never be folded into the totals.
+    expect(summary.totalBuyingValueInr).toBeCloseTo(7500, 3);
+    expect(summary.totalSellingValueBhd).toBeCloseTo(55, 3);
+  });
+
+  it("shows 'No valid buying cost recorded yet' state via hasValidCost=false and null margin", () => {
+    const summary = computeProductCostSummary([
+      variant({ latest_supplier_unit_cost_inr: null, latest_exchange_rate_to_bhd: null }),
+    ]);
+    expect(summary.hasValidCost).toBe(false);
+    expect(summary.validCostCount).toBe(0);
+    expect(summary.totalFinalCostBhd).toBe(0);
+    expect(summary.estimatedMarginPercent).toBeNull();
+  });
+
+  it("always computes profit/margin per row regardless of role — the page gates rendering, not this function", () => {
+    const summary = computeProductCostSummary([variant()]);
+    expect(summary.rows[0].profit).not.toBeNull();
+    expect(summary.rows[0].margin).not.toBeNull();
+  });
+
+  it("includes import cost in the final cost total", () => {
+    const summary = computeProductCostSummary([
+      variant({ latest_additional_landed_cost_bhd: 0.5 }),
+    ]);
+    // final = (6.78 + 0.5) × 5 = 36.40
+    expect(summary.totalFinalCostBhd).toBeCloseTo(36.4, 3);
+  });
+
+  it("never trusts a corrupted legacy landed-cost figure in the totals", () => {
+    const withLegacy = {
+      ...variant(),
+      latest_landed_cost_bhd: 6012099.002,
+      average_landed_cost_bhd: 6012099.002,
+    };
+    const summary = computeProductCostSummary([withLegacy]);
+    expect(summary.totalFinalCostBhd).toBeCloseTo(33.9, 3);
+    expect(summary.totalFinalCostBhd).toBeLessThan(1000);
+  });
+
+  it("pairs with getBuyingCostStatus the same way the Product Detail variant cost cards do", () => {
+    // Recorded: full INR + rate.
+    // Invalid: INR entered but no rate (a variant cost card must show "Invalid", not "Missing").
+    // Missing: nothing entered at all.
+    const summary = computeProductCostSummary([
+      variant({ id: "recorded" }),
+      variant({ id: "invalid", latest_exchange_rate_to_bhd: null }),
+      variant({ id: "missing", latest_supplier_unit_cost_inr: null, latest_exchange_rate_to_bhd: null }),
+    ]);
+
+    const statuses = summary.rows.map((row) => ({
+      id: row.variant.id,
+      cost: row.cost !== null,
+      status: getBuyingCostStatus(row.variant),
+    }));
+
+    expect(statuses).toEqual([
+      { id: "recorded", cost: true, status: "recorded" },
+      { id: "invalid", cost: false, status: "invalid" },
+      { id: "missing", cost: false, status: "missing" },
+    ]);
   });
 });
 

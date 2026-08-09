@@ -7,8 +7,10 @@ import {
   restoreProduct,
   canDeleteProduct,
   permanentDeleteProduct,
+  updateProductOnlineStatus,
 } from "@/lib/services/product.service";
 import type { ProductInput } from "@/lib/validations/product.schema";
+import type { ProductOnlineStatus } from "@/types/database";
 
 export async function createProductAction(input: ProductInput) {
   const result = await createProduct(input);
@@ -48,4 +50,15 @@ export async function checkProductDeletableAction(productId: string) {
 export async function deleteProductAction(productId: string) {
   const result = await permanentDeleteProduct(productId);
   return { ok: !result.error, error: result.error };
+}
+
+export async function updateProductOnlineStatusAction(
+  productId: string,
+  next: { onlineStatus: ProductOnlineStatus; websiteVisible: boolean },
+) {
+  const result = await updateProductOnlineStatus(productId, next);
+  if (result.error || !result.data) {
+    return { ok: false, error: result.error };
+  }
+  return { ok: true, error: null };
 }

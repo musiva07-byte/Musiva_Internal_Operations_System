@@ -16,11 +16,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Pagination } from "@/components/products/pagination";
 import { ProductThumbnail } from "@/components/products/product-thumbnail";
 import { StockBadge } from "@/components/products/stock-badge";
+import { BuyingCostDialog } from "@/components/inventory/buying-cost-dialog";
 import { listInventoryVariants } from "@/lib/services/inventory.service";
 import { getCurrentStaffProfile } from "@/lib/auth/session";
-import { canViewBuyingCost } from "@/lib/auth/permissions";
+import { canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
 import { formatBhd } from "@/lib/formatters/currency";
-import { formatInr, getValidBuyingCost } from "@/lib/utils/cost-conversion";
+import { getBuyingCostStatus, getValidBuyingCost } from "@/lib/utils/cost-conversion";
 
 type InventoryPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -41,6 +42,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
   const variants = await listInventoryVariants({ q, stock, productStatus, page });
 
   const showCost = canViewBuyingCost(profile?.role);
+  const showProfit = canViewCostData(profile?.role);
 
   const hrefForPage = (nextPage: number) => {
     const next = new URLSearchParams();
@@ -196,40 +198,61 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
                     <TableCell>
                       {(() => {
                         const cost = getValidBuyingCost(variant);
-                        if (!cost) {
+                        const status = getBuyingCostStatus(variant);
+                        const dialog = (
+                          <BuyingCostDialog
+                            buyingPriceInr={variant.latest_supplier_unit_cost_inr}
+                            color={variant.color}
+                            convertedUnitCostBhd={cost?.convertedUnitCostBhd ?? null}
+                            costStatus={status}
+                            exchangeRateToBhd={variant.latest_exchange_rate_to_bhd}
+                            finalUnitCostBhd={cost?.finalUnitCostBhd ?? null}
+                            importCostBhd={cost?.importCostBhd ?? null}
+                            productName={variant.product_name}
+                            sellingPriceBhd={Number(
+                              variant.regular_selling_price_bhd ?? variant.selling_price,
+                            )}
+                            showProfit={showProfit}
+                            size={variant.size}
+                            stockQuantity={variant.stock_quantity}
+                            triggerLabel={status === "invalid" ? "Review cost" : "View cost"}
+                          />
+                        );
+
+                        if (status === "missing") {
                           return (
                             <div className="space-y-1 text-xs">
                               <p className="italic text-muted-foreground/60">Not recorded</p>
-                              <Badge className="text-[10px]" variant="secondary">Missing</Badge>
+                              {dialog}
                             </div>
                           );
                         }
+
+                        if (status === "invalid") {
+                          return (
+                            <div className="space-y-1 text-xs">
+                              <Badge className="text-[10px]" variant="warning">Invalid cost</Badge>
+                              {dialog}
+                            </div>
+                          );
+                        }
+
                         return (
-                          <div className="space-y-0.5 text-xs">
+                          <div className="space-y-1 text-xs">
+                            <Badge className="text-[10px]" variant="success">Recorded</Badge>
                             <p className="text-muted-foreground">
-                              Buy: <span className="font-medium text-foreground">{formatInr(cost.buyingPriceInr)}</span>
-                              {" → "}
-                              <span className="font-medium text-foreground">{formatBhd(cost.convertedUnitCostBhd)}</span>
-                            </p>
-                            {cost.additionalLandedCostBhd > 0 && (
-                              <p className="text-muted-foreground">
-                                + Additional:{" "}
-                                <span className="font-medium text-foreground">
-                                  {formatBhd(cost.additionalLandedCostBhd)}
-                                </span>
-                              </p>
-                            )}
-                            <p className="text-muted-foreground">
-                              Final:{" "}
-                              <span className="font-medium text-foreground">{formatBhd(cost.finalUnitCostBhd)}</span>
-                            </p>
-                            <p className="text-muted-foreground">
-                              Total final cost:{" "}
+                              Final/piece:{" "}
                               <span className="font-medium text-foreground">
-                                {formatBhd(cost.finalUnitCostBhd * variant.stock_quantity)}
+                                {formatBhd(cost!.finalUnitCostBhd)}
                               </span>
                             </p>
-                            <Badge className="text-[10px]" variant="success">Recorded</Badge>
+                            <p className="text-muted-foreground">
+                              Total:{" "}
+                              <span className="font-medium text-foreground">
+                                {formatBhd(cost!.finalUnitCostBhd * variant.stock_quantity)}
+                              </span>
+                            </p>
+                            {dialog}
                           </div>
                         );
                       })()}

@@ -309,7 +309,7 @@ export async function getDashboardData() {
     const sellingBhd = Number(row.regular_selling_price_bhd ?? row.selling_price);
 
     totalBuyingValueInr += cost.buyingPriceInr * row.stock_quantity;
-    // Uses the FINAL buying cost (converted + optional additional landed cost), never the
+    // Uses the FINAL cost in Bahrain (converted + optional import cost), never the
     // converted figure alone — see getValidBuyingCost's doc comment.
     totalFinalCostBhd += cost.finalUnitCostBhd * row.stock_quantity;
     estimatedSellingValueBhd += sellingBhd * row.stock_quantity;

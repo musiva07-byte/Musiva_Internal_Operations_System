@@ -61,18 +61,21 @@ export function formatInr(value: number): string {
 export type BuyingCostSource = {
   latest_supplier_unit_cost_inr: number | null;
   latest_exchange_rate_to_bhd: number | null;
-  /** Optional advanced field. Missing/null is treated as 0 — it never invalidates an
-   *  otherwise-valid cost the way a missing INR price or rate does. */
+  /** Import cost per piece (cargo/customs/packing/transfer/delivery from India to Bahrain).
+   *  Missing/null is treated as 0 — it never invalidates an otherwise-valid cost the way a
+   *  missing INR price or rate does. Column name kept as-is (established before the "Import
+   *  cost" label existed); only the user-facing wording changed. */
   latest_additional_landed_cost_bhd?: number | null;
 };
 
 export type ValidBuyingCost = {
   buyingPriceInr: number;
   exchangeRateToBhd: number;
-  additionalLandedCostBhd: number;
+  /** Import cost per piece (BHD) — optional, defaults to 0. */
+  importCostBhd: number;
   /** buyingPriceInr × exchangeRateToBhd — always recalculated, never a stored value. */
   convertedUnitCostBhd: number;
-  /** convertedUnitCostBhd + additionalLandedCostBhd — the cost basis for profit/margin. */
+  /** Final cost in Bahrain: convertedUnitCostBhd + importCostBhd — the cost basis for profit/margin. */
   finalUnitCostBhd: number;
 };
 
@@ -81,9 +84,9 @@ export type ValidBuyingCost = {
  * present and greater than 0. Returns null (treat as "missing") otherwise — including when a
  * stored converted/landed BHD figure exists but the INR or rate behind it doesn't.
  *
- * The optional additional landed cost is added on top when present and >= 0 (never negative,
- * defaults to 0) — it can never by itself make an otherwise-missing cost "valid", and it
- * never makes an otherwise-valid cost "invalid".
+ * The optional import cost is added on top when present and >= 0 (never negative, defaults to
+ * 0) — it can never by itself make an otherwise-missing cost "valid", and it never makes an
+ * otherwise-valid cost "invalid".
  */
 export function getValidBuyingCost(variant: BuyingCostSource): ValidBuyingCost | null {
   const inr = variant.latest_supplier_unit_cost_inr;
@@ -92,20 +95,146 @@ export function getValidBuyingCost(variant: BuyingCostSource): ValidBuyingCost |
   if (inr === null || inr === undefined || inr <= 0) return null;
   if (rate === null || rate === undefined || rate <= 0) return null;
 
-  const rawAdditional = variant.latest_additional_landed_cost_bhd;
-  const additionalLandedCostBhd =
-    rawAdditional === null || rawAdditional === undefined || rawAdditional < 0
+  const rawImportCost = variant.latest_additional_landed_cost_bhd;
+  const importCostBhd =
+    rawImportCost === null || rawImportCost === undefined || rawImportCost < 0
       ? 0
-      : rawAdditional;
+      : rawImportCost;
 
   const convertedUnitCostBhd = roundBhd(convertToBhd(inr, rate));
-  const finalUnitCostBhd = roundBhd(convertedUnitCostBhd + additionalLandedCostBhd);
+  const finalUnitCostBhd = roundBhd(convertedUnitCostBhd + importCostBhd);
 
   return {
     buyingPriceInr: inr,
     exchangeRateToBhd: rate,
-    additionalLandedCostBhd,
+    importCostBhd,
     convertedUnitCostBhd,
     finalUnitCostBhd,
+  };
+}
+
+// ── UI-only cost status (Stock Management "View cost" simplification) ──────────
+// getValidBuyingCost() stays the single calculation authority (recorded vs not). This adds
+// a display-only refinement on top of the "not recorded" case: distinguishing a variant
+// where nothing was ever entered ("missing") from one where partial/inconsistent data
+// exists — e.g. an INR price with no exchange rate, or vice versa — which is worth flagging
+// to staff as "invalid" so they know to go review it, rather than assuming it was simply
+// never touched.
+
+export type BuyingCostStatus = "recorded" | "missing" | "invalid";
+
+export function getBuyingCostStatus(variant: BuyingCostSource): BuyingCostStatus {
+  if (getValidBuyingCost(variant) !== null) return "recorded";
+
+  const inr = variant.latest_supplier_unit_cost_inr;
+  const rate = variant.latest_exchange_rate_to_bhd;
+  const hasInr = inr !== null && inr !== undefined && inr > 0;
+  const hasRate = rate !== null && rate !== undefined && rate > 0;
+
+  return hasInr || hasRate ? "invalid" : "missing";
+}
+
+// ── product-level cost status badge (Product Catalog + Product Business Summary) ──
+// A product's variants are aggregated into validCostCount/missingCostCount (see
+// listProducts() in product.service.ts, which uses getValidBuyingCost() per variant).
+// This decides the single badge shown for the whole product across three states:
+//   - "Cost complete"      — every variant has a valid cost
+//   - "Missing cost: X"    — some variants have a valid cost, X do not
+//   - "Cost not recorded"  — no variant has a valid cost at all
+// so staff never have to guess how many variants still need attention, and can tell "some
+// missing" apart from "nothing entered yet" at a glance.
+
+export type CostSummaryBadge = {
+  variant: "success" | "warning" | "danger";
+  label: string;
+};
+
+export function getCostSummaryBadge(validCount: number, missingCount: number): CostSummaryBadge {
+  if (validCount === 0) {
+    return { variant: "danger", label: "Cost not recorded" };
+  }
+  if (missingCount === 0) {
+    return { variant: "success", label: "Cost complete" };
+  }
+  return { variant: "warning", label: `Missing cost: ${missingCount}` };
+}
+
+// ── Product Detail "Business summary" totals ────────────────────────────────────
+// Shared by the Product Detail page's top Business summary card and its detailed Buying
+// Cost table below, so both read from one computation instead of two. Profit/margin fields
+// are always computed here — the caller (page component) decides whether to render them,
+// based on canViewCostData(role). This function never gates by role; it only calculates.
+
+export type ProductVariantCostInput = BuyingCostSource & {
+  id: string;
+  color: string;
+  size: string;
+  stock_quantity: number;
+  selling_price: number;
+  regular_selling_price_bhd: number | null;
+};
+
+export type ProductVariantCostRow = {
+  variant: ProductVariantCostInput;
+  cost: ValidBuyingCost | null;
+  sellingBhd: number;
+  profit: number | null;
+  margin: number | null;
+};
+
+export type ProductCostSummary = {
+  rows: ProductVariantCostRow[];
+  validCostCount: number;
+  missingCostCount: number;
+  hasValidCost: boolean;
+  totalBuyingValueInr: number;
+  totalFinalCostBhd: number;
+  totalSellingValueBhd: number;
+  estimatedGrossProfit: number;
+  estimatedMarginPercent: number | null;
+};
+
+export function computeProductCostSummary(
+  variants: ProductVariantCostInput[],
+): ProductCostSummary {
+  const rows: ProductVariantCostRow[] = variants.map((variant) => {
+    const cost = getValidBuyingCost(variant);
+    const sellingBhd = Number(variant.regular_selling_price_bhd ?? variant.selling_price);
+    const profit = cost ? calcEstimatedProfit(sellingBhd, cost.finalUnitCostBhd) : null;
+    const margin = cost ? calcEstimatedMargin(sellingBhd, cost.finalUnitCostBhd) : null;
+    return { variant, cost, sellingBhd, profit, margin };
+  });
+
+  const validCostCount = rows.filter((r) => r.cost !== null).length;
+  const missingCostCount = rows.length - validCostCount;
+  const hasValidCost = validCostCount > 0;
+
+  const totalBuyingValueInr = rows.reduce(
+    (sum, r) => sum + (r.cost ? r.cost.buyingPriceInr * r.variant.stock_quantity : 0),
+    0,
+  );
+  const totalFinalCostBhd = rows.reduce(
+    (sum, r) => sum + (r.cost ? r.cost.finalUnitCostBhd * r.variant.stock_quantity : 0),
+    0,
+  );
+  const totalSellingValueBhd = rows.reduce(
+    (sum, r) => sum + (r.cost ? r.sellingBhd * r.variant.stock_quantity : 0),
+    0,
+  );
+  const estimatedGrossProfit = totalSellingValueBhd - totalFinalCostBhd;
+  const estimatedMarginPercent = hasValidCost
+    ? calcEstimatedMargin(totalSellingValueBhd, totalFinalCostBhd)
+    : null;
+
+  return {
+    rows,
+    validCostCount,
+    missingCostCount,
+    hasValidCost,
+    totalBuyingValueInr,
+    totalFinalCostBhd,
+    totalSellingValueBhd,
+    estimatedGrossProfit,
+    estimatedMarginPercent,
   };
 }

@@ -86,7 +86,7 @@ function baseInput(overrides: Partial<ProductInput> = {}): ProductInput {
         minimumStock: 1,
         status: "active",
         buyingPriceInr: 1500,
-        additionalLandedCostBhd: 0,
+        importCostBhd: 0,
       },
     ],
     ...overrides,
@@ -166,7 +166,7 @@ describe("createProduct — buying cost", () => {
     });
   });
 
-  it("adds the optional additional landed cost on top of the converted price (final cost)", async () => {
+  it("adds the optional import cost on top of the converted price (final cost)", async () => {
     mockHappyPath();
 
     const variantInsertCalls: unknown[] = [];
@@ -215,7 +215,7 @@ describe("createProduct — buying cost", () => {
           minimumStock: 1,
           status: "active",
           buyingPriceInr: 1500,
-          additionalLandedCostBhd: 0.5,
+          importCostBhd: 0.5,
         },
       ],
     });
@@ -281,7 +281,7 @@ describe("createProduct — buying cost", () => {
     });
   });
 
-  it("additional landed cost defaults to 0 (allocated_import_cost_bhd) when not entered", async () => {
+  it("import cost defaults to 0 (allocated_import_cost_bhd) when not entered", async () => {
     mockHappyPath();
 
     let batchInsertPayload: Record<string, unknown> | null = null;
@@ -308,7 +308,7 @@ describe("createProduct — buying cost", () => {
       return { insert: () => Promise.resolve({ error: null }) };
     });
 
-    // baseInput's variant leaves additionalLandedCostBhd at its default (0).
+    // baseInput's variant leaves importCostBhd at its default (0).
     await createProduct(baseInput());
 
     expect(batchInsertPayload).not.toBeNull();
@@ -367,7 +367,7 @@ describe("createProduct — buying cost", () => {
           minimumStock: 1,
           status: "active",
           buyingPriceInr: 0,
-          additionalLandedCostBhd: 0,
+          importCostBhd: 0,
         },
       ],
     });

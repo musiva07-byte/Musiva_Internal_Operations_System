@@ -409,7 +409,7 @@ export async function convertWebsiteRequestToOrder(
   const order = orderResult.data;
 
   // ── Atomic, idempotent link — the real double-conversion guard ───────────────
-  const { data: linked } = await supabase
+  const { data: linked, error: linkError } = await supabase
     .from("website_order_requests")
     .update({
       converted_order_id: order.id,
@@ -421,9 +421,20 @@ export async function convertWebsiteRequestToOrder(
     .select("id")
     .maybeSingle();
 
+  if (linkError) {
+    // A genuine database error (e.g. a schema mismatch from a pending migration) — this is
+    // not a race condition, so never guess otherwise. Roll back the order we just created
+    // and surface an honest, generic message instead of a misleading "already converted".
+    await cancelOrder(order.id);
+    return serviceError(
+      "Order could not be linked to this request. Please try again or contact the administrator.",
+    );
+  }
+
   if (!linked) {
-    // Someone else converted this request between our read and our write. Roll back the
-    // order we just created (restores stock) and point staff at the request that won.
+    // No error, but zero rows updated — a genuine race: someone else's conversion already
+    // set converted_order_id before ours could land. Roll back the order we just created
+    // (restores stock) and point staff at the request that won.
     await cancelOrder(order.id);
 
     const { data: winningRequest } = await supabase
@@ -440,7 +451,9 @@ export async function convertWebsiteRequestToOrder(
       : { data: null };
 
     return serviceError(
-      `This website request has already been converted to order ${winningOrder?.order_number ?? "—"}.`,
+      winningOrder?.order_number
+        ? `This website request has already been converted to order ${winningOrder.order_number}.`
+        : "This website request has already been converted to another order.",
     );
   }
 

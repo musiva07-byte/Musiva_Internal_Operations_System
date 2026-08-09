@@ -120,12 +120,12 @@ export default async function ProductCostReportPage({ searchParams }: PageProps)
               <TableHead>Category</TableHead>
               <TableHead className="text-right">Total stock</TableHead>
               <TableHead className="text-right">Valid cost</TableHead>
-              <TableHead className="text-right">Missing cost</TableHead>
-              <TableHead className="text-right">Buying value (INR)</TableHead>
-              <TableHead className="text-right">Final cost (BHD)</TableHead>
-              <TableHead className="text-right">Selling value (BHD)</TableHead>
+              <TableHead className="text-right">Buying value India (INR)</TableHead>
+              <TableHead className="text-right">Final cost Bahrain (BHD)</TableHead>
+              <TableHead className="text-right">Estimated selling value</TableHead>
               <TableHead className="text-right">Gross profit</TableHead>
               <TableHead className="text-right">Margin</TableHead>
+              <TableHead className="text-right">Missing cost variants</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -146,15 +146,6 @@ export default async function ProductCostReportPage({ searchParams }: PageProps)
                   <TableCell>{row.categoryName ?? "Uncategorized"}</TableCell>
                   <TableCell className="text-right">{row.totalStock}</TableCell>
                   <TableCell className="text-right">{row.validCostCount}</TableCell>
-                  <TableCell className="text-right">
-                    {row.missingCostCount > 0 ? (
-                      <Badge className="text-[10px]" variant="warning">
-                        {row.missingCostCount}
-                      </Badge>
-                    ) : (
-                      0
-                    )}
-                  </TableCell>
                   <TableCell className="text-right">
                     {row.validCostCount > 0 ? formatInr(row.totalBuyingValueInr) : "—"}
                   </TableCell>
@@ -177,6 +168,15 @@ export default async function ProductCostReportPage({ searchParams }: PageProps)
                       </Badge>
                     ) : (
                       "—"
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {row.missingCostCount > 0 ? (
+                      <Badge className="text-[10px]" variant="warning">
+                        {row.missingCostCount}
+                      </Badge>
+                    ) : (
+                      0
                     )}
                   </TableCell>
                 </TableRow>

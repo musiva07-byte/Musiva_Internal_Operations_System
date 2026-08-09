@@ -34,12 +34,17 @@ type QuickAddStockDialogProps = {
   productName: string;
   variants: VariantOption[];
   onSuccess?: () => void;
+  /** Overrides the trigger's className — defaults to a plain dropdown-menu-item look. */
+  triggerClassName?: string;
 };
+
+const DEFAULT_TRIGGER_CLASSNAME = "flex w-full items-center gap-2 px-2 py-1.5 text-sm";
 
 export function QuickAddStockDialog({
   productName,
   variants,
   onSuccess,
+  triggerClassName = DEFAULT_TRIGGER_CLASSNAME,
 }: QuickAddStockDialogProps) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -100,10 +105,7 @@ export function QuickAddStockDialog({
       }}
     >
       <DialogTrigger asChild>
-        <button
-          className="flex w-full items-center gap-2 px-2 py-1.5 text-sm"
-          type="button"
-        >
+        <button className={triggerClassName} type="button">
           <PackagePlus aria-hidden className="h-4 w-4" />
           Add stock
         </button>

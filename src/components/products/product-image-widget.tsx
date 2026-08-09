@@ -14,6 +14,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { uploadProductImageAction, removeProductImageAction } from "@/app/admin/products/image-actions";
+import { cn } from "@/lib/utils";
 
 const MAX_SIZE_MB = 5;
 const MAX_BYTES = MAX_SIZE_MB * 1024 * 1024;
@@ -28,9 +29,13 @@ type Props = {
   currentUrl: string | null;
   /** Whether the logged-in user may edit images. */
   canEdit: boolean;
+  /** "sm" (default, 128×160 — used in forms) or "lg" (176×224 — Product Detail header). */
+  size?: "sm" | "lg";
 };
 
-export function ProductImageWidget({ productId, currentUrl, canEdit }: Props) {
+export function ProductImageWidget({ productId, currentUrl, canEdit, size = "sm" }: Props) {
+  const dimensionClass = size === "lg" ? "h-56 w-44" : "h-40 w-32";
+  const imageSizes = size === "lg" ? "(max-width: 640px) 176px, 220px" : "(max-width: 640px) 160px, 200px";
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -166,7 +171,7 @@ export function ProductImageWidget({ productId, currentUrl, canEdit }: Props) {
         alt="Product image"
         className="object-cover object-top"
         fill
-        sizes="(max-width: 640px) 160px, 200px"
+        sizes={imageSizes}
         src={optimisticUrl!}
       />
       {canEdit && (
@@ -190,14 +195,17 @@ export function ProductImageWidget({ productId, currentUrl, canEdit }: Props) {
   const thumbnailWrapper = canEdit ? (
     <button
       aria-label={hasImage ? "Change product image" : "Add product image"}
-      className="group relative h-40 w-32 shrink-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-musiva-plum focus-visible:ring-offset-2 rounded-lg"
+      className={cn(
+        "group relative shrink-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-musiva-plum focus-visible:ring-offset-2 rounded-lg",
+        dimensionClass,
+      )}
       type="button"
       onClick={() => open(hasImage ? "manage" : "upload")}
     >
       {thumbnailContent}
     </button>
   ) : (
-    <div className="relative h-40 w-32 shrink-0 rounded-lg">
+    <div className={cn("relative shrink-0 rounded-lg", dimensionClass)}>
       {thumbnailContent}
     </div>
   );

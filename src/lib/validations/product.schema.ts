@@ -93,8 +93,9 @@ export const productVariantSchema = z
     status: z.enum([PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.archived, PRODUCT_STATUSES.draft]),
     /** Buying price in INR for this specific variant (per-variant cost entry). */
     buyingPriceInr: z.coerce.number().min(0).optional().default(0),
-    /** Optional advanced field — cargo/customs/packaging/etc per piece. Never required. */
-    additionalLandedCostBhd: z.coerce.number().min(0).optional().default(0),
+    /** Import cost per piece (BHD) — cargo, customs, packing, transfer, or delivery from
+     *  India to Bahrain. Optional, defaults to 0. Never required. */
+    importCostBhd: z.coerce.number().min(0).optional().default(0),
   })
   .refine(
     (v) =>

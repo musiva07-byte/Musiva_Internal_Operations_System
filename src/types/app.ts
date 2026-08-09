@@ -60,7 +60,7 @@ export type ProductListItem = ProductRow & {
     validCostCount: number;
     missingCostCount: number;
     totalBuyingValueInr: number;
-    /** Sum of finalUnitCostBhd × stockQuantity across valid-cost variants (converted + optional additional landed cost). */
+    /** Sum of finalUnitCostBhd × stockQuantity across valid-cost variants (converted + import cost) — the "Final cost Bahrain" total. */
     totalFinalCostBhd: number;
     totalSellingValueBhd: number;
     variants: {
@@ -71,8 +71,8 @@ export type ProductListItem = ProductRow & {
       buyingPriceInr: number | null;
       exchangeRateToBhd: number | null;
       convertedUnitCostBhd: number | null;
-      /** Optional advanced field — cargo/customs/packaging/etc per piece. 0 when not entered. */
-      additionalLandedCostBhd: number | null;
+      /** Import cost per piece (BHD) — cargo, customs, packing, transfer, or delivery. 0 when not entered. */
+      importCostBhd: number | null;
       finalUnitCostBhd: number | null;
       sellingPriceBhd: number;
     }[];

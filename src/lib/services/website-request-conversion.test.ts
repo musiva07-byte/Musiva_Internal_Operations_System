@@ -288,6 +288,26 @@ describe("convertWebsiteRequestToOrder — idempotency", () => {
     expect(mockCancelOrder).toHaveBeenCalledWith("order-1");
     expect(result.error).toBe("This website request has already been converted to order MSV-10077.");
   });
+
+  it("rolls back and gives an honest generic error (never a fake 'already converted') when the link update itself fails", async () => {
+    // A genuine DB error on the link UPDATE — e.g. the conversion-tracking columns don't
+    // exist yet because migration 202607171500 hasn't been applied. This must never be
+    // mistaken for a race condition (which would produce a misleading "already converted
+    // to order —" message).
+    mockAuth(true);
+    mockFrom
+      .mockReturnValueOnce(chainResolveAll({ data: baseRequest, error: null })) // request
+      .mockReturnValueOnce(chainResolveAll({ data: variantRow, error: null })) // variant
+      .mockReturnValueOnce(
+        chainResolveAll({ data: null, error: { message: 'column "converted_order_id" does not exist' } }),
+      ); // link update fails outright
+
+    const result = await convertWebsiteRequestToOrder("req-1");
+
+    expect(mockCancelOrder).toHaveBeenCalledWith("order-1");
+    expect(result.error).not.toMatch(/already been converted/i);
+    expect(result.error).toMatch(/could not be linked/i);
+  });
 });
 
 describe("convertWebsiteRequestToOrder — customer reuse / create", () => {

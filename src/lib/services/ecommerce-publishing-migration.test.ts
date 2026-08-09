@@ -159,8 +159,9 @@ const FORBIDDEN_COLUMNS = [
   // the rate used to convert it must never reach the public website either.
   "latest_supplier_unit_cost_inr",
   "latest_exchange_rate_to_bhd",
-  // Optional additional landed cost (Unit: reintroduce optional advanced field) — never
-  // exposed publicly either, same as the other cost columns above.
+  // Import cost per piece (cargo/customs/packing/transfer/delivery from India to Bahrain)
+  // — never exposed publicly either, same as the other cost columns above. Column name
+  // predates the "Import cost" label; only the user-facing wording changed.
   "latest_additional_landed_cost_bhd",
   "variant_sku",
   "barcode",

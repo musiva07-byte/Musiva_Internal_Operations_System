@@ -40,7 +40,7 @@ const emptyVariant = {
   stockQuantity: 0,
   minimumStock: 1,
   buyingPriceInr: 0,
-  additionalLandedCostBhd: 0,
+  importCostBhd: 0,
   status: PRODUCT_STATUSES.active,
 } as const;
 
@@ -106,7 +106,7 @@ function mapProduct(product?: ProductWithRelations): ProductInput {
       stockQuantity: variant.stock_quantity,
       minimumStock: variant.minimum_stock,
       buyingPriceInr: 0,
-      additionalLandedCostBhd: 0,
+      importCostBhd: 0,
       status: (["active", "inactive", "archived", "draft"].includes(variant.status)
         ? variant.status
         : "active") as "active" | "inactive" | "archived" | "draft",

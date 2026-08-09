@@ -173,7 +173,7 @@ export type ProductCostReportRow = {
   validCostCount: number;
   missingCostCount: number;
   totalBuyingValueInr: number;
-  /** Sum of finalUnitCostBhd × stock_quantity (converted + optional additional landed cost). */
+  /** Sum of finalUnitCostBhd × stock_quantity (converted + optional import cost). */
   totalFinalCostBhd: number;
   estimatedSellingValueBhd: number;
   estimatedGrossProfitBhd: number;
@@ -330,15 +330,24 @@ export async function getFinanceReport(range: ReportRange) {
     : { data: [] as OrderItemRow[] };
   const variantIds = [...new Set((items ?? []).map((item) => item.product_variant_id))];
   const { data: variants } = variantIds.length
-    ? await supabase.from("product_variants").select("id, cost_price").in("id", variantIds)
+    ? await supabase
+        .from("product_variants")
+        .select(
+          "id, latest_supplier_unit_cost_inr, latest_exchange_rate_to_bhd, latest_additional_landed_cost_bhd",
+        )
+        .in("id", variantIds)
     : { data: [] as ProductVariantRow[] };
 
   const revenue = orderRows.reduce((sum, order) => sum + Number(order.grand_total), 0);
   const discounts = orderRows.reduce((sum, order) => sum + Number(order.discount_total), 0);
   const deliveryCharges = orderRows.reduce((sum, order) => sum + Number(order.delivery_charge), 0);
+  // Uses the same INR + exchange rate + import cost model as the dashboard/product-detail cost
+  // sections (see getValidBuyingCost) instead of the legacy `cost_price` column, which the
+  // current product wizard no longer populates (it always writes 0 there).
   const cogs = (items ?? []).reduce((sum, item) => {
     const variant = (variants ?? []).find((row) => row.id === item.product_variant_id);
-    return sum + item.quantity * Number(variant?.cost_price ?? 0);
+    const validCost = variant ? getValidBuyingCost(variant) : null;
+    return sum + item.quantity * (validCost?.finalUnitCostBhd ?? 0);
   }, 0);
   const expenseTotal = ((expenses ?? []) as ExpenseRow[]).reduce((sum, expense) => sum + Number(expense.amount), 0);
   const grossProfit = revenue - cogs;

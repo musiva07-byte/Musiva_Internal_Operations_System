@@ -26,6 +26,7 @@ import { serviceError, serviceSuccess, type ServiceResult } from "./service-resu
 import type {
   CategoryRow,
   ProductImageRow,
+  ProductOnlineStatus,
   ProductRow,
   ProductStatus,
   ProductVariantRow,
@@ -251,7 +252,7 @@ export async function listProducts(
         buyingPriceInr: cost?.buyingPriceInr ?? null,
         exchangeRateToBhd: cost?.exchangeRateToBhd ?? null,
         convertedUnitCostBhd: cost?.convertedUnitCostBhd ?? null,
-        additionalLandedCostBhd: cost?.additionalLandedCostBhd ?? null,
+        importCostBhd: cost?.importCostBhd ?? null,
         finalUnitCostBhd: cost?.finalUnitCostBhd ?? null,
         sellingPriceBhd,
       });
@@ -432,18 +433,19 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       (variant.buyingPriceInr ?? 0) > 0
         ? variant.buyingPriceInr!
         : (openingCost?.buyingPricePerPiece ?? 0);
-    const variantAdditionalCost = variant.additionalLandedCostBhd ?? 0;
+    const variantImportCost = variant.importCostBhd ?? 0;
 
-    // Converted buying price is a pure currency conversion. The optional additional landed
-    // cost (cargo/customs/packaging/etc — staff-entered, defaults to 0, never required) is
-    // added on top to get the final buying cost. "Landed cost" columns are reused for the
-    // final BHD figure so the existing weighted-average-cost RPC keeps working unchanged
-    // when a later purchase order also receives stock for this variant.
+    // Converted buying price is a pure currency conversion. The optional import cost
+    // (cargo/customs/packing/transfer/delivery from India to Bahrain — staff-entered,
+    // defaults to 0, never required) is added on top to get the final cost in Bahrain.
+    // "Landed cost" columns are reused for the final BHD figure so the existing
+    // weighted-average-cost RPC keeps working unchanged when a later purchase order also
+    // receives stock for this variant.
     let convertedUnitCostBhd: number | null = null;
     let finalUnitCostBhd: number | null = null;
     if (openingCost && variantBuyingPrice > 0) {
       convertedUnitCostBhd = roundBhd(convertToBhd(variantBuyingPrice, openingCost.exchangeRateToBhd));
-      finalUnitCostBhd = roundBhd(convertedUnitCostBhd + variantAdditionalCost);
+      finalUnitCostBhd = roundBhd(convertedUnitCostBhd + variantImportCost);
     }
 
     const { data: createdVariant, error: variantError } = await supabase
@@ -465,7 +467,7 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
         average_landed_cost_bhd: finalUnitCostBhd,
         latest_supplier_unit_cost_inr: finalUnitCostBhd != null ? variantBuyingPrice : null,
         latest_exchange_rate_to_bhd: finalUnitCostBhd != null ? openingCost!.exchangeRateToBhd : null,
-        latest_additional_landed_cost_bhd: finalUnitCostBhd != null ? variantAdditionalCost : 0,
+        latest_additional_landed_cost_bhd: finalUnitCostBhd != null ? variantImportCost : 0,
         stock_quantity: 0,
         minimum_stock: variant.minimumStock,
         status: variant.status,
@@ -505,7 +507,7 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
           exchange_rate_date: openingCost.exchangeRateDate,
           exchange_rate_source: openingCost.exchangeRateSource,
           converted_unit_cost_bhd: convertedUnitCostBhd,
-          allocated_import_cost_bhd: variantAdditionalCost,
+          allocated_import_cost_bhd: variantImportCost,
           landed_unit_cost_bhd: finalUnitCostBhd,
           batch_type: "opening_stock",
           received_at: new Date().toISOString(),
@@ -874,6 +876,107 @@ export async function restoreProduct(
   revalidatePath("/admin/products");
   revalidatePath(`/admin/products/${productId}`);
   revalidatePath("/admin/inventory");
+  return serviceSuccess(product);
+}
+
+/**
+ * Quick website-status change from Product Catalog (Publish / Hide / Draft) — a targeted
+ * update, not the full create/update form. Owner/manager only (canPublishProducts), enforced
+ * here regardless of what the client shows — the UI hiding the control for other roles is
+ * not the only protection. Publishing is still gated by the same getPublishingReadiness()/
+ * checkPublishAttempt() rules as the full edit form; hiding or setting draft is never blocked.
+ */
+export async function updateProductOnlineStatus(
+  productId: string,
+  next: { onlineStatus: ProductOnlineStatus; websiteVisible: boolean },
+): Promise<ServiceResult<ProductRow>> {
+  const auth = await requireStaffPermission(canPublishProducts, "publish products");
+  if (auth.error || !auth.supabase || !auth.userId) {
+    return serviceError(auth.error ?? "You do not have permission to publish products.");
+  }
+
+  const supabase = auth.supabase;
+
+  const { data: existingProduct, error: fetchError } = await supabase
+    .from("products")
+    .select("name, sku, slug, online_status, website_visible")
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (fetchError || !existingProduct) {
+    return serviceError("Product not found.");
+  }
+
+  const wasPublished =
+    existingProduct.online_status === "published" || existingProduct.website_visible === true;
+  const wantsPublished = next.onlineStatus === "published" || next.websiteVisible === true;
+
+  if (wantsPublished) {
+    const [{ data: variantRows }, { data: imageRows }] = await Promise.all([
+      supabase
+        .from("product_variants")
+        .select("status, stock_quantity, regular_selling_price_bhd")
+        .eq("product_id", productId),
+      supabase.from("product_images").select("id").eq("product_id", productId).limit(1),
+    ]);
+
+    const readiness = getPublishingReadiness({
+      name: existingProduct.name,
+      slug: existingProduct.slug,
+      variants: (variantRows ?? []).map((v) => ({
+        status: v.status,
+        stockQuantity: v.stock_quantity,
+        regularSellingPriceBhd:
+          v.regular_selling_price_bhd === null ? null : Number(v.regular_selling_price_bhd),
+      })),
+      hasImage: (imageRows ?? []).length > 0,
+    });
+
+    const publishCheck = checkPublishAttempt({
+      wantsPublished: true,
+      // Permission already enforced above via requireStaffPermission(canPublishProducts).
+      canPublish: true,
+      readiness,
+    });
+    if (!publishCheck.ok) {
+      return serviceError(publishCheck.error);
+    }
+  }
+
+  const { data: product, error } = await supabase
+    .from("products")
+    .update({
+      online_status: next.onlineStatus,
+      website_visible: next.websiteVisible,
+    })
+    .eq("id", productId)
+    .select()
+    .single();
+
+  if (error || !product) {
+    return serviceError("Website status could not be updated. Please try again.");
+  }
+
+  if (wantsPublished && !wasPublished) {
+    await createAuditLog({
+      action: "publish_product",
+      tableName: "products",
+      recordId: product.id,
+      userId: auth.userId,
+      metadata: { sku: product.sku, online_status: product.online_status },
+    });
+  } else if (!wantsPublished && wasPublished) {
+    await createAuditLog({
+      action: "unpublish_product",
+      tableName: "products",
+      recordId: product.id,
+      userId: auth.userId,
+      metadata: { sku: product.sku, online_status: product.online_status },
+    });
+  }
+
+  revalidatePath("/admin/products");
+  revalidatePath(`/admin/products/${productId}`);
   return serviceSuccess(product);
 }
 

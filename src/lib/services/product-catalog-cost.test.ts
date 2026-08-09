@@ -104,13 +104,13 @@ describe("listProducts — cost_summary", () => {
       buyingPriceInr: 1500,
       exchangeRateToBhd: 0.00452,
       convertedUnitCostBhd: 6.78,
-      additionalLandedCostBhd: 0,
+      importCostBhd: 0,
       finalUnitCostBhd: 6.78,
       sellingPriceBhd: 11,
     });
   });
 
-  it("adds the optional additional landed cost on top of the converted price in totals and per-variant rows", async () => {
+  it("adds the optional import cost on top of the converted price in totals and per-variant rows", async () => {
     mockCatalog([
       {
         id: "v1",
@@ -139,7 +139,7 @@ describe("listProducts — cost_summary", () => {
     expect(product.cost_summary.totalFinalCostBhd).toBeCloseTo(7.28 * 5, 3);
     expect(product.cost_summary.variants[0]).toMatchObject({
       convertedUnitCostBhd: 6.78,
-      additionalLandedCostBhd: 0.5,
+      importCostBhd: 0.5,
       finalUnitCostBhd: 7.28,
     });
   });
@@ -177,7 +177,7 @@ describe("listProducts — cost_summary", () => {
       buyingPriceInr: null,
       exchangeRateToBhd: null,
       convertedUnitCostBhd: null,
-      additionalLandedCostBhd: null,
+      importCostBhd: null,
       finalUnitCostBhd: null,
     });
   });
@@ -276,5 +276,38 @@ describe("listProducts — cost_summary", () => {
     expect(product.cost_summary.totalFinalCostBhd).toBeCloseTo(6.78 * 5, 3);
     expect(product.cost_summary.totalSellingValueBhd).toBeCloseTo(11 * 5, 3);
     expect(product.cost_summary.variants).toHaveLength(2);
+  });
+
+  it("never trusts a corrupted legacy landed-cost figure — totals are recalculated from INR × rate only", async () => {
+    mockCatalog([
+      {
+        id: "v1",
+        product_id: "product-1",
+        color: "Black",
+        size: "M",
+        stock_quantity: 5,
+        minimum_stock: 1,
+        selling_price: 11,
+        regular_selling_price_bhd: 11,
+        discount_price: null,
+        discount_price_bhd: null,
+        discount_start_at: null,
+        discount_end_at: null,
+        status: "active",
+        latest_supplier_unit_cost_inr: 1500,
+        latest_exchange_rate_to_bhd: 0.00452,
+        // Simulates the exact bug this workflow guards against: a huge stray BHD figure
+        // written by the unrelated Purchase Order flow. It must never be read directly.
+        latest_landed_cost_bhd: 6012099.002,
+        average_landed_cost_bhd: 6012099.002,
+      },
+    ]);
+
+    const result = await listProducts({});
+    const product = result.data[0];
+
+    expect(product.cost_summary.totalFinalCostBhd).toBeCloseTo(6.78 * 5, 3);
+    expect(product.cost_summary.totalFinalCostBhd).toBeLessThan(1000);
+    expect(product.cost_summary.variants[0].finalUnitCostBhd).toBeCloseTo(6.78, 3);
   });
 });

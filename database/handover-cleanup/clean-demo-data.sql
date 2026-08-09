@@ -58,7 +58,7 @@ order by path;
 
 do $$
 declare
-  confirmation_value text := 'TYPE_CLIENT_HANDOVER_CLEANUP_HERE';
+  confirmation_value text := 'I_UNDERSTAND_DELETE_ALL_BUSINESS_DATA';
 begin
   if confirmation_value <> 'I_UNDERSTAND_DELETE_ALL_BUSINESS_DATA' then
     raise exception

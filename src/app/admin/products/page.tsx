@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Search } from "lucide-react";
+import { ChevronDown, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,10 +9,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Pagination } from "@/components/products/pagination";
 import { ProductThumbnail } from "@/components/products/product-thumbnail";
 import { ProductRowActions } from "@/components/products/product-row-actions";
+import { ProductCostDialog } from "@/components/products/product-cost-dialog";
+import { WebsiteStatusControl } from "@/components/products/website-status-control";
 import { listCategories, listProducts } from "@/lib/services/product.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
-import { canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
+import { canPublishProducts, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
 import { formatBhd } from "@/lib/formatters/currency";
+import { getCostSummaryBadge } from "@/lib/utils/cost-conversion";
 import { titleize } from "@/lib/formatters/labels";
 
 type ProductsPageProps = {
@@ -47,6 +50,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   const userRole = auth.profile?.role ?? null;
   const showCostView = canViewBuyingCost(userRole);
   const showProfit = canViewCostData(userRole);
+  const canPublish = canPublishProducts(userRole);
 
   const hrefForPage = (nextPage: number) => {
     const next = new URLSearchParams();
@@ -60,6 +64,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
 
   const showingArchived = status === "archived" || status === "all";
   const isUnfilteredEmptyState = !q && !status && categoryId === "all" && !website;
+  const columnCount = showCostView ? 9 : 8;
 
   return (
     <div className="space-y-6">
@@ -130,6 +135,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
               <TableHead>Options</TableHead>
               <TableHead>Total stock</TableHead>
               <TableHead>Status</TableHead>
+              {showCostView ? <TableHead>Cost status</TableHead> : null}
               <TableHead className="text-right">From price</TableHead>
               <TableHead className="w-12" />
             </TableRow>
@@ -137,13 +143,13 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
           <TableBody>
             {products.loadError ? (
               <TableRow>
-                <TableCell className="h-28 text-center text-muted-foreground" colSpan={8}>
+                <TableCell className="h-28 text-center text-muted-foreground" colSpan={columnCount}>
                   {products.loadError}
                 </TableCell>
               </TableRow>
             ) : products.data.length === 0 ? (
               <TableRow>
-                <TableCell className="h-28 text-center text-muted-foreground" colSpan={8}>
+                <TableCell className="h-28 text-center text-muted-foreground" colSpan={columnCount}>
                   {isUnfilteredEmptyState ? (
                     <div className="flex flex-col items-center gap-3">
                       <div>
@@ -211,22 +217,47 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                       >
                         {titleize(product.status)}
                       </Badge>
-                      <Badge
-                        variant={
-                          product.online_status === "published"
-                            ? "success"
-                            : product.online_status === "draft"
-                            ? "warning"
-                            : "secondary"
-                        }
-                      >
-                        Website: {titleize(product.online_status)}
-                      </Badge>
+                      <WebsiteStatusControl
+                        canPublish={canPublish}
+                        onlineStatus={product.online_status}
+                        productId={product.id}
+                        productName={product.name}
+                        websiteReady={product.website_ready}
+                      />
                       {!product.website_ready && (
                         <Badge variant="danger">Missing website details</Badge>
                       )}
                     </div>
                   </TableCell>
+                  {showCostView
+                    ? (() => {
+                        const badge = getCostSummaryBadge(
+                          product.cost_summary.validCostCount,
+                          product.cost_summary.missingCostCount,
+                        );
+                        return (
+                          <TableCell>
+                            <ProductCostDialog
+                              productId={product.id}
+                              productName={product.name}
+                              categoryName={product.category_name}
+                              totalStock={product.total_stock}
+                              costSummary={product.cost_summary}
+                              showProfit={showProfit}
+                              trigger={
+                                <button
+                                  className="inline-flex items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  type="button"
+                                >
+                                  <Badge variant={badge.variant}>{badge.label}</Badge>
+                                  <ChevronDown aria-hidden className="h-3 w-3 text-muted-foreground" />
+                                </button>
+                              }
+                            />
+                          </TableCell>
+                        );
+                      })()
+                    : null}
                   <TableCell className="text-right">
                     <div className="flex flex-col items-end gap-1">
                       <span>
@@ -242,6 +273,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                       productId={product.id}
                       productName={product.name}
                       productStatus={product.status}
+                      categoryName={product.category_name}
                       variantsQuick={product.variants_quick}
                       userRole={userRole}
                       costView={
