@@ -17,8 +17,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { CategorySelect } from "@/components/products/category-select";
 import { generateProductSku } from "@/lib/utils/sku";
 import { generateVariants, type GeneratedVariant } from "@/lib/utils/variant-generator";
 import { createProductAction } from "@/app/admin/products/actions";
@@ -469,7 +469,6 @@ export function ProductWizard({
     }
 
     setFormError(null);
-    const productSku = step1.sku.trim() || generateProductSku(step1.name);
 
     // Include opening cost only when at least one variant has a buying price and a rate
     // is available (either the default from Settings, or the per-product fallback rate).
@@ -492,7 +491,9 @@ export function ProductWizard({
     startTransition(async () => {
       const result = await createProductAction({
         name: step1.name.trim(),
-        sku: productSku,
+        // Sent as-typed (may be blank) — the server auto-generates a code from the
+        // product name when blank, and never overwrites a code staff typed themselves.
+        sku: step1.sku.trim(),
         categoryId: step1.categoryId || null,
         collection: step1.collection.trim() || null,
         description: step1.description.trim() || null,
@@ -641,18 +642,12 @@ export function ProductWizard({
 
               <div className="space-y-2">
                 <Label htmlFor="category">Category</Label>
-                <Select
+                <CategorySelect
                   id="category"
+                  categories={categories}
                   value={step1.categoryId}
-                  onChange={(e) => update1("categoryId", e.target.value)}
-                >
-                  <option value="">Uncategorized</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </Select>
+                  onChange={(categoryId) => update1("categoryId", categoryId)}
+                />
               </div>
 
               <div className="space-y-2">
@@ -711,15 +706,17 @@ export function ProductWizard({
               </button>
               {showAdvanced && (
                 <div className="space-y-2 border-t border-dashed border-musiva-border px-4 pb-4 pt-3">
-                  <Label htmlFor="sku">Product SKU (auto-generated if blank)</Label>
+                  <Label htmlFor="sku">Product SKU / code (optional)</Label>
                   <Input
                     id="sku"
-                    placeholder={step1.name ? generateProductSku(step1.name) : "MSV-…"}
+                    placeholder={step1.name ? generateProductSku(step1.name) : "e.g. 05T"}
                     value={step1.sku}
                     onChange={(e) => update1("sku", e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Leave blank to auto-generate from the product name.
+                    Type your own product code, or leave blank to auto-generate one from the
+                    product name. Each variant&apos;s option code is generated from this code plus
+                    its color and size.
                   </p>
                 </div>
               )}

@@ -8,6 +8,7 @@ import {
   canDeleteProduct,
   permanentDeleteProduct,
   updateProductOnlineStatus,
+  createCategory,
 } from "@/lib/services/product.service";
 import type { ProductInput } from "@/lib/validations/product.schema";
 import type { ProductOnlineStatus } from "@/types/database";
@@ -18,6 +19,14 @@ export async function createProductAction(input: ProductInput) {
     return { ok: false, error: result.error, id: null };
   }
   return { ok: true, error: null, id: result.data.id };
+}
+
+export async function createCategoryAction(name: string) {
+  const result = await createCategory(name);
+  if (result.error || !result.data) {
+    return { ok: false, error: result.error, category: null };
+  }
+  return { ok: true, error: null, category: result.data };
 }
 
 export async function updateProductAction(productId: string, input: ProductInput) {

@@ -13,6 +13,7 @@ import { PRODUCT_STATUSES, STOCK_MOVEMENT_TYPES } from "@/lib/constants";
 import { isDiscountActive } from "@/lib/pricing/calculations";
 import { getValidBuyingCost } from "@/lib/utils/cost-conversion";
 import { productSchema, type ProductInput } from "@/lib/validations/product.schema";
+import { categoryNameSchema } from "@/lib/validations/category.schema";
 import {
   checkPublishAttempt,
   getPublishingReadiness,
@@ -20,7 +21,7 @@ import {
   type WebsiteFilterValue,
 } from "@/lib/validations/product-publishing";
 import { convertToBhd, roundBhd } from "@/lib/utils/cost-conversion";
-import { generateUniqueProductSlug } from "@/lib/utils/slug";
+import { generateUniqueProductSlug, slugify } from "@/lib/utils/slug";
 import { createAuditLog } from "./audit.service";
 import { serviceError, serviceSuccess, type ServiceResult } from "./service-result";
 import type {
@@ -116,6 +117,67 @@ export async function listCategories(): Promise<CategoryRow[]> {
     .order("name", { ascending: true });
 
   return data ?? [];
+}
+
+/**
+ * Create a new category from the product form's "+ Add new category" flow.
+ * Same permission as creating products (canManageProducts) — staff who can
+ * add products can add the category they need for that product. Duplicate
+ * names are rejected case-insensitively so "Dresses" and "dresses" can't
+ * both exist; the slug is auto-generated and suffixed if it collides.
+ */
+export async function createCategory(name: string): Promise<ServiceResult<CategoryRow>> {
+  const parsed = categoryNameSchema.safeParse(name);
+  if (!parsed.success) {
+    return serviceError(parsed.error.issues[0]?.message);
+  }
+  const trimmed = parsed.data;
+
+  const auth = await requireStaffPermission(canManageProducts, "manage products");
+  if (auth.error || !auth.supabase || !auth.userId) {
+    return serviceError(auth.error ?? "You do not have permission to perform this action.");
+  }
+  const supabase = auth.supabase;
+
+  const { data: existing } = await supabase.from("categories").select("id, name");
+  const isDuplicate = ((existing ?? []) as Pick<CategoryRow, "id" | "name">[]).some(
+    (category) => category.name.trim().toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (isDuplicate) {
+    return serviceError("This category already exists.");
+  }
+
+  async function slugTaken(candidate: string): Promise<boolean> {
+    const { count } = await supabase
+      .from("categories")
+      .select("id", { count: "exact", head: true })
+      .eq("slug", candidate);
+    return (count ?? 0) > 0;
+  }
+
+  const baseSlug = slugify(trimmed) || `category-${Date.now().toString(36)}`;
+  let slug = baseSlug;
+  if (await slugTaken(slug)) {
+    let suffix = 2;
+    slug = `${baseSlug}-${suffix}`;
+    while ((await slugTaken(slug)) && suffix < 50) {
+      suffix += 1;
+      slug = `${baseSlug}-${suffix}`;
+    }
+  }
+
+  const { data: created, error } = await supabase
+    .from("categories")
+    .insert({ name: trimmed, slug, description: null, status: PRODUCT_STATUSES.active, sort_order: 0 })
+    .select()
+    .single();
+
+  if (error || !created) {
+    return serviceError("This category already exists.");
+  }
+
+  revalidatePath("/admin/products");
+  return serviceSuccess(created);
 }
 
 export async function listProducts(
