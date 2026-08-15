@@ -702,6 +702,7 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       productInput.images.map((image) => ({
         product_id: product.id,
         variant_id: image.variantId ?? null,
+        color: image.color ?? null,
         url: image.url,
         path: image.path,
         is_primary: image.isPrimary,
@@ -753,6 +754,15 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
 
   const supabase = auth.supabase;
   const productInput = parsed.data;
+
+  // Reused from the create flow's "opening cost" shape: for an edit save it simply carries
+  // the exchange rate to apply to whatever buying/import price staff just submitted. Buying
+  // cost is only processed when the user has the required permission — if a lower-privilege
+  // user somehow sends cost data it is silently stripped, same as on create.
+  const openingCost =
+    productInput.openingCost && canEnterBuyingCost(auth.role)
+      ? productInput.openingCost
+      : null;
 
   const { data: existingProduct } = await supabase
     .from("products")
@@ -832,6 +842,21 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
 
   for (const variant of productInput.variants) {
     if (variant.id) {
+      // Buying cost is only recalculated (and only overwrites what's already recorded) when
+      // a buying price was actually submitted for this variant — editing just the selling
+      // price, or saving with no cost-entry permission, must never silently wipe a
+      // previously-recorded cost. Final cost is always recomputed fresh from INR + rate,
+      // never trusted from a stored BHD column (see getValidBuyingCost's doc comment).
+      const variantBuyingPrice = variant.buyingPriceInr ?? 0;
+      const variantImportCost = variant.importCostBhd ?? 0;
+      let finalUnitCostBhd: number | null = null;
+      if (openingCost && variantBuyingPrice > 0) {
+        const convertedUnitCostBhd = roundBhd(
+          convertToBhd(variantBuyingPrice, openingCost.exchangeRateToBhd),
+        );
+        finalUnitCostBhd = roundBhd(convertedUnitCostBhd + variantImportCost);
+      }
+
       const { error: variantError } = await supabase
         .from("product_variants")
         .update({
@@ -848,6 +873,15 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
           discount_end_at: variant.discountEndAt ?? null,
           minimum_stock: variant.minimumStock,
           status: variant.status,
+          ...(finalUnitCostBhd != null
+            ? {
+                latest_landed_cost_bhd: finalUnitCostBhd,
+                average_landed_cost_bhd: finalUnitCostBhd,
+                latest_supplier_unit_cost_inr: variantBuyingPrice,
+                latest_exchange_rate_to_bhd: openingCost!.exchangeRateToBhd,
+                latest_additional_landed_cost_bhd: variantImportCost,
+              }
+            : {}),
         })
         .eq("id", variant.id)
         .eq("product_id", productId);

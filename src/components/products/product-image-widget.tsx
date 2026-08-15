@@ -31,9 +31,22 @@ type Props = {
   canEdit: boolean;
   /** "sm" (default, 128×160 — used in forms) or "lg" (176×224 — Product Detail header). */
   size?: "sm" | "lg";
+  /** When set, this widget manages the image for this specific color (e.g. "Black")
+   *  instead of the product's main image. Omit for the main image (default). */
+  color?: string | null;
+  /** Dialog title — defaults to "Product image", or "{color} image" when color is set. */
+  title?: string;
 };
 
-export function ProductImageWidget({ productId, currentUrl, canEdit, size = "sm" }: Props) {
+export function ProductImageWidget({
+  productId,
+  currentUrl,
+  canEdit,
+  size = "sm",
+  color = null,
+  title,
+}: Props) {
+  const dialogTitle = title ?? (color ? `${color} image` : "Product image");
   const dimensionClass = size === "lg" ? "h-56 w-44" : "h-40 w-32";
   const imageSizes = size === "lg" ? "(max-width: 640px) 176px, 220px" : "(max-width: 640px) 160px, 200px";
   const router = useRouter();
@@ -109,7 +122,7 @@ export function ProductImageWidget({ productId, currentUrl, canEdit, size = "sm"
     startTransition(async () => {
       const fd = new FormData();
       fd.append("file", selectedFile);
-      const result = await uploadProductImageAction(productId, fd);
+      const result = await uploadProductImageAction(productId, fd, color);
 
       if (!result.ok || !result.url) {
         setActionError(result.error ?? "Upload failed. Please try again.");
@@ -133,7 +146,7 @@ export function ProductImageWidget({ productId, currentUrl, canEdit, size = "sm"
 
     setActionError(null);
     startTransition(async () => {
-      const result = await removeProductImageAction(productId);
+      const result = await removeProductImageAction(productId, color);
 
       if (!result.ok) {
         setActionError(result.error ?? "Remove failed. Please try again.");
@@ -216,7 +229,7 @@ export function ProductImageWidget({ productId, currentUrl, canEdit, size = "sm"
     <Dialog open={mode === "upload"} onOpenChange={(open) => !open && close()}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>Product image</DialogTitle>
+          <DialogTitle>{dialogTitle}</DialogTitle>
         </DialogHeader>
 
         {/* Preview or file picker */}
@@ -292,7 +305,7 @@ export function ProductImageWidget({ productId, currentUrl, canEdit, size = "sm"
     <Dialog open={mode === "manage"} onOpenChange={(open) => !open && close()}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>Product image</DialogTitle>
+          <DialogTitle>{dialogTitle}</DialogTitle>
         </DialogHeader>
 
         {/* Current or new preview */}

@@ -187,6 +187,9 @@ export type PublicProductImageRow = {
   id: string;
   product_id: string;
   url: string;
+  /** Null for the main product image; set to a color value (e.g. "Black") for a
+   *  color-specific image. Requires migration 202607171700_product_color_images.sql. */
+  color: string | null;
   is_primary: boolean;
   sort_order: number;
 };
@@ -244,6 +247,11 @@ export type ProductImageRow = {
   id: string;
   product_id: string;
   variant_id: string | null;
+  /** Null for the main product image; set to a color value (e.g. "Black") for a
+   *  color-specific image shared by every variant of that color. Requires migration
+   *  202607171700_product_color_images.sql — until applied this is always null,
+   *  which degrades gracefully to "every image is a main image" (existing behavior). */
+  color: string | null;
   url: string;
   path: string;
   is_primary: boolean;

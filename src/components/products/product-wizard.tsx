@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CategorySelect } from "@/components/products/category-select";
+import { ProductImageWidget } from "@/components/products/product-image-widget";
 import {
   PriceConfirmationDialog,
   type PriceConfirmationRow,
@@ -30,11 +31,15 @@ import { createProductAction } from "@/app/admin/products/actions";
 import { uploadProductImageAction } from "@/app/admin/products/image-actions";
 import { formatBhd } from "@/lib/formatters/currency";
 import {
-  convertToBhd,
   calcEstimatedProfit,
   calcEstimatedMargin,
-  roundBhd,
   formatInr,
+  deriveVariantConvertedCost,
+  deriveImportCostBhd,
+  deriveVariantFinalCost,
+  validateMarginPercent,
+  deriveSuggestedSellingPrice,
+  type ProfitType,
 } from "@/lib/utils/cost-conversion";
 import { cn } from "@/lib/utils";
 import { canEnterBuyingCost, canViewCostData } from "@/lib/auth/permissions";
@@ -111,80 +116,6 @@ type WizardVariant = GeneratedVariant & {
 type Step3Data = {
   variants: WizardVariant[];
 };
-
-// ── derived cost calculations ─────────────────────────────────────────────────
-// Exported (not just internal helpers) so the cost/profit calculator introduced here can be
-// unit-tested without a component-rendering library — see product-wizard-price-suggestion.test.ts.
-
-/** Buying price converted to BHD. Returns 0 without a valid (>0) exchange rate — buying
- *  price can never be converted without one, per the buying-cost workflow's rules. */
-export function deriveVariantConvertedCost(
-  buyingPriceInr: number,
-  exchangeRateToBhd: number | null,
-): number {
-  if (!buyingPriceInr || !exchangeRateToBhd || exchangeRateToBhd <= 0) return 0;
-  return roundBhd(convertToBhd(buyingPriceInr, exchangeRateToBhd));
-}
-
-/** Import cost converted to BHD — staff enter it in INR (the India-side amount they actually
- *  know), the same conversion rule as buying price. Only the converted BHD figure is ever
- *  saved (product_variants.latest_additional_landed_cost_bhd) — the raw INR figure is a
- *  Step 3 input only, not persisted separately. */
-export function deriveImportCostBhd(
-  importCostInr: number,
-  exchangeRateToBhd: number | null,
-): number {
-  if (!importCostInr || !exchangeRateToBhd || exchangeRateToBhd <= 0) return 0;
-  return roundBhd(convertToBhd(importCostInr, exchangeRateToBhd));
-}
-
-/** Final cost in Bahrain = converted buying cost + converted import cost (both entered in
- *  INR). Returns 0 when there is no valid converted buying cost yet — import cost can never
- *  make an otherwise-missing base cost "valid" on its own. */
-export function deriveVariantFinalCost(
-  buyingPriceInr: number,
-  exchangeRateToBhd: number | null,
-  importCostInr: number,
-): number {
-  const converted = deriveVariantConvertedCost(buyingPriceInr, exchangeRateToBhd);
-  if (converted <= 0) return 0;
-  return roundBhd(converted + deriveImportCostBhd(importCostInr, exchangeRateToBhd));
-}
-
-/** How staff express their desired profit: a flat BHD amount added on top of cost, or a
- *  target margin percentage of the selling price. Default is "amount" — simpler to reason
- *  about for staff unfamiliar with margin math. */
-export type ProfitType = "amount" | "margin";
-
-/** A margin percentage must be 0–99.999...% — 100% or more implies an infinite or negative
- *  selling price (cost / (1 - 1) or worse), which is never a sane input. Returns a
- *  staff-facing error message, or null when the value is valid. */
-export function validateMarginPercent(marginPercent: number): string | null {
-  if (marginPercent < 0) return "Margin percentage cannot be negative.";
-  if (marginPercent >= 100) return "Margin percentage must be less than 100%.";
-  return null;
-}
-
-/** Suggested selling price from final cost + desired profit, per the chosen profit type:
- *  - "amount": finalCost + desired profit (BHD)
- *  - "margin": finalCost / (1 - margin / 100)
- *  Returns 0 when there is no valid final cost yet (nothing to base a suggestion on), or
- *  when the margin input is invalid — callers show the actual validation message via
- *  validateMarginPercent, this never throws or returns a negative/infinite price. */
-export function deriveSuggestedSellingPrice(
-  finalCostBhd: number,
-  profitType: ProfitType,
-  profitInput: number,
-): number {
-  if (finalCostBhd <= 0) return 0;
-
-  if (profitType === "amount") {
-    return roundBhd(finalCostBhd + Math.max(0, profitInput || 0));
-  }
-
-  if (validateMarginPercent(profitInput) !== null) return 0;
-  return roundBhd(finalCostBhd / (1 - profitInput / 100));
-}
 
 // ── chip input ─────────────────────────────────────────────────────────────────
 
@@ -1778,6 +1709,35 @@ export function ProductWizard({
             )}
             {imageError && (
               <p className="text-sm text-destructive">{imageError}</p>
+            )}
+
+            {step2.colors.length > 0 && createdProductId && (
+              <div className="space-y-3 border-t border-dashed border-musiva-border pt-4">
+                <div>
+                  <p className="text-sm font-medium text-musiva-plum">Color images (optional)</p>
+                  <p className="text-xs text-muted-foreground">
+                    Give a color its own photo if it looks different from the main image —
+                    every option in that color uses it automatically. Colors left blank use
+                    the main product image instead.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-4">
+                  {step2.colors.map((color) => (
+                    <div key={color} className="flex flex-col items-center gap-1.5">
+                      <ProductImageWidget
+                        canEdit
+                        color={color}
+                        currentUrl={null}
+                        productId={createdProductId}
+                        size="sm"
+                      />
+                      <span className="max-w-[8rem] truncate text-xs font-medium text-musiva-plum">
+                        {color}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>

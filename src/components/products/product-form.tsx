@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition, useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,9 +13,23 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CategorySelect } from "@/components/products/category-select";
+import {
+  PriceConfirmationDialog,
+  type PriceConfirmationRow,
+} from "@/components/products/price-confirmation-dialog";
 import { PRODUCT_STATUSES } from "@/lib/constants";
 import { productSchema, type ProductInput } from "@/lib/validations/product.schema";
-import { canPublishProducts } from "@/lib/auth/permissions";
+import { canPublishProducts, canEnterBuyingCost, canViewCostData } from "@/lib/auth/permissions";
+import {
+  deriveImportCostBhd,
+  deriveVariantFinalCost,
+  validateMarginPercent,
+  deriveSuggestedSellingPrice,
+  calcEstimatedProfit,
+  calcEstimatedMargin,
+  type ProfitType,
+} from "@/lib/utils/cost-conversion";
+import { formatBhd } from "@/lib/formatters/currency";
 import type { CategoryRow, StaffRole } from "@/types/database";
 import type { ProductWithRelations } from "@/types/app";
 import { createProductAction, updateProductAction } from "@/app/admin/products/actions";
@@ -24,6 +38,10 @@ type ProductFormProps = {
   categories: CategoryRow[];
   product?: ProductWithRelations;
   userRole: StaffRole | null;
+  /** Current INR → BHD rate from Settings → Exchange Rates (multiply direction), or null if
+   *  no manager has set one yet — same source the New Product wizard uses, so both forms
+   *  always agree on today's rate. */
+  currentExchangeRate: number | null;
 };
 
 const emptyVariant = {
@@ -44,6 +62,37 @@ const emptyVariant = {
   importCostBhd: 0,
   status: PRODUCT_STATUSES.active,
 } as const;
+
+/** Per-variant fields that aren't part of the saved product schema — they only exist to
+ *  drive the Price & Cost calculator (same split as the New Product wizard's WizardVariant:
+ *  importCostInr/profitInput are form-only, converted to the schema's importCostBhd right
+ *  before submit). Kept as a plain array parallel to useFieldArray's `fields`, indexed the
+ *  same way, since RHF's own field.id isn't known until the hook runs. */
+type VariantCostState = {
+  importCostInr: number;
+  profitInput: number;
+};
+
+/** Existing variants only ever store the converted BHD import cost — reverse it into INR
+ *  (using the variant's own recorded rate) so the field starts populated with something
+ *  sensible instead of 0 when a variant already has cost data. Purely a display starting
+ *  point; saving always reconverts forward from whatever staff sees on screen. */
+function reverseImportCostInr(variant: ProductWithRelations["variants"][number]): number {
+  const bhd = variant.latest_additional_landed_cost_bhd;
+  const rate = variant.latest_exchange_rate_to_bhd;
+  if (!bhd || !rate || rate <= 0) return 0;
+  return Math.round((bhd / rate) * 100) / 100;
+}
+
+function initialCostState(product?: ProductWithRelations): VariantCostState[] {
+  if (!product || product.variants.length === 0) {
+    return [{ importCostInr: 0, profitInput: 0 }];
+  }
+  return product.variants.map((v) => ({
+    importCostInr: reverseImportCostInr(v),
+    profitInput: 0,
+  }));
+}
 
 function mapProduct(product?: ProductWithRelations): ProductInput {
   if (!product) {
@@ -106,7 +155,7 @@ function mapProduct(product?: ProductWithRelations): ProductInput {
       discountEndAt: variant.discount_end_at ?? null,
       stockQuantity: variant.stock_quantity,
       minimumStock: variant.minimum_stock,
-      buyingPriceInr: 0,
+      buyingPriceInr: Number(variant.latest_supplier_unit_cost_inr ?? 0),
       importCostBhd: 0,
       status: (["active", "inactive", "archived", "draft"].includes(variant.status)
         ? variant.status
@@ -115,6 +164,7 @@ function mapProduct(product?: ProductWithRelations): ProductInput {
     images: product.images.map((image) => ({
       id: image.id,
       variantId: image.variant_id,
+      color: image.color,
       url: image.url,
       path: image.path,
       isPrimary: image.is_primary,
@@ -123,12 +173,15 @@ function mapProduct(product?: ProductWithRelations): ProductInput {
   };
 }
 
-export function ProductForm({ categories, product, userRole }: ProductFormProps) {
+export function ProductForm({ categories, product, userRole, currentExchangeRate }: ProductFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
   const isEditing = Boolean(product);
   const canPublish = canPublishProducts(userRole);
+  const canEnterCost = canEnterBuyingCost(userRole);
+  const canViewProfit = canViewCostData(userRole);
+  const hasEffectiveRate = currentExchangeRate !== null && currentExchangeRate > 0;
 
   const form = useForm<ProductInput>({
     resolver: zodResolver(productSchema) as Resolver<ProductInput>,
@@ -140,7 +193,91 @@ export function ProductForm({ categories, product, userRole }: ProductFormProps)
     name: "variants",
   });
 
-  function onSubmit(values: ProductInput) {
+  const [costState, setCostState] = useState<VariantCostState[]>(() => initialCostState(product));
+  const [profitType, setProfitType] = useState<ProfitType>("amount");
+
+  // ── bulk apply (Price & Cost) ─────────────────────────────────────────────────
+  const [bulkBuyingPriceInr, setBulkBuyingPriceInr] = useState(0);
+  const [bulkImportCostInr, setBulkImportCostInr] = useState(0);
+  const [bulkProfitInput, setBulkProfitInput] = useState(0);
+  const [bulkMinStock, setBulkMinStock] = useState(0);
+  const bulkMarginError = profitType === "margin" ? validateMarginPercent(bulkProfitInput) : null;
+
+  function appendVariant() {
+    append({ ...emptyVariant, variantSku: `${form.getValues("sku")}-` });
+    setCostState((prev) => [...prev, { importCostInr: 0, profitInput: 0 }]);
+  }
+
+  function removeVariantAt(index: number) {
+    remove(index);
+    setCostState((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function updateCostState(index: number, patch: Partial<VariantCostState>) {
+    setCostState((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
+  }
+
+  /** Only non-zero bulk fields apply — same convention as the New Product wizard, so a
+   *  blank bulk field never silently overwrites a value staff already customized per row. */
+  function applyBulkToAll() {
+    fields.forEach((_, index) => {
+      const nextBuyingPriceInr =
+        bulkBuyingPriceInr > 0 ? bulkBuyingPriceInr : form.getValues(`variants.${index}.buyingPriceInr`) || 0;
+      const nextImportCostInr = bulkImportCostInr > 0 ? bulkImportCostInr : costState[index]?.importCostInr ?? 0;
+      const nextProfitInput = bulkProfitInput > 0 ? bulkProfitInput : costState[index]?.profitInput ?? 0;
+
+      form.setValue(`variants.${index}.buyingPriceInr`, nextBuyingPriceInr, { shouldDirty: true });
+      if (bulkMinStock > 0) {
+        form.setValue(`variants.${index}.minimumStock`, bulkMinStock, { shouldDirty: true });
+      }
+      updateCostState(index, { importCostInr: nextImportCostInr, profitInput: nextProfitInput });
+
+      if (canViewProfit) {
+        const finalCost = deriveVariantFinalCost(nextBuyingPriceInr, currentExchangeRate, nextImportCostInr);
+        const marginError = profitType === "margin" ? validateMarginPercent(nextProfitInput) : null;
+        const suggested =
+          marginError === null ? deriveSuggestedSellingPrice(finalCost, profitType, nextProfitInput) : 0;
+        if (suggested > 0) {
+          form.setValue(`variants.${index}.regularSellingPriceBhd`, suggested, { shouldDirty: true });
+          form.setValue(`variants.${index}.sellingPrice`, suggested, { shouldDirty: true });
+        }
+      }
+    });
+  }
+
+  // ── save flow (review popup for staff who can view profit) ──────────────────
+  const [pendingValues, setPendingValues] = useState<ProductInput | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  function rowKeyFor(index: number, variant: ProductInput["variants"][number]): string {
+    return variant.id ?? `new-${index}`;
+  }
+
+  function buildConfirmationRows(values: ProductInput): PriceConfirmationRow[] {
+    return values.variants.map((variant, index) => {
+      const cost = costState[index] ?? { importCostInr: 0, profitInput: 0 };
+      const finalCostBhd = deriveVariantFinalCost(
+        variant.buyingPriceInr ?? 0,
+        currentExchangeRate,
+        cost.importCostInr,
+      );
+      const marginError = profitType === "margin" ? validateMarginPercent(cost.profitInput) : null;
+      const suggestedPriceBhd =
+        marginError === null ? deriveSuggestedSellingPrice(finalCostBhd, profitType, cost.profitInput) : 0;
+      const existing = product?.variants[index];
+      return {
+        key: rowKeyFor(index, variant),
+        optionLabel: `${variant.color} / ${variant.size}`,
+        buyingPriceInr: variant.buyingPriceInr ?? 0,
+        importCostInr: cost.importCostInr,
+        finalCostBhd,
+        suggestedPriceBhd,
+        oldPriceBhd: existing ? Number(existing.regular_selling_price_bhd ?? existing.selling_price) : undefined,
+      };
+    });
+  }
+
+  function doSubmit(values: ProductInput) {
     setFormError(null);
     startTransition(async () => {
       const result = product
@@ -157,8 +294,67 @@ export function ProductForm({ categories, product, userRole }: ProductFormProps)
     });
   }
 
+  function buildSubmitValues(values: ProductInput): ProductInput {
+    return {
+      ...values,
+      openingCost:
+        canEnterCost && hasEffectiveRate
+          ? {
+              buyingCurrency: "INR",
+              buyingPricePerPiece: 0,
+              exchangeRateToBhd: currentExchangeRate!,
+              exchangeRateDate: new Date().toISOString().slice(0, 10),
+              exchangeRateSource: "manual",
+            }
+          : null,
+      variants: values.variants.map((variant, index) => ({
+        ...variant,
+        importCostBhd: deriveImportCostBhd(costState[index]?.importCostInr ?? 0, currentExchangeRate),
+      })),
+    };
+  }
+
+  function onReview(values: ProductInput) {
+    const submitValues = buildSubmitValues(values);
+
+    if (!canViewProfit) {
+      doSubmit(submitValues);
+      return;
+    }
+
+    if (profitType === "margin") {
+      const invalidIndex = submitValues.variants.findIndex((variant, index) => {
+        const cost = costState[index] ?? { importCostInr: 0, profitInput: 0 };
+        const finalCost = deriveVariantFinalCost(variant.buyingPriceInr ?? 0, currentExchangeRate, cost.importCostInr);
+        return finalCost > 0 && validateMarginPercent(cost.profitInput) !== null;
+      });
+      if (invalidIndex >= 0) {
+        setFormError(validateMarginPercent(costState[invalidIndex].profitInput));
+        return;
+      }
+    }
+
+    setFormError(null);
+    setPendingValues(submitValues);
+    setShowConfirm(true);
+  }
+
+  function handleConfirmSave(prices: Record<string, number>) {
+    if (!pendingValues) return;
+    const finalValues: ProductInput = {
+      ...pendingValues,
+      variants: pendingValues.variants.map((variant, index) => {
+        const key = rowKeyFor(index, variant);
+        const price = prices[key] ?? variant.regularSellingPriceBhd;
+        return { ...variant, regularSellingPriceBhd: price, sellingPrice: price };
+      }),
+    };
+    setShowConfirm(false);
+    doSubmit(finalValues);
+  }
+
   return (
-    <form className="space-y-6" onSubmit={form.handleSubmit(onSubmit)}>
+    <form className="space-y-6" onSubmit={form.handleSubmit(onReview)}>
       <Card className="shadow-soft">
         <CardHeader>
           <CardTitle>Product details</CardTitle>
@@ -222,76 +418,68 @@ export function ProductForm({ categories, product, userRole }: ProductFormProps)
           <div>
             <CardTitle>Color and size variants</CardTitle>
             <p className="mt-2 text-sm text-muted-foreground">
-              Stock belongs to variants. Existing variant stock must be changed from Inventory.
+              Stock quantity is managed from Inventory / Receive Stock.
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => append({ ...emptyVariant, variantSku: `${form.getValues("sku")}-` })}
-          >
+          <Button type="button" variant="outline" onClick={appendVariant}>
             <Plus aria-hidden className="mr-2 h-4 w-4" />
             Add variant
           </Button>
         </CardHeader>
         <CardContent className="space-y-4">
           {fields.map((field, index) => (
-            <div key={field.id} className="grid gap-4 rounded-md border bg-musiva-ivory p-4 lg:grid-cols-6">
+            <div key={field.id} className="space-y-3 rounded-md border bg-musiva-ivory p-4">
               <input type="hidden" {...form.register(`variants.${index}.id`)} />
-              <div className="space-y-2 lg:col-span-2">
-                <Label>Variant SKU</Label>
-                <Input {...form.register(`variants.${index}.variantSku`)} />
+              <input type="hidden" {...form.register(`variants.${index}.barcode`)} />
+              <div className="grid gap-4 lg:grid-cols-6">
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Variant SKU</Label>
+                  <Input {...form.register(`variants.${index}.variantSku`)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Color</Label>
+                  <Input {...form.register(`variants.${index}.color`)} placeholder="Black" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Size</Label>
+                  <Input {...form.register(`variants.${index}.size`)} placeholder="M" />
+                </div>
+                <div className="space-y-2">
+                  <Label>{isEditing && field.id ? "Current stock" : "Opening stock"}</Label>
+                  <Input
+                    readOnly={isEditing && Boolean(form.getValues(`variants.${index}.id`))}
+                    className={isEditing && form.getValues(`variants.${index}.id`) ? "bg-muted" : undefined}
+                    type="number"
+                    {...form.register(`variants.${index}.stockQuantity`)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select {...form.register(`variants.${index}.status`)}>
+                    <option value={PRODUCT_STATUSES.active}>Active</option>
+                    <option value={PRODUCT_STATUSES.inactive}>Inactive</option>
+                    <option value={PRODUCT_STATUSES.archived}>Archived</option>
+                  </Select>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label>Color</Label>
-                <Input {...form.register(`variants.${index}.color`)} placeholder="Black" />
-              </div>
-              <div className="space-y-2">
-                <Label>Size</Label>
-                <Input {...form.register(`variants.${index}.size`)} placeholder="M" />
-              </div>
-              <div className="space-y-2">
-                <Label>Selling price</Label>
-                <Input step="0.001" type="number" {...form.register(`variants.${index}.sellingPrice`)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Minimum stock</Label>
-                <Input type="number" {...form.register(`variants.${index}.minimumStock`)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Barcode</Label>
-                <Input {...form.register(`variants.${index}.barcode`)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Cost price</Label>
-                <Input step="0.001" type="number" {...form.register(`variants.${index}.costPrice`)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Discount price</Label>
-                <Input step="0.001" type="number" {...form.register(`variants.${index}.discountPrice`)} />
-              </div>
-              <div className="space-y-2">
-                <Label>{isEditing && field.id ? "Current stock" : "Opening stock"}</Label>
-                <Input
-                  readOnly={isEditing && Boolean(field.id)}
-                  type="number"
-                  {...form.register(`variants.${index}.stockQuantity`)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Status</Label>
-                <Select {...form.register(`variants.${index}.status`)}>
-                  <option value={PRODUCT_STATUSES.active}>Active</option>
-                  <option value={PRODUCT_STATUSES.inactive}>Inactive</option>
-                  <option value={PRODUCT_STATUSES.archived}>Archived</option>
-                </Select>
-              </div>
-              <div className="flex items-end">
+
+              <VariantPriceCost
+                index={index}
+                form={form}
+                cost={costState[index] ?? { importCostInr: 0, profitInput: 0 }}
+                onCostChange={(patch) => updateCostState(index, patch)}
+                canEnterCost={canEnterCost}
+                canViewProfit={canViewProfit}
+                profitType={profitType}
+                exchangeRate={currentExchangeRate}
+              />
+
+              <div className="flex justify-end">
                 <Button
                   disabled={fields.length === 1}
                   type="button"
                   variant="outline"
-                  onClick={() => remove(index)}
+                  onClick={() => removeVariantAt(index)}
                 >
                   <Trash2 aria-hidden className="mr-2 h-4 w-4" />
                   Remove
@@ -302,6 +490,97 @@ export function ProductForm({ categories, product, userRole }: ProductFormProps)
           <FieldError message={form.formState.errors.variants?.message} />
         </CardContent>
       </Card>
+
+      {canEnterCost && (
+        <Card className="shadow-soft">
+          <CardHeader>
+            <CardTitle>Apply to all variants</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Fill any of these and click Apply — only non-zero fields are applied, so you can
+              set just the ones you need.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="bulk-buy-inr">Buying price India (INR)</Label>
+                <Input
+                  id="bulk-buy-inr"
+                  min={0}
+                  placeholder="1500.00"
+                  step="0.01"
+                  type="number"
+                  value={bulkBuyingPriceInr || ""}
+                  onChange={(e) => setBulkBuyingPriceInr(Number(e.target.value) || 0)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bulk-import-inr">Import cost India (INR)</Label>
+                <Input
+                  id="bulk-import-inr"
+                  min={0}
+                  placeholder="0.00"
+                  step="0.01"
+                  type="number"
+                  value={bulkImportCostInr || ""}
+                  onChange={(e) => setBulkImportCostInr(Number(e.target.value) || 0)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Exchange rate</Label>
+                <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                  {hasEffectiveRate
+                    ? `1 INR = BHD ${Number(currentExchangeRate).toFixed(6)}`
+                    : "Not set — see Settings"}
+                </div>
+              </div>
+              {canViewProfit && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="bulk-profit">
+                      Desired profit {profitType === "amount" ? "(BHD)" : "(%)"}
+                    </Label>
+                    <Input
+                      id="bulk-profit"
+                      min={0}
+                      step={profitType === "amount" ? "0.001" : "0.1"}
+                      type="number"
+                      value={bulkProfitInput || ""}
+                      onChange={(e) => setBulkProfitInput(Number(e.target.value) || 0)}
+                    />
+                    {bulkMarginError && <p className="text-xs text-destructive">{bulkMarginError}</p>}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="profit-type">Profit type</Label>
+                    <Select
+                      id="profit-type"
+                      value={profitType}
+                      onChange={(e) => setProfitType(e.target.value as ProfitType)}
+                    >
+                      <option value="amount">Profit amount (BHD)</option>
+                      <option value="margin">Margin percentage (%)</option>
+                    </Select>
+                  </div>
+                </>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="bulk-min">Minimum stock</Label>
+                <Input
+                  id="bulk-min"
+                  min={0}
+                  placeholder="1"
+                  type="number"
+                  value={bulkMinStock || ""}
+                  onChange={(e) => setBulkMinStock(Number(e.target.value) || 0)}
+                />
+              </div>
+            </div>
+            <Button type="button" variant="outline" onClick={applyBulkToAll}>
+              Apply to all variants
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="shadow-soft">
         <CardHeader>
@@ -408,10 +687,172 @@ export function ProductForm({ categories, product, userRole }: ProductFormProps)
           Cancel
         </Button>
         <Button disabled={isPending} type="submit">
-          {isPending ? "Saving..." : "Save product"}
+          {isPending ? "Saving..." : canViewProfit ? "Review & save" : "Save product"}
         </Button>
       </div>
+
+      {canViewProfit && pendingValues && (
+        <PriceConfirmationDialog
+          open={showConfirm}
+          rows={buildConfirmationRows(pendingValues)}
+          isSubmitting={isPending}
+          onBack={() => setShowConfirm(false)}
+          onConfirm={handleConfirmSave}
+          title="Confirm price updates"
+          confirmLabel="Save changes"
+          confirmPendingLabel="Saving..."
+        />
+      )}
     </form>
+  );
+}
+
+// ── Price & Cost — per variant ────────────────────────────────────────────────
+
+function VariantPriceCost({
+  index,
+  form,
+  cost,
+  onCostChange,
+  canEnterCost,
+  canViewProfit,
+  profitType,
+  exchangeRate,
+}: {
+  index: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  form: any;
+  cost: VariantCostState;
+  onCostChange: (patch: Partial<VariantCostState>) => void;
+  canEnterCost: boolean;
+  canViewProfit: boolean;
+  profitType: ProfitType;
+  exchangeRate: number | null;
+}) {
+  const buyingPriceInr = Number(form.watch(`variants.${index}.buyingPriceInr`)) || 0;
+  const currentPriceBhd = Number(form.watch(`variants.${index}.regularSellingPriceBhd`)) || 0;
+
+  if (!canEnterCost) {
+    return (
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label>Selling price / Final customer price (BHD)</Label>
+          <Input
+            min={0}
+            step="0.001"
+            type="number"
+            {...form.register(`variants.${index}.regularSellingPriceBhd`)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              const value = Number(e.target.value) || 0;
+              form.setValue(`variants.${index}.regularSellingPriceBhd`, value);
+              form.setValue(`variants.${index}.sellingPrice`, value);
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  const finalCostBhd = deriveVariantFinalCost(buyingPriceInr, exchangeRate, cost.importCostInr);
+  const marginError = profitType === "margin" ? validateMarginPercent(cost.profitInput) : null;
+  const suggestedPriceBhd =
+    marginError === null ? deriveSuggestedSellingPrice(finalCostBhd, profitType, cost.profitInput) : 0;
+  const profit =
+    canViewProfit && finalCostBhd > 0 && currentPriceBhd > 0
+      ? calcEstimatedProfit(currentPriceBhd, finalCostBhd)
+      : null;
+  const margin =
+    canViewProfit && finalCostBhd > 0 && currentPriceBhd > 0
+      ? calcEstimatedMargin(currentPriceBhd, finalCostBhd)
+      : null;
+  const belowCost = finalCostBhd > 0 && currentPriceBhd > 0 && currentPriceBhd < finalCostBhd;
+
+  return (
+    <div className="space-y-2 border-t border-dashed border-musiva-border pt-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-musiva-gold">Price &amp; Cost</p>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="space-y-2">
+          <Label className="text-[11px]">Buy India (INR)</Label>
+          <Input
+            min={0}
+            step="0.01"
+            type="number"
+            {...form.register(`variants.${index}.buyingPriceInr`)}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label className="text-[11px]">Import India (INR)</Label>
+          <Input
+            min={0}
+            step="0.01"
+            type="number"
+            value={cost.importCostInr || ""}
+            onChange={(e) => onCostChange({ importCostInr: Number(e.target.value) || 0 })}
+          />
+        </div>
+        {canViewProfit ? (
+          <div className="space-y-2">
+            <Label className="text-[11px]">
+              {profitType === "amount" ? "Profit (BHD)" : "Margin (%)"}
+            </Label>
+            <Input
+              min={0}
+              step={profitType === "amount" ? "0.001" : "0.1"}
+              type="number"
+              value={cost.profitInput || ""}
+              onChange={(e) => onCostChange({ profitInput: Number(e.target.value) || 0 })}
+            />
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <Label className="text-[11px]">Selling price / Final customer price (BHD)</Label>
+            <Input
+              min={0}
+              step="0.001"
+              type="number"
+              {...form.register(`variants.${index}.regularSellingPriceBhd`)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                const value = Number(e.target.value) || 0;
+                form.setValue(`variants.${index}.regularSellingPriceBhd`, value);
+                form.setValue(`variants.${index}.sellingPrice`, value);
+              }}
+            />
+          </div>
+        )}
+        <div className="space-y-2">
+          <Label className="text-[11px]">Final Bahrain cost (BHD)</Label>
+          <div className="flex h-10 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
+            {finalCostBhd > 0 ? formatBhd(finalCostBhd) : "Not recorded"}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+        <span>
+          Current price:{" "}
+          <span className="font-medium text-foreground">{formatBhd(currentPriceBhd)}</span>
+        </span>
+        {canViewProfit && suggestedPriceBhd > 0 && (
+          <span>
+            Suggested price:{" "}
+            <span className="font-medium text-foreground">{formatBhd(suggestedPriceBhd)}</span>
+          </span>
+        )}
+        {profit !== null && margin !== null && (
+          <span>
+            Profit: <span className="font-medium text-foreground">{formatBhd(profit)}</span>
+            {margin !== null ? ` · Margin ${margin.toFixed(1)}%` : ""}
+          </span>
+        )}
+        {marginError && <span className="text-destructive">{marginError}</span>}
+      </div>
+
+      {belowCost && (
+        <p className="rounded border border-musiva-warning/30 bg-musiva-warning/10 px-2 py-1 text-xs text-musiva-warning-foreground">
+          Selling price is below final cost.
+        </p>
+      )}
+    </div>
   );
 }
 

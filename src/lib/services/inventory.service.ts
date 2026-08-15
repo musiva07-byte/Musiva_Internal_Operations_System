@@ -13,6 +13,7 @@ import {
   getPricingStatus,
   getStockStatus,
 } from "@/lib/pricing/calculations";
+import { resolveDisplayImageUrl } from "@/lib/utils/product-image";
 import { serviceError, serviceSuccess, type ServiceResult } from "./service-result";
 import type { InventoryVariantItem, PaginatedResult, StockMovementItem } from "@/types/app";
 import type { ProductVariantRow, StockMovementRow, StockMovementType } from "@/types/database";
@@ -105,21 +106,20 @@ export async function listInventoryVariants(
   const { data: images, error: imagesError } = productIds.length
     ? await supabase
         .from("product_images")
-        .select("product_id, url")
+        .select("product_id, url, color")
         .in("product_id", productIds)
-        .eq("is_primary", true)
         .order("sort_order", { ascending: true })
-    : { data: [] as { product_id: string; url: string }[], error: null };
+    : { data: [] as { product_id: string; url: string; color: string | null }[], error: null };
 
   if (imagesError) {
     return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
   }
 
-  const imageMap = new Map<string, string>();
+  const imagesByProduct = new Map<string, { url: string; color: string | null }[]>();
   for (const img of images ?? []) {
-    if (!imageMap.has(img.product_id)) {
-      imageMap.set(img.product_id, img.url);
-    }
+    const list = imagesByProduct.get(img.product_id) ?? [];
+    list.push({ url: img.url, color: img.color });
+    imagesByProduct.set(img.product_id, list);
   }
 
   return {
@@ -128,7 +128,7 @@ export async function listInventoryVariants(
       product_name: row.products?.name ?? "Unknown product",
       product_sku: row.products?.sku ?? "",
       category_name: row.products?.categories?.name ?? null,
-      primary_image_url: imageMap.get(row.product_id) ?? null,
+      primary_image_url: resolveDisplayImageUrl(imagesByProduct.get(row.product_id) ?? [], row.color),
       stock_status: getStockStatus(row.stock_quantity, row.minimum_stock),
       active_selling_price: getActiveSellingPrice(row),
       pricing_status: getPricingStatus(row),

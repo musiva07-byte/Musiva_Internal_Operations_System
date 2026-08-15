@@ -19,7 +19,7 @@ function storagePath(productId: string, filename: string): string {
   return `${productId}/${Date.now()}-${filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
 }
 
-/** Fetch the single image record for a product (null if none). */
+/** Fetch the product's main image (color IS NULL) — null if none. */
 export async function getProductImage(productId: string): Promise<ProductImageRow | null> {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return null;
@@ -28,6 +28,7 @@ export async function getProductImage(productId: string): Promise<ProductImageRo
     .from("product_images")
     .select("*")
     .eq("product_id", productId)
+    .is("color", null)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -35,8 +36,40 @@ export async function getProductImage(productId: string): Promise<ProductImageRo
   return data ?? null;
 }
 
+/** Fetch every image row for a product — the main image (color null) plus any color
+ *  images. Used by the Edit Product image section and by display-side fallback
+ *  resolution (see resolveDisplayImageUrl in lib/utils/product-image.ts). */
+export async function listProductImages(productId: string): Promise<ProductImageRow[]> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return [];
+
+  const { data } = await supabase
+    .from("product_images")
+    .select("*")
+    .eq("product_id", productId)
+    .order("color", { ascending: true, nullsFirst: true });
+
+  return data ?? [];
+}
+
+/** Find the existing image row for a product's main image (color null) or a specific
+ *  color (color set) — the one row the new upload/remove call should replace. */
+async function findExistingImage(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  productId: string,
+  color: string | null,
+): Promise<ProductImageRow | null> {
+  let query = supabase.from("product_images").select("*").eq("product_id", productId);
+  query = color ? query.eq("color", color) : query.is("color", null);
+  const { data } = await query.maybeSingle();
+  return data ?? null;
+}
+
 /**
- * Upload a new product image (or replace the existing one).
+ * Upload a new product image (or replace the existing one). Pass `color` to manage that
+ * color's image instead of the product's main image — e.g. "Black" for the Black variants'
+ * shared photo. Omit or pass null/undefined for the main image (unchanged default).
  *
  * Flow:
  *   1. Validate permission
@@ -48,7 +81,10 @@ export async function getProductImage(productId: string): Promise<ProductImageRo
 export async function uploadProductImage(
   productId: string,
   file: File,
+  color?: string | null,
 ): Promise<ServiceResult<ProductImageRow>> {
+  const normalizedColor = color?.trim() || null;
+
   // ── Permission ────────────────────────────────────────────────────────────────
   const auth = await requireStaffPermission(canManageProducts, "upload product images");
   if (auth.error || !auth.supabase || !auth.userId) {
@@ -88,7 +124,7 @@ export async function uploadProductImage(
   }
 
   // ── Load existing image record (before upload, so we know what to clean up) ──
-  const existing = await getProductImage(productId);
+  const existing = await findExistingImage(auth.supabase, productId, normalizedColor);
 
   // ── Upload new file ───────────────────────────────────────────────────────────
   const path = storagePath(productId, file.name);
@@ -121,9 +157,10 @@ export async function uploadProductImage(
     .insert({
       product_id: productId,
       variant_id: null,
+      color: normalizedColor,
       url: publicUrl,
       path,
-      is_primary: true,
+      is_primary: normalizedColor === null,
       sort_order: 0,
     })
     .select()
@@ -143,7 +180,8 @@ export async function uploadProductImage(
 }
 
 /**
- * Remove a product's image.
+ * Remove a product's image. Pass `color` to remove that color's image instead of the
+ * main image (unchanged default).
  *
  * Flow:
  *   1. Validate permission
@@ -153,13 +191,14 @@ export async function uploadProductImage(
  */
 export async function removeProductImage(
   productId: string,
+  color?: string | null,
 ): Promise<ServiceResult<{ productId: string }>> {
   const auth = await requireStaffPermission(canManageProducts, "remove product images");
   if (auth.error || !auth.supabase || !auth.userId) {
     return serviceError(auth.error ?? "You do not have permission to remove product images.");
   }
 
-  const existing = await getProductImage(productId);
+  const existing = await findExistingImage(auth.supabase, productId, color?.trim() || null);
   if (!existing) {
     return serviceError("This product has no image to remove.");
   }

@@ -45,6 +45,80 @@ export function formatInr(value: number): string {
   return `₹${value.toFixed(2)}`;
 }
 
+// ── shared cost/profit calculator (Product Add Step 3 + Product Edit Price & Cost) ──
+// Both the create wizard and the edit form use the same buy-India-in-INR → suggested-price
+// workflow, so the calculation logic lives here once instead of being duplicated per form.
+
+/** Buying price converted to BHD. Returns 0 without a valid (>0) exchange rate — buying
+ *  price can never be converted without one, per the buying-cost workflow's rules. */
+export function deriveVariantConvertedCost(
+  buyingPriceInr: number,
+  exchangeRateToBhd: number | null,
+): number {
+  if (!buyingPriceInr || !exchangeRateToBhd || exchangeRateToBhd <= 0) return 0;
+  return roundBhd(convertToBhd(buyingPriceInr, exchangeRateToBhd));
+}
+
+/** Import cost converted to BHD — staff enter it in INR (the India-side amount they actually
+ *  know), the same conversion rule as buying price. Only the converted BHD figure is ever
+ *  saved (product_variants.latest_additional_landed_cost_bhd) — the raw INR figure is a
+ *  form input only, not persisted separately. */
+export function deriveImportCostBhd(
+  importCostInr: number,
+  exchangeRateToBhd: number | null,
+): number {
+  if (!importCostInr || !exchangeRateToBhd || exchangeRateToBhd <= 0) return 0;
+  return roundBhd(convertToBhd(importCostInr, exchangeRateToBhd));
+}
+
+/** Final cost in Bahrain = converted buying cost + converted import cost (both entered in
+ *  INR). Returns 0 when there is no valid converted buying cost yet — import cost can never
+ *  make an otherwise-missing base cost "valid" on its own. */
+export function deriveVariantFinalCost(
+  buyingPriceInr: number,
+  exchangeRateToBhd: number | null,
+  importCostInr: number,
+): number {
+  const converted = deriveVariantConvertedCost(buyingPriceInr, exchangeRateToBhd);
+  if (converted <= 0) return 0;
+  return roundBhd(converted + deriveImportCostBhd(importCostInr, exchangeRateToBhd));
+}
+
+/** How staff express their desired profit: a flat BHD amount added on top of cost, or a
+ *  target margin percentage of the selling price. Default is "amount" — simpler to reason
+ *  about for staff unfamiliar with margin math. */
+export type ProfitType = "amount" | "margin";
+
+/** A margin percentage must be 0–99.999...% — 100% or more implies an infinite or negative
+ *  selling price (cost / (1 - 1) or worse), which is never a sane input. Returns a
+ *  staff-facing error message, or null when the value is valid. */
+export function validateMarginPercent(marginPercent: number): string | null {
+  if (marginPercent < 0) return "Margin percentage cannot be negative.";
+  if (marginPercent >= 100) return "Margin percentage must be less than 100%.";
+  return null;
+}
+
+/** Suggested selling price from final cost + desired profit, per the chosen profit type:
+ *  - "amount": finalCost + desired profit (BHD)
+ *  - "margin": finalCost / (1 - margin / 100)
+ *  Returns 0 when there is no valid final cost yet (nothing to base a suggestion on), or
+ *  when the margin input is invalid — callers show the actual validation message via
+ *  validateMarginPercent, this never throws or returns a negative/infinite price. */
+export function deriveSuggestedSellingPrice(
+  finalCostBhd: number,
+  profitType: ProfitType,
+  profitInput: number,
+): number {
+  if (finalCostBhd <= 0) return 0;
+
+  if (profitType === "amount") {
+    return roundBhd(finalCostBhd + Math.max(0, profitInput || 0));
+  }
+
+  if (validateMarginPercent(profitInput) !== null) return 0;
+  return roundBhd(finalCostBhd / (1 - profitInput / 100));
+}
+
 // ── centralized buying-cost validity ─────────────────────────────────────────
 // This is the ONE place that decides whether a variant's buying cost can be trusted.
 //

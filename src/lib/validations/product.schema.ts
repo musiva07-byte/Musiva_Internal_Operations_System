@@ -119,6 +119,8 @@ export const productVariantSchema = z
 export const productImageSchema = z.object({
   id: z.string().uuid().optional(),
   variantId: optionalUuid,
+  /** Null for the main product image; a color value (e.g. "Black") for a color image. */
+  color: optionalText,
   url: z.string().url("Image URL must be a valid URL."),
   path: z.string().trim().min(1, "Storage path is required."),
   isPrimary: z.coerce.boolean().default(false),

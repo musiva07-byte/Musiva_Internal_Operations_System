@@ -21,6 +21,9 @@ export type PriceConfirmationRow = {
   importCostInr: number;
   finalCostBhd: number;
   suggestedPriceBhd: number;
+  /** Present only in the edit-product flow — the price before this save, shown alongside
+   *  the new one so staff can see exactly what's changing. */
+  oldPriceBhd?: number;
 };
 
 type PriceConfirmationDialogProps = {
@@ -29,6 +32,10 @@ type PriceConfirmationDialogProps = {
   isSubmitting: boolean;
   onBack: () => void;
   onConfirm: (prices: Record<string, number>) => void;
+  /** Defaults to the new-product wording. */
+  title?: string;
+  confirmLabel?: string;
+  confirmPendingLabel?: string;
 };
 
 /** Seeds the editable-price map from each row's suggested price — falls back to the final
@@ -44,6 +51,9 @@ export function PriceConfirmationDialog({
   isSubmitting,
   onBack,
   onConfirm,
+  title = "Confirm product prices",
+  confirmLabel = "Create product",
+  confirmPendingLabel = "Creating...",
 }: PriceConfirmationDialogProps) {
   const [prices, setPrices] = useState<Record<string, number>>(() => initialPrices(rows));
   // Tracks the open/closed transition so prices can be re-seeded from fresh rows the moment
@@ -62,7 +72,7 @@ export function PriceConfirmationDialog({
     <Dialog open={open} onOpenChange={(next) => !next && onBack()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Confirm product prices</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
 
         <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
@@ -103,6 +113,13 @@ export function PriceConfirmationDialog({
                   </div>
                 </div>
 
+                {row.oldPriceBhd !== undefined && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Old selling price:{" "}
+                    <span className="font-medium text-foreground">{formatBhd(row.oldPriceBhd)}</span>
+                  </p>
+                )}
+
                 <div className="mt-3 flex flex-wrap items-end gap-3">
                   <div className="space-y-1">
                     <Label className="text-[11px]" htmlFor={`price-${row.key}`}>
@@ -120,9 +137,11 @@ export function PriceConfirmationDialog({
                       }
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Suggested: <span className="font-medium text-foreground">{formatBhd(row.suggestedPriceBhd)}</span>
-                  </p>
+                  {row.suggestedPriceBhd > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Suggested: <span className="font-medium text-foreground">{formatBhd(row.suggestedPriceBhd)}</span>
+                    </p>
+                  )}
                   {row.finalCostBhd > 0 && price > 0 && (
                     <p className="text-xs text-muted-foreground">
                       Profit: <span className="font-medium text-foreground">{formatBhd(profit)}</span>
@@ -150,7 +169,7 @@ export function PriceConfirmationDialog({
             type="button"
             onClick={() => onConfirm(prices)}
           >
-            {isSubmitting ? "Creating..." : "Create product"}
+            {isSubmitting ? confirmPendingLabel : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

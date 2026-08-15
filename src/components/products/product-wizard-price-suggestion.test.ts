@@ -20,8 +20,9 @@ import {
   deriveVariantFinalCost,
   validateMarginPercent,
   deriveSuggestedSellingPrice,
-} from "./product-wizard";
-import { calcEstimatedProfit, calcEstimatedMargin } from "@/lib/utils/cost-conversion";
+  calcEstimatedProfit,
+  calcEstimatedMargin,
+} from "@/lib/utils/cost-conversion";
 
 const wizardSource = readFileSync(join(__dirname, "product-wizard.tsx"), "utf-8");
 const popupSource = readFileSync(join(__dirname, "price-confirmation-dialog.tsx"), "utf-8");
