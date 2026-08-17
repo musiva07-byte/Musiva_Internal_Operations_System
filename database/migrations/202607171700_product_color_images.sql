@@ -44,13 +44,18 @@ create index if not exists idx_product_images_color on product_images(product_id
 -- for iterative, additive view changes — no grant changes needed, the view is
 -- already granted to anon.
 
+-- Column order matters here: CREATE OR REPLACE VIEW only allows appending new columns
+-- at the end of the existing column list — it cannot insert a column in the middle
+-- (Postgres treats that as renaming the column already in that position, which errors
+-- with 42P16). The live view's existing order is id, product_id, url, is_primary,
+-- sort_order, so `color` is appended after sort_order rather than before is_primary.
 create or replace view public_product_images as
 select
   i.id,
   i.product_id,
   i.url,
-  i.color,
   i.is_primary,
-  i.sort_order
+  i.sort_order,
+  i.color
 from product_images i
 where exists (select 1 from public_products pp where pp.id = i.product_id);

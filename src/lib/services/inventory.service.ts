@@ -57,6 +57,13 @@ function toPage(value: number | undefined) {
   return Number.isInteger(value) && value && value > 0 ? value : 1;
 }
 
+/** True when a Supabase/Postgres error is specifically "column <name> does not exist"
+ *  (Postgres code 42703) for the given column — used to detect a not-yet-applied migration
+ *  without swallowing unrelated query errors. */
+function isMissingColumnError(error: { code?: string; message?: string }, column: string): boolean {
+  return error.code === "42703" && (error.message?.includes(column) ?? false);
+}
+
 export async function listInventoryVariants(
   filters: InventoryFilters = {},
 ): Promise<PaginatedResult<InventoryVariantItem>> {
@@ -98,20 +105,48 @@ export async function listInventoryVariants(
 
   const { data, count, error } = await query;
   if (error) {
+    console.error("[inventory.service] listInventoryVariants: product_variants query failed:", error);
     return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
   }
   const rows = (data ?? []) as unknown as VariantRelationRow[];
 
   const productIds = [...new Set(rows.map((row) => row.product_id))];
-  const { data: images, error: imagesError } = productIds.length
-    ? await supabase
+  type ImageRow = { product_id: string; url: string; color: string | null };
+  let images: ImageRow[] = [];
+  let imagesError: { message: string } | null = null;
+
+  if (productIds.length) {
+    const withColor = await supabase
+      .from("product_images")
+      .select("product_id, url, color")
+      .in("product_id", productIds)
+      .order("sort_order", { ascending: true });
+
+    if (withColor.error && isMissingColumnError(withColor.error, "color")) {
+      // Migration 202607171700_product_color_images.sql (adds product_images.color) has not
+      // been applied yet. Degrade gracefully to the pre-migration behavior (one image per
+      // product, no per-color match) instead of failing the whole page — see final report.
+      console.error(
+        "[inventory.service] product_images.color column missing — migration " +
+          "202607171700_product_color_images.sql has not been applied. Falling back to " +
+          "main-image-only display until it is applied.",
+        withColor.error,
+      );
+      const withoutColor = await supabase
         .from("product_images")
-        .select("product_id, url, color")
+        .select("product_id, url")
         .in("product_id", productIds)
-        .order("sort_order", { ascending: true })
-    : { data: [] as { product_id: string; url: string; color: string | null }[], error: null };
+        .order("sort_order", { ascending: true });
+      images = (withoutColor.data ?? []).map((img) => ({ ...img, color: null }));
+      imagesError = withoutColor.error;
+    } else {
+      images = withColor.data ?? [];
+      imagesError = withColor.error;
+    }
+  }
 
   if (imagesError) {
+    console.error("[inventory.service] listInventoryVariants: product_images query failed:", imagesError);
     return { data: [], count: 0, page, pageSize: PAGE_SIZE, pageCount: 0, loadError: LOAD_ERROR };
   }
 
