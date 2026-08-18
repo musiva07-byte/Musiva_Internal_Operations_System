@@ -25,18 +25,30 @@ type Props = {
 export function ProductRestoreDialog({ open, productId, productName, onClose, onSuccess }: Props) {
   const [targetStatus, setTargetStatus] = useState<"active" | "inactive">("active");
   const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
   function handleRestore() {
+    setError(null);
     startTransition(async () => {
       const result = await restoreProductAction(productId, targetStatus);
-      if (result.ok) {
-        onSuccess();
+      if (!result.ok) {
+        setError(result.error ?? "Product could not be restored. Please try again.");
+        return;
       }
+      onSuccess();
     });
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) {
+          setError(null);
+          onClose();
+        }
+      }}
+    >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Restore product?</DialogTitle>
@@ -56,6 +68,7 @@ export function ProductRestoreDialog({ open, productId, productName, onClose, on
             <option value="inactive">Inactive — restored but not shown in sales</option>
           </Select>
         </div>
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={isPending}>
             Cancel

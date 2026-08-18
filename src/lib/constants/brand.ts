@@ -1,7 +1,7 @@
 export const BRAND = {
-  businessName: "Musiva Lux Wear",
+  businessName: "Moosiva Lux Wear",
   alternateName: "Moosiva",
-  systemName: "Musiva Internal Operations System",
+  systemName: "Moosiva Internal Operations System",
   currency: "BHD",
   country: "Bahrain",
 } as const;

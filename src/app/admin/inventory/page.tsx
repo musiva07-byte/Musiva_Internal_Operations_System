@@ -17,6 +17,7 @@ import { Pagination } from "@/components/products/pagination";
 import { ProductThumbnail } from "@/components/products/product-thumbnail";
 import { StockBadge } from "@/components/products/stock-badge";
 import { BuyingCostDialog } from "@/components/inventory/buying-cost-dialog";
+import { ExportMenu } from "@/components/reports/export-menu";
 import { listInventoryVariants } from "@/lib/services/inventory.service";
 import { getCurrentStaffProfile } from "@/lib/auth/session";
 import { canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
@@ -55,6 +56,14 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
 
   const totalCols = showCost ? 8 : 7;
 
+  const exportQuery = (() => {
+    const next = new URLSearchParams();
+    if (q) next.set("q", q);
+    if (stock !== "all") next.set("stock", stock);
+    if (productStatus !== "active") next.set("productStatus", productStatus);
+    return next.toString();
+  })();
+
   return (
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
@@ -66,6 +75,10 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ExportMenu
+            csvHref={`/api/admin/inventory/export${exportQuery ? `?${exportQuery}` : ""}`}
+            printHref={`/print/inventory${exportQuery ? `?${exportQuery}` : ""}`}
+          />
           <Button asChild variant="outline">
             <Link href="/admin/inventory/movements">
               <ClipboardList aria-hidden className="mr-2 h-4 w-4" />

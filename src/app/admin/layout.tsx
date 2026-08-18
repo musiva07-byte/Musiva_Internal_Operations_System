@@ -37,10 +37,7 @@ export default async function AdminLayout({
         <div className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b border-musiva-border bg-musiva-ivory/95 px-4 py-4 backdrop-blur lg:hidden">
           <MobileAdminNav role={profile.role} />
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-musiva-gold">
-              Moosiva
-            </p>
-            <h2 className="mt-1 truncate text-base font-semibold text-musiva-plum">Musiva Lux Wear</h2>
+            <h2 className="truncate text-base font-semibold text-musiva-plum">Moosiva</h2>
           </div>
           <LogoutButton className="px-3 [&>span]:sr-only sm:px-4 sm:[&>span]:not-sr-only" />
         </div>

@@ -61,13 +61,27 @@ const optionalMoney = z.preprocess(
   z.coerce.number().min(0).multipleOf(0.001).nullable().optional(),
 );
 
+/** A new variant's `id` round-trips through a hidden HTML input
+ *  (`<input type="hidden" {...form.register(\`variants.\${index}.id\`)} />` in
+ *  product-form.tsx) so react-hook-form can serialize it — but an HTML input's value is
+ *  always a string, never truly absent, so an unset id arrives here as `""`, not
+ *  `undefined`. Without this preprocessor, `z.string().uuid().optional()` rejects `""`
+ *  (it's a defined value that isn't a valid UUID), which silently blocked every
+ *  "Add variant" save — see the Edit Product Review & Save stabilization unit. */
+const optionalVariantId = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().uuid().optional(),
+);
+
 const money = z.coerce.number().min(0).multipleOf(0.001);
 const stockQuantity = z.coerce.number().int().min(0);
 
 export const productVariantSchema = z
   .object({
-    id: z.string().uuid().optional(),
-    variantSku: z.string().trim().min(1, "Variant SKU is required."),
+    id: optionalVariantId,
+    /** Optional — staff may type an option code, or leave blank to auto-generate one from
+     *  the product code, color, and size (see resolveEditVariantSku in product.service.ts). */
+    variantSku: z.string().trim().optional().default(""),
     barcode: optionalText,
     color: z.string().trim().min(1, "Color is required."),
     size: z.string().trim().min(1, "Size is required."),

@@ -17,6 +17,10 @@ import {
   PriceConfirmationDialog,
   type PriceConfirmationRow,
 } from "@/components/products/price-confirmation-dialog";
+import {
+  ProductSaveSuccessDialog,
+  type SaveSuccessInfo,
+} from "@/components/products/product-save-success-dialog";
 import { PRODUCT_STATUSES } from "@/lib/constants";
 import { productSchema, type ProductInput } from "@/lib/validations/product.schema";
 import { canPublishProducts, canEnterBuyingCost, canViewCostData } from "@/lib/auth/permissions";
@@ -72,6 +76,7 @@ type VariantCostState = {
   importCostInr: number;
   profitInput: number;
 };
+
 
 /** Existing variants only ever store the converted BHD import cost — reverse it into INR
  *  (using the variant's own recorded rate) so the field starts populated with something
@@ -177,6 +182,7 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
+  const [showInvalidBanner, setShowInvalidBanner] = useState(false);
   const isEditing = Boolean(product);
   const canPublish = canPublishProducts(userRole);
   const canEnterCost = canEnterBuyingCost(userRole);
@@ -204,7 +210,7 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
   const bulkMarginError = profitType === "margin" ? validateMarginPercent(bulkProfitInput) : null;
 
   function appendVariant() {
-    append({ ...emptyVariant, variantSku: `${form.getValues("sku")}-` });
+    append({ ...emptyVariant });
     setCostState((prev) => [...prev, { importCostInr: 0, profitInput: 0 }]);
   }
 
@@ -248,6 +254,7 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
   // ── save flow (review popup for staff who can view profit) ──────────────────
   const [pendingValues, setPendingValues] = useState<ProductInput | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [successInfo, setSuccessInfo] = useState<SaveSuccessInfo | null>(null);
 
   function rowKeyFor(index: number, variant: ProductInput["variants"][number]): string {
     return variant.id ?? `new-${index}`;
@@ -289,7 +296,23 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
         return;
       }
 
-      router.push(`/admin/products/${result.id}`);
+      const newVariantRows = values.variants.filter((variant) => !variant.id);
+      const websiteStatusChanged = product
+        ? product.online_status !== values.onlineStatus || product.website_visible !== values.websiteVisible
+        : values.onlineStatus !== "hidden" || values.websiteVisible;
+
+      setSuccessInfo({
+        productId: result.id,
+        productName: values.name,
+        variantCount: values.variants.length,
+        newVariantCount: newVariantRows.length,
+        startingStock: newVariantRows.reduce((sum, variant) => sum + (variant.stockQuantity || 0), 0),
+        onlineStatus: values.onlineStatus,
+        websiteVisible: values.websiteVisible,
+        websiteStatusChanged,
+        costChanged: values.variants.some((variant) => (variant.buyingPriceInr ?? 0) > 0),
+        hasImages: values.images.length > 0,
+      });
       router.refresh();
     });
   }
@@ -314,7 +337,18 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
     };
   }
 
+  /** react-hook-form's handleSubmit(onValid, onInvalid) second callback — runs when zod
+   *  validation fails (e.g. a newly added variant is missing its color/size), so staff
+   *  clicking Review & Save always get a clear response instead of the button silently
+   *  doing nothing. Field-level messages already render next to each input via FieldError;
+   *  this adds the top-level banner so a failure is never missed if the invalid field is
+   *  off-screen. */
+  function onInvalid() {
+    setShowInvalidBanner(true);
+  }
+
   function onReview(values: ProductInput) {
+    setShowInvalidBanner(false);
     const submitValues = buildSubmitValues(values);
 
     if (!canViewProfit) {
@@ -354,7 +388,12 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
   }
 
   return (
-    <form className="space-y-6" onSubmit={form.handleSubmit(onReview)}>
+    <form className="space-y-6" onSubmit={form.handleSubmit(onReview, onInvalid)}>
+      {showInvalidBanner ? (
+        <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm font-medium text-destructive">
+          Please fix the highlighted fields before saving.
+        </p>
+      ) : null}
       <Card className="shadow-soft">
         <CardHeader>
           <CardTitle>Product details</CardTitle>
@@ -427,28 +466,43 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
           </Button>
         </CardHeader>
         <CardContent className="space-y-4">
-          {fields.map((field, index) => (
+          {fields.map((field, index) => {
+            const variantId = form.getValues(`variants.${index}.id`);
+            const isNewVariant = isEditing && !variantId;
+            const variantErrors = form.formState.errors.variants?.[index];
+            return (
             <div key={field.id} className="space-y-3 rounded-md border bg-musiva-ivory p-4">
               <input type="hidden" {...form.register(`variants.${index}.id`)} />
               <input type="hidden" {...form.register(`variants.${index}.barcode`)} />
+              {isNewVariant ? (
+                <p className="rounded border border-musiva-info/25 bg-musiva-info/10 px-2 py-1 text-xs text-musiva-info">
+                  New option. Save changes to create this variant.
+                </p>
+              ) : null}
               <div className="grid gap-4 lg:grid-cols-6">
                 <div className="space-y-2 lg:col-span-2">
                   <Label>Variant SKU</Label>
-                  <Input {...form.register(`variants.${index}.variantSku`)} />
+                  <Input
+                    {...form.register(`variants.${index}.variantSku`)}
+                    placeholder="Auto-generated if left blank"
+                  />
+                  <FieldError message={variantErrors?.variantSku?.message} />
                 </div>
                 <div className="space-y-2">
                   <Label>Color</Label>
                   <Input {...form.register(`variants.${index}.color`)} placeholder="Black" />
+                  <FieldError message={variantErrors?.color?.message} />
                 </div>
                 <div className="space-y-2">
                   <Label>Size</Label>
                   <Input {...form.register(`variants.${index}.size`)} placeholder="M" />
+                  <FieldError message={variantErrors?.size?.message} />
                 </div>
                 <div className="space-y-2">
-                  <Label>{isEditing && field.id ? "Current stock" : "Opening stock"}</Label>
+                  <Label>{isNewVariant ? "Opening stock" : "Current stock"}</Label>
                   <Input
-                    readOnly={isEditing && Boolean(form.getValues(`variants.${index}.id`))}
-                    className={isEditing && form.getValues(`variants.${index}.id`) ? "bg-muted" : undefined}
+                    readOnly={isEditing && Boolean(variantId)}
+                    className={isEditing && variantId ? "bg-muted" : undefined}
                     type="number"
                     {...form.register(`variants.${index}.stockQuantity`)}
                   />
@@ -486,7 +540,8 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
                 </Button>
               </div>
             </div>
-          ))}
+            );
+          })}
           <FieldError message={form.formState.errors.variants?.message} />
         </CardContent>
       </Card>
@@ -701,6 +756,36 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
           title="Confirm price updates"
           confirmLabel="Save changes"
           confirmPendingLabel="Saving..."
+          productName={pendingValues.name}
+          websiteStatusChange={
+            product &&
+            (product.online_status !== pendingValues.onlineStatus ||
+              product.website_visible !== pendingValues.websiteVisible)
+              ? {
+                  oldStatus: product.online_status,
+                  newStatus: pendingValues.onlineStatus,
+                  oldVisible: product.website_visible,
+                  newVisible: pendingValues.websiteVisible,
+                }
+              : null
+          }
+        />
+      )}
+
+      {successInfo && (
+        <ProductSaveSuccessDialog
+          open={Boolean(successInfo)}
+          info={successInfo}
+          isEditing={isEditing}
+          onViewProduct={() => {
+            router.push(`/admin/products/${successInfo.productId}`);
+          }}
+          onBackToCatalog={() => {
+            router.push("/admin/products");
+          }}
+          onContinueEditing={() => {
+            setSuccessInfo(null);
+          }}
         />
       )}
     </form>

@@ -21,6 +21,9 @@ import type { ProductVariantRow, StockMovementRow, StockMovementType } from "@/t
 const PAGE_SIZE = 12;
 const MOVEMENT_PAGE_SIZE = 15;
 const LOAD_ERROR = "Unable to load data. Please try again or contact the administrator.";
+/** Safety cap for print/export — see EXPORT_ROW_LIMIT in product.service.ts for the same
+ *  convention on the Product Catalog side. */
+const EXPORT_ROW_LIMIT = 3000;
 
 type InventoryFilters = {
   q?: string;
@@ -62,6 +65,79 @@ function toPage(value: number | undefined) {
  *  without swallowing unrelated query errors. */
 function isMissingColumnError(error: { code?: string; message?: string }, column: string): boolean {
   return error.code === "42703" && (error.message?.includes(column) ?? false);
+}
+
+/** Pure row-shaping shared by listInventoryVariants() (paginated) and
+ *  listInventoryVariantsForExport() (Print current list / Download PDF / Download CSV). */
+function buildInventoryVariantItem(
+  row: VariantRelationRow,
+  primaryImageUrl: string | null,
+): InventoryVariantItem {
+  return {
+    ...row,
+    product_name: row.products?.name ?? "Unknown product",
+    product_sku: row.products?.sku ?? "",
+    category_name: row.products?.categories?.name ?? null,
+    primary_image_url: primaryImageUrl,
+    stock_status: getStockStatus(row.stock_quantity, row.minimum_stock),
+    active_selling_price: getActiveSellingPrice(row),
+    pricing_status: getPricingStatus(row),
+  };
+}
+
+/**
+ * Fetches the primary/color-matched image URL per row for a batch of already-loaded variant
+ * rows — the same "does the color-images migration exist yet" fallback used by
+ * listInventoryVariants(). Shared so the export path degrades the same way the paginated
+ * page does instead of failing outright when the migration hasn't been applied.
+ */
+async function fetchImagesByProduct(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  productIds: string[],
+): Promise<{ imagesByProduct: Map<string, { url: string; color: string | null }[]>; error: unknown }> {
+  type ImageRow = { product_id: string; url: string; color: string | null };
+  let images: ImageRow[] = [];
+  let imagesError: { code?: string; message: string } | null = null;
+
+  if (productIds.length) {
+    const withColor = await supabase
+      .from("product_images")
+      .select("product_id, url, color")
+      .in("product_id", productIds)
+      .order("sort_order", { ascending: true });
+
+    if (withColor.error && isMissingColumnError(withColor.error, "color")) {
+      console.error(
+        "[inventory.service] product_images.color column missing — migration " +
+          "202607171700_product_color_images.sql has not been applied. Falling back to " +
+          "main-image-only display until it is applied.",
+        withColor.error,
+      );
+      const withoutColor = await supabase
+        .from("product_images")
+        .select("product_id, url")
+        .in("product_id", productIds)
+        .order("sort_order", { ascending: true });
+      images = (withoutColor.data ?? []).map((img: { product_id: string; url: string }) => ({
+        ...img,
+        color: null,
+      }));
+      imagesError = withoutColor.error;
+    } else {
+      images = withColor.data ?? [];
+      imagesError = withColor.error;
+    }
+  }
+
+  const imagesByProduct = new Map<string, { url: string; color: string | null }[]>();
+  for (const img of images) {
+    const list = imagesByProduct.get(img.product_id) ?? [];
+    list.push({ url: img.url, color: img.color });
+    imagesByProduct.set(img.product_id, list);
+  }
+
+  return { imagesByProduct, error: imagesError };
 }
 
 export async function listInventoryVariants(
@@ -173,6 +249,79 @@ export async function listInventoryVariants(
     pageSize: PAGE_SIZE,
     pageCount: Math.ceil((count ?? 0) / PAGE_SIZE),
   };
+}
+
+export type InventoryExportResult = {
+  rows: InventoryVariantItem[];
+  /** True when the export hit EXPORT_ROW_LIMIT — the file is not the complete filtered set. */
+  truncated: boolean;
+  error: string | null;
+};
+
+/**
+ * Same filters as listInventoryVariants() (search/stock level/product status), but returns
+ * every matching row up to a safety cap instead of one page — used by Print current list /
+ * Download PDF / Download CSV on the Stock Management page. Column selection for cost/profit
+ * fields is the caller's responsibility (gated by canViewBuyingCost/canViewCostData) — this
+ * always returns the full InventoryVariantItem (it already omits nothing sensitive beyond
+ * what product_variants itself stores) so permission checks stay in one place, the export
+ * route, rather than duplicated into every data-fetch path.
+ */
+export async function listInventoryVariantsForExport(
+  filters: Omit<InventoryFilters, "page"> = {},
+): Promise<InventoryExportResult> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) {
+    return { rows: [], truncated: false, error: LOAD_ERROR };
+  }
+
+  let query = supabase
+    .from("product_variants")
+    .select("*, products!inner(name, sku, categories(name))")
+    .order("updated_at", { ascending: false })
+    .limit(EXPORT_ROW_LIMIT);
+
+  if (filters.q?.trim()) {
+    const search = filters.q.trim();
+    query = query.or(`variant_sku.ilike.%${search}%,barcode.ilike.%${search}%,color.ilike.%${search}%,size.ilike.%${search}%`);
+  }
+
+  if (filters.stock === "low") {
+    query = query.gt("stock_quantity", 0).filter("stock_quantity", "lte", "minimum_stock");
+  }
+
+  if (filters.stock === "out") {
+    query = query.eq("stock_quantity", 0);
+  }
+
+  if (!filters.productStatus || filters.productStatus === "active") {
+    query = query.neq("status", "archived");
+  } else if (filters.productStatus === "archived") {
+    query = query.eq("status", "archived");
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error("[inventory.service] listInventoryVariantsForExport: product_variants query failed:", error);
+    return { rows: [], truncated: false, error: LOAD_ERROR };
+  }
+  const rows = (data ?? []) as unknown as VariantRelationRow[];
+  const productIds = [...new Set(rows.map((row) => row.product_id))];
+
+  const { imagesByProduct, error: imagesError } = await fetchImagesByProduct(supabase, productIds);
+  if (imagesError) {
+    console.error("[inventory.service] listInventoryVariantsForExport: product_images query failed:", imagesError);
+    return { rows: [], truncated: false, error: LOAD_ERROR };
+  }
+
+  const shaped = rows.map((row) =>
+    buildInventoryVariantItem(
+      row,
+      resolveDisplayImageUrl(imagesByProduct.get(row.product_id) ?? [], row.color),
+    ),
+  );
+
+  return { rows: shaped, truncated: rows.length >= EXPORT_ROW_LIMIT, error: null };
 }
 
 export async function listStockMovements(

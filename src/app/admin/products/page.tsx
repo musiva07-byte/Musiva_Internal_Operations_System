@@ -11,6 +11,7 @@ import { ProductThumbnail } from "@/components/products/product-thumbnail";
 import { ProductRowActions } from "@/components/products/product-row-actions";
 import { ProductCostDialog } from "@/components/products/product-cost-dialog";
 import { WebsiteStatusControl } from "@/components/products/website-status-control";
+import { ExportMenu } from "@/components/reports/export-menu";
 import { listCategories, listProducts } from "@/lib/services/product.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { canPublishProducts, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
@@ -64,7 +65,15 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
 
   const showingArchived = status === "archived" || status === "all";
   const isUnfilteredEmptyState = !q && !status && categoryId === "all" && !website;
-  const columnCount = showCostView ? 9 : 8;
+
+  const exportQuery = (() => {
+    const next = new URLSearchParams();
+    if (q) next.set("q", q);
+    if (status) next.set("status", status);
+    if (categoryId !== "all") next.set("categoryId", categoryId);
+    if (website) next.set("website", website);
+    return next.toString();
+  })();
 
   return (
     <div className="space-y-6">
@@ -76,12 +85,18 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
             Manage product details, images, categories, pricing, and size/color options.
           </p>
         </div>
-        <Button asChild>
-          <Link href="/admin/products/new">
-            <Plus aria-hidden className="mr-2 h-4 w-4" />
-            New product
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <ExportMenu
+            csvHref={`/api/admin/products/export${exportQuery ? `?${exportQuery}` : ""}`}
+            printHref={`/print/products${exportQuery ? `?${exportQuery}` : ""}`}
+          />
+          <Button asChild>
+            <Link href="/admin/products/new">
+              <Plus aria-hidden className="mr-2 h-4 w-4" />
+              New product
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <Card className="shadow-soft">
@@ -125,174 +140,310 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
         </CardContent>
       </Card>
 
-      <Card className="shadow-soft">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[72px]">Image</TableHead>
-              <TableHead>Product</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead>Options</TableHead>
-              <TableHead>Total stock</TableHead>
-              <TableHead>Status</TableHead>
-              {showCostView ? <TableHead>Cost status</TableHead> : null}
-              <TableHead className="text-right">From price</TableHead>
-              <TableHead className="w-12" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      {products.loadError || products.data.length === 0 ? (
+        <Card className="shadow-soft">
+          <CardContent className="flex h-40 items-center justify-center text-center text-muted-foreground">
             {products.loadError ? (
-              <TableRow>
-                <TableCell className="h-28 text-center text-muted-foreground" colSpan={columnCount}>
-                  {products.loadError}
-                </TableCell>
-              </TableRow>
-            ) : products.data.length === 0 ? (
-              <TableRow>
-                <TableCell className="h-28 text-center text-muted-foreground" colSpan={columnCount}>
-                  {isUnfilteredEmptyState ? (
-                    <div className="flex flex-col items-center gap-3">
-                      <div>
-                        <p className="font-medium text-foreground">No products yet.</p>
-                        <p>Add your first product to start managing Moosiva stock.</p>
-                      </div>
-                      <Button asChild size="sm">
-                        <Link href="/admin/products/new">Add product</Link>
-                      </Button>
-                    </div>
-                  ) : status === "archived" ? (
-                    "No archived products."
-                  ) : (
-                    "No products found."
-                  )}
-                </TableCell>
-              </TableRow>
+              products.loadError
+            ) : isUnfilteredEmptyState ? (
+              <div className="flex flex-col items-center gap-3">
+                <div>
+                  <p className="font-medium text-foreground">No products yet.</p>
+                  <p>Add your first product to start managing Moosiva stock.</p>
+                </div>
+                <Button asChild size="sm">
+                  <Link href="/admin/products/new">Add product</Link>
+                </Button>
+              </div>
+            ) : status === "archived" ? (
+              "No archived products."
             ) : (
-              products.data.map((product) => (
-                <TableRow
-                  key={product.id}
-                  className={product.status === "archived" ? "opacity-60" : undefined}
-                >
-                  <TableCell>
-                    <ProductThumbnail name={product.name} url={product.primary_image_url} />
-                  </TableCell>
-                  <TableCell>
-                    <Link
-                      className="font-medium text-musiva-plum hover:underline"
-                      href={`/admin/products/${product.id}`}
-                    >
-                      {product.name}
-                    </Link>
-                    <p className="mt-1 text-xs text-muted-foreground">{product.sku}</p>
-                  </TableCell>
-                  <TableCell>{product.category_name ?? "Uncategorized"}</TableCell>
-                  <TableCell>
-                    <span className="text-sm">
-                      {product.variant_count} option{product.variant_count !== 1 ? "s" : ""}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1.5">
-                      <Badge variant={product.out_of_stock_count > 0 ? "danger" : "success"}>
-                        {product.total_stock} units
-                      </Badge>
-                      {product.low_stock_count > 0 ? (
-                        <Badge variant="warning">Low {product.low_stock_count}</Badge>
-                      ) : null}
-                      {product.status === "archived" && product.total_stock > 0 ? (
-                        <Badge variant="warning">Archived — stock remaining</Badge>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1.5">
-                      <Badge
-                        variant={
-                          product.status === "active"
-                            ? "success"
-                            : product.status === "archived"
-                            ? "danger"
-                            : "secondary"
-                        }
-                      >
-                        {titleize(product.status)}
-                      </Badge>
-                      <WebsiteStatusControl
-                        canPublish={canPublish}
-                        onlineStatus={product.online_status}
-                        productId={product.id}
-                        productName={product.name}
-                        websiteReady={product.website_ready}
-                      />
-                      {!product.website_ready && (
-                        <Badge variant="danger">Missing website details</Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  {showCostView
-                    ? (() => {
-                        const badge = getCostSummaryBadge(
-                          product.cost_summary.validCostCount,
-                          product.cost_summary.missingCostCount,
-                        );
-                        return (
-                          <TableCell>
-                            <ProductCostDialog
-                              productId={product.id}
-                              productName={product.name}
-                              categoryName={product.category_name}
-                              totalStock={product.total_stock}
-                              costSummary={product.cost_summary}
-                              showProfit={showProfit}
-                              trigger={
-                                <button
-                                  className="inline-flex items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                  type="button"
-                                >
-                                  <Badge variant={badge.variant}>{badge.label}</Badge>
-                                  <ChevronDown aria-hidden className="h-3 w-3 text-muted-foreground" />
-                                </button>
-                              }
-                            />
-                          </TableCell>
-                        );
-                      })()
-                    : null}
-                  <TableCell className="text-right">
-                    <div className="flex flex-col items-end gap-1">
-                      <span>
-                        {product.min_selling_price === null ? "—" : formatBhd(product.min_selling_price)}
-                      </span>
-                      {product.has_active_discount ? (
-                        <Badge className="text-[10px]" variant="warning">Sale</Badge>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <ProductRowActions
-                      productId={product.id}
-                      productName={product.name}
-                      productStatus={product.status}
-                      categoryName={product.category_name}
-                      variantsQuick={product.variants_quick}
-                      userRole={userRole}
-                      costView={
-                        showCostView
-                          ? {
-                              totalStock: product.total_stock,
-                              costSummary: product.cost_summary,
-                              showProfit,
-                            }
-                          : undefined
-                      }
-                    />
-                  </TableCell>
-                </TableRow>
-              ))
+              "No products found."
             )}
-          </TableBody>
-        </Table>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          {/* Desktop/tablet: compact fixed-layout table — table-fixed + column-width caps
+              guarantee the table never grows past its container, so no horizontal scrollbar. */}
+          <Card className="hidden shadow-soft md:block">
+            <Table className="min-w-0 table-fixed">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-16">Image</TableHead>
+                  <TableHead className={showCostView ? "w-[24%]" : "w-[28%]"}>Product</TableHead>
+                  <TableHead className={showCostView ? "w-[12%]" : "w-[14%]"}>Category</TableHead>
+                  <TableHead className={showCostView ? "w-[13%]" : "w-[15%]"}>Stock</TableHead>
+                  <TableHead className={showCostView ? "w-[17%]" : "w-[20%]"}>Status</TableHead>
+                  {showCostView ? <TableHead className="w-[15%]">Cost</TableHead> : null}
+                  <TableHead className={showCostView ? "w-[11%] text-right" : "w-[15%] text-right"}>
+                    Price
+                  </TableHead>
+                  <TableHead className="w-12" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {products.data.map((product) => {
+                  const costBadge = getCostSummaryBadge(
+                    product.cost_summary.validCostCount,
+                    product.cost_summary.missingCostCount,
+                  );
+                  return (
+                    <TableRow
+                      key={product.id}
+                      className={product.status === "archived" ? "opacity-60" : undefined}
+                    >
+                      <TableCell>
+                        <ProductThumbnail name={product.name} url={product.primary_image_url} />
+                      </TableCell>
+                      <TableCell className="overflow-hidden">
+                        <Link
+                          className="block truncate font-medium text-musiva-plum hover:underline"
+                          href={`/admin/products/${product.id}`}
+                        >
+                          {product.name}
+                        </Link>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">{product.sku}</p>
+                      </TableCell>
+                      <TableCell className="truncate text-sm">
+                        {product.category_name ?? "Uncategorized"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col items-start gap-1 text-sm">
+                          <p className="font-medium text-musiva-plum">{product.total_stock} units</p>
+                          <p className="text-xs text-muted-foreground">
+                            {product.variant_count} option{product.variant_count !== 1 ? "s" : ""}
+                          </p>
+                          {product.out_of_stock_count > 0 ? (
+                            <Badge className="text-[10px]" variant="danger">
+                              Out {product.out_of_stock_count}
+                            </Badge>
+                          ) : product.low_stock_count > 0 ? (
+                            <Badge className="text-[10px]" variant="warning">
+                              Low {product.low_stock_count}
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col items-start gap-1">
+                          <Badge
+                            variant={
+                              product.status === "active"
+                                ? "success"
+                                : product.status === "archived"
+                                ? "danger"
+                                : "secondary"
+                            }
+                          >
+                            {titleize(product.status)}
+                          </Badge>
+                          <WebsiteStatusControl
+                            canPublish={canPublish}
+                            onlineStatus={product.online_status}
+                            productId={product.id}
+                            productName={product.name}
+                            websiteReady={product.website_ready}
+                          />
+                          {!product.website_ready ? (
+                            <Badge className="text-[10px]" variant="danger">
+                              Missing details
+                            </Badge>
+                          ) : null}
+                          {product.status === "archived" && product.total_stock > 0 ? (
+                            <Badge className="text-[10px]" variant="warning">
+                              Has stock
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      {showCostView ? (
+                        <TableCell>
+                          <ProductCostDialog
+                            productId={product.id}
+                            productName={product.name}
+                            categoryName={product.category_name}
+                            totalStock={product.total_stock}
+                            costSummary={product.cost_summary}
+                            showProfit={showProfit}
+                            trigger={
+                              <button
+                                className="inline-flex items-center gap-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                type="button"
+                              >
+                                <Badge className="text-[10px]" variant={costBadge.variant}>
+                                  {costBadge.label}
+                                </Badge>
+                                <ChevronDown aria-hidden className="h-3 w-3 shrink-0 text-muted-foreground" />
+                              </button>
+                            }
+                          />
+                        </TableCell>
+                      ) : null}
+                      <TableCell className="text-right">
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="text-sm">
+                            {product.min_selling_price === null ? "—" : formatBhd(product.min_selling_price)}
+                          </span>
+                          {product.has_active_discount ? (
+                            <Badge className="text-[10px]" variant="warning">Sale</Badge>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <ProductRowActions
+                          productId={product.id}
+                          productName={product.name}
+                          productStatus={product.status}
+                          categoryName={product.category_name}
+                          variantsQuick={product.variants_quick}
+                          userRole={userRole}
+                          costView={
+                            showCostView
+                              ? {
+                                  totalStock: product.total_stock,
+                                  costSummary: product.cost_summary,
+                                  showProfit,
+                                }
+                              : undefined
+                          }
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </Card>
+
+          {/* Mobile: stacked cards instead of a cramped/scrolling table. */}
+          <div className="space-y-3 md:hidden">
+            {products.data.map((product) => {
+              const costBadge = getCostSummaryBadge(
+                product.cost_summary.validCostCount,
+                product.cost_summary.missingCostCount,
+              );
+              return (
+                <Card
+                  key={product.id}
+                  className={product.status === "archived" ? "shadow-soft opacity-60" : "shadow-soft"}
+                >
+                  <CardContent className="flex gap-3 pt-4">
+                    <ProductThumbnail name={product.name} url={product.primary_image_url} />
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <Link
+                            className="block truncate font-medium text-musiva-plum hover:underline"
+                            href={`/admin/products/${product.id}`}
+                          >
+                            {product.name}
+                          </Link>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {product.sku} · {product.category_name ?? "Uncategorized"}
+                          </p>
+                        </div>
+                        <ProductRowActions
+                          productId={product.id}
+                          productName={product.name}
+                          productStatus={product.status}
+                          categoryName={product.category_name}
+                          variantsQuick={product.variants_quick}
+                          userRole={userRole}
+                          costView={
+                            showCostView
+                              ? {
+                                  totalStock: product.total_stock,
+                                  costSummary: product.cost_summary,
+                                  showProfit,
+                                }
+                              : undefined
+                          }
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge
+                          variant={
+                            product.status === "active"
+                              ? "success"
+                              : product.status === "archived"
+                              ? "danger"
+                              : "secondary"
+                          }
+                        >
+                          {titleize(product.status)}
+                        </Badge>
+                        <WebsiteStatusControl
+                          canPublish={canPublish}
+                          onlineStatus={product.online_status}
+                          productId={product.id}
+                          productName={product.name}
+                          websiteReady={product.website_ready}
+                        />
+                        {!product.website_ready ? (
+                          <Badge className="text-[10px]" variant="danger">Missing details</Badge>
+                        ) : null}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                        <span>
+                          {product.total_stock} units · {product.variant_count} option
+                          {product.variant_count !== 1 ? "s" : ""}
+                        </span>
+                        {product.out_of_stock_count > 0 ? (
+                          <Badge className="text-[10px]" variant="danger">
+                            Out {product.out_of_stock_count}
+                          </Badge>
+                        ) : product.low_stock_count > 0 ? (
+                          <Badge className="text-[10px]" variant="warning">
+                            Low {product.low_stock_count}
+                          </Badge>
+                        ) : null}
+                        {product.status === "archived" && product.total_stock > 0 ? (
+                          <Badge className="text-[10px]" variant="warning">Has stock</Badge>
+                        ) : null}
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium text-musiva-plum">
+                            {product.min_selling_price === null ? "—" : formatBhd(product.min_selling_price)}
+                          </span>
+                          {product.has_active_discount ? (
+                            <Badge className="text-[10px]" variant="warning">Sale</Badge>
+                          ) : null}
+                        </div>
+                        {showCostView ? (
+                          <ProductCostDialog
+                            productId={product.id}
+                            productName={product.name}
+                            categoryName={product.category_name}
+                            totalStock={product.total_stock}
+                            costSummary={product.cost_summary}
+                            showProfit={showProfit}
+                            trigger={
+                              <button
+                                className="inline-flex items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                type="button"
+                              >
+                                <Badge className="text-[10px]" variant={costBadge.variant}>
+                                  {costBadge.label}
+                                </Badge>
+                                <ChevronDown aria-hidden className="h-3 w-3 text-muted-foreground" />
+                              </button>
+                            }
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       <Pagination href={hrefForPage} page={products.page} pageCount={products.pageCount} />
     </div>

@@ -114,10 +114,7 @@ export function AdminSidebar({ role }: AdminSidebarProps) {
           src="/moosiva-lux-wear-logo.jpeg"
           width={80}
         />
-        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-musiva-gold">
-          Moosiva
-        </p>
-        <h2 className="mt-2 text-2xl font-semibold text-musiva-plum">Musiva Lux Wear</h2>
+        <h2 className="mt-2 text-2xl font-semibold text-musiva-plum">Moosiva</h2>
         <p className="mt-2 text-sm leading-5 text-muted-foreground">Internal Operations System</p>
       </div>
 

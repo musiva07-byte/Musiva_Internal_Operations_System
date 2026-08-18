@@ -122,6 +122,69 @@ describe("Edit Product — save behavior", () => {
   });
 });
 
+describe("Edit Product — Review & Save validation feedback (fixes the silent-failure bug)", () => {
+  it("wires an onInvalid handler into handleSubmit so an invalid form never fails silently", () => {
+    expect(formSource).toMatch(/form\.handleSubmit\(onReview,\s*onInvalid\)/);
+  });
+
+  it("shows the required top-level banner when validation fails", () => {
+    expect(formSource).toContain("Please fix the highlighted fields before saving.");
+    expect(formSource).toMatch(/showInvalidBanner/);
+  });
+
+  it("shows field-level errors for variant SKU, color, and size — not just the array-level message", () => {
+    expect(formSource).toMatch(/variantErrors\?\.variantSku\?\.message/);
+    expect(formSource).toMatch(/variantErrors\?\.color\?\.message/);
+    expect(formSource).toMatch(/variantErrors\?\.size\?\.message/);
+  });
+
+  it("clears the invalid banner once a valid submission is reviewed", () => {
+    expect(formSource).toMatch(/function onReview\(values: ProductInput\) \{\s*setShowInvalidBanner\(false\)/);
+  });
+});
+
+describe("Edit Product — add variant behavior", () => {
+  it("leaves a new variant's SKU blank (auto-generates server-side) instead of a half-filled placeholder", () => {
+    expect(formSource).toContain("append({ ...emptyVariant });");
+    expect(formSource).not.toMatch(/variantSku:\s*`\$\{form\.getValues\("sku"\)\}-`/);
+  });
+
+  it("hints that the option code auto-generates when left blank", () => {
+    expect(formSource).toContain("Auto-generated if left blank");
+  });
+
+  it("shows the required helper text on a newly added, unsaved variant row", () => {
+    expect(formSource).toContain("Save changes to create this variant.");
+    expect(formSource).toMatch(/isNewVariant \? \(/);
+  });
+
+  it("labels a new variant's stock as opening stock, not current stock", () => {
+    expect(formSource).toMatch(/\{isNewVariant \? "Opening stock" : "Current stock"\}/);
+  });
+});
+
+describe("Edit Product — success feedback", () => {
+  it("shows a success dialog after a save succeeds instead of redirecting silently", () => {
+    expect(formSource).toContain("ProductSaveSuccessDialog");
+    expect(formSource).toContain("successInfo");
+  });
+
+  it("does not navigate away immediately inside doSubmit — the success dialog's actions do that", () => {
+    const doSubmitBody = formSource.slice(
+      formSource.indexOf("function doSubmit("),
+      formSource.indexOf("function buildSubmitValues("),
+    );
+    expect(doSubmitBody).not.toMatch(/router\.push/);
+    expect(doSubmitBody).toContain("setSuccessInfo(");
+  });
+
+  it("offers View product, Back to catalog, and Continue editing actions", () => {
+    expect(formSource).toContain("onViewProduct=");
+    expect(formSource).toContain("onBackToCatalog=");
+    expect(formSource).toContain("onContinueEditing=");
+  });
+});
+
 describe("Edit Product — image section", () => {
   it("shows a main product image control", () => {
     expect(editPageSource).toContain("Main product image");

@@ -236,6 +236,16 @@ body {
     box-shadow: none;
   }
 
+  /* Multi-page report tables (Product Catalog / Stock Management): repeat the header row on
+     every printed page and never split a data row across a page break. */
+  .print-table thead {
+    display: table-header-group;
+  }
+
+  .print-table tr {
+    break-inside: avoid;
+  }
+
   @page {
     size: A4 portrait;
     margin: 0;

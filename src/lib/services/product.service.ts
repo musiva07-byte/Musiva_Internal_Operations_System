@@ -40,6 +40,9 @@ const PAGE_SIZE = 10;
 const LOAD_ERROR = "Unable to load data. Please try again or contact the administrator.";
 /** Safety cap for the unpaginated scan used by the "Website" filter (see listProducts). */
 const WEBSITE_FILTER_SCAN_LIMIT = 1000;
+/** Safety cap for print/export — a boutique catalog fits comfortably under this; if it's
+ *  ever hit, the export is truncated (never silently) rather than scanning unbounded. */
+const EXPORT_ROW_LIMIT = 2000;
 
 type ProductListFilters = {
   q?: string;
@@ -172,6 +175,55 @@ async function resolveVariantSku(
   return resolved;
 }
 
+/** Staff-facing message for a variant SKU ("option code") collision — used whether the
+ *  conflict is caught up front (resolveEditVariantSku) or reported by the database itself
+ *  (Postgres unique-violation 23505 on product_variants.variant_sku). Deliberately never
+ *  mentions "barcode" — barcode is a separate, always-optional field and conflating the two
+ *  in one message would send staff looking at the wrong input. */
+const VARIANT_SKU_CONFLICT_ERROR =
+  "This option code already exists. Please change the product code, color, or size.";
+
+/**
+ * Resolve the option code for a variant added while editing an existing product. Unlike the
+ * create wizard (where the option code is always server-generated and shown only as a
+ * read-only preview — see resolveVariantSku above), the Edit Product form exposes Variant SKU
+ * as a plain editable field. So a staff-typed code is respected and checked for a conflict
+ * (reported via VARIANT_SKU_CONFLICT_ERROR, never silently changed — same principle as
+ * resolveProductSku), while a blank code auto-generates from the product code/color/size and
+ * is safely auto-suffixed on collision, since staff never chose that value themselves.
+ */
+async function resolveEditVariantSku(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  productSku: string,
+  typedSku: string,
+  color: string,
+  size: string,
+): Promise<{ ok: true; sku: string } | { ok: false; error: string }> {
+  const isTaken = async (candidate: string): Promise<boolean> => {
+    const { count } = await supabase
+      .from("product_variants")
+      .select("id", { count: "exact", head: true })
+      .eq("variant_sku", candidate);
+    return (count ?? 0) > 0;
+  };
+
+  const trimmed = typedSku.trim();
+  if (trimmed) {
+    if (await isTaken(trimmed)) {
+      return { ok: false, error: VARIANT_SKU_CONFLICT_ERROR };
+    }
+    return { ok: true, sku: trimmed };
+  }
+
+  const base = generateVariantSku(productSku, color, size);
+  const resolved = await resolveUniqueSku(base, isTaken);
+  if (!resolved) {
+    return { ok: false, error: VARIANT_SKU_CONFLICT_ERROR };
+  }
+  return { ok: true, sku: resolved };
+}
+
 /** Never store an empty string as a barcode — NULL is the "no barcode" value,
  *  and unlike NULL, multiple rows with barcode = "" would collide on the
  *  unique index. */
@@ -191,6 +243,99 @@ function toPage(value: number | undefined) {
 
 function normalizeSearch(value: string | undefined) {
   return value?.trim() || undefined;
+}
+
+/**
+ * Pure row-shaping: turns one product + its already-fetched variants/primary-image into the
+ * computed ProductListItem the Product Catalog table and its export both render. Extracted so
+ * listProducts() (paginated, SQL-side) and listProductsForExport() (unpaginated, filtered scan
+ * — see below) share one cost/readiness calculation instead of drifting apart.
+ */
+function buildProductListItem(
+  product: ProductRelationRow,
+  variantRows: ProductVariantRow[],
+  primaryImageUrl: string | null,
+): ProductListItem {
+  const activePrices = variantRows
+    .map((variant) => Number(variant.regular_selling_price_bhd ?? variant.selling_price))
+    .filter((price) => price >= 0);
+  const lowStockCount = variantRows.filter(
+    (variant) => variant.stock_quantity > 0 && variant.stock_quantity <= variant.minimum_stock,
+  ).length;
+  const hasActiveDiscount = variantRows.some((variant) => isDiscountActive(variant));
+
+  const variantsQuick: VariantQuick[] = variantRows.map((v) => ({
+    id: v.id,
+    color: v.color,
+    size: v.size,
+    stock_quantity: v.stock_quantity,
+  }));
+
+  const websiteReady = getPublishingReadiness({
+    name: product.name,
+    slug: product.slug,
+    variants: variantRows.map((v) => ({
+      status: v.status,
+      stockQuantity: v.stock_quantity,
+      regularSellingPriceBhd:
+        v.regular_selling_price_bhd === null ? null : Number(v.regular_selling_price_bhd),
+    })),
+    hasImage: Boolean(primaryImageUrl),
+  }).ready;
+
+  let validCostCount = 0;
+  let missingCostCount = 0;
+  let totalBuyingValueInr = 0;
+  let totalFinalCostBhd = 0;
+  let totalSellingValueBhd = 0;
+  const variantCostRows: ProductListItem["cost_summary"]["variants"] = [];
+  for (const variant of variantRows) {
+    const cost = getValidBuyingCost(variant);
+    const sellingPriceBhd = Number(variant.regular_selling_price_bhd ?? variant.selling_price);
+    if (cost) {
+      validCostCount += 1;
+      totalBuyingValueInr += cost.buyingPriceInr * variant.stock_quantity;
+      totalFinalCostBhd += cost.finalUnitCostBhd * variant.stock_quantity;
+      totalSellingValueBhd += sellingPriceBhd * variant.stock_quantity;
+    } else {
+      missingCostCount += 1;
+    }
+    variantCostRows.push({
+      id: variant.id,
+      color: variant.color,
+      size: variant.size,
+      stockQuantity: variant.stock_quantity,
+      buyingPriceInr: cost?.buyingPriceInr ?? null,
+      exchangeRateToBhd: cost?.exchangeRateToBhd ?? null,
+      convertedUnitCostBhd: cost?.convertedUnitCostBhd ?? null,
+      importCostBhd: cost?.importCostBhd ?? null,
+      finalUnitCostBhd: cost?.finalUnitCostBhd ?? null,
+      sellingPriceBhd,
+    });
+  }
+
+  return {
+    ...product,
+    category_name: product.categories?.name ?? null,
+    primary_image_url: primaryImageUrl,
+    variant_count: variantRows.length,
+    total_stock: variantRows.reduce((sum, variant) => sum + variant.stock_quantity, 0),
+    low_stock_count: lowStockCount,
+    out_of_stock_count: variantRows.filter((variant) => variant.stock_quantity === 0).length,
+    min_selling_price: activePrices.length ? Math.min(...activePrices) : null,
+    max_selling_price: activePrices.length ? Math.max(...activePrices) : null,
+    has_active_discount: hasActiveDiscount,
+    variants_quick: variantsQuick,
+    website_ready: websiteReady,
+    cost_summary: {
+      validCostCount,
+      missingCostCount,
+      totalBuyingValueInr,
+      totalFinalCostBhd,
+      totalSellingValueBhd,
+      variants: variantCostRows,
+    },
+  };
 }
 
 export async function listCategories(): Promise<CategoryRow[]> {
@@ -353,86 +498,7 @@ export async function listProducts(
   const data = rows.map<ProductListItem>((product) => {
     const variantRows = productVariants.filter((variant) => variant.product_id === product.id);
     const primaryImage = primaryImages.find((image) => image.product_id === product.id);
-    const activePrices = variantRows
-      .map((variant) => Number(variant.regular_selling_price_bhd ?? variant.selling_price))
-      .filter((price) => price >= 0);
-    const lowStockCount = variantRows.filter(
-      (variant) => variant.stock_quantity > 0 && variant.stock_quantity <= variant.minimum_stock,
-    ).length;
-    const hasActiveDiscount = variantRows.some((variant) => isDiscountActive(variant));
-
-    const variantsQuick: VariantQuick[] = variantRows.map((v) => ({
-      id: v.id,
-      color: v.color,
-      size: v.size,
-      stock_quantity: v.stock_quantity,
-    }));
-
-    const websiteReady = getPublishingReadiness({
-      name: product.name,
-      slug: product.slug,
-      variants: variantRows.map((v) => ({
-        status: v.status,
-        stockQuantity: v.stock_quantity,
-        regularSellingPriceBhd:
-          v.regular_selling_price_bhd === null ? null : Number(v.regular_selling_price_bhd),
-      })),
-      hasImage: Boolean(primaryImage),
-    }).ready;
-
-    let validCostCount = 0;
-    let missingCostCount = 0;
-    let totalBuyingValueInr = 0;
-    let totalFinalCostBhd = 0;
-    let totalSellingValueBhd = 0;
-    const variantCostRows: ProductListItem["cost_summary"]["variants"] = [];
-    for (const variant of variantRows) {
-      const cost = getValidBuyingCost(variant);
-      const sellingPriceBhd = Number(variant.regular_selling_price_bhd ?? variant.selling_price);
-      if (cost) {
-        validCostCount += 1;
-        totalBuyingValueInr += cost.buyingPriceInr * variant.stock_quantity;
-        totalFinalCostBhd += cost.finalUnitCostBhd * variant.stock_quantity;
-        totalSellingValueBhd += sellingPriceBhd * variant.stock_quantity;
-      } else {
-        missingCostCount += 1;
-      }
-      variantCostRows.push({
-        id: variant.id,
-        color: variant.color,
-        size: variant.size,
-        stockQuantity: variant.stock_quantity,
-        buyingPriceInr: cost?.buyingPriceInr ?? null,
-        exchangeRateToBhd: cost?.exchangeRateToBhd ?? null,
-        convertedUnitCostBhd: cost?.convertedUnitCostBhd ?? null,
-        importCostBhd: cost?.importCostBhd ?? null,
-        finalUnitCostBhd: cost?.finalUnitCostBhd ?? null,
-        sellingPriceBhd,
-      });
-    }
-
-    return {
-      ...product,
-      category_name: product.categories?.name ?? null,
-      primary_image_url: primaryImage?.url ?? null,
-      variant_count: variantRows.length,
-      total_stock: variantRows.reduce((sum, variant) => sum + variant.stock_quantity, 0),
-      low_stock_count: lowStockCount,
-      out_of_stock_count: variantRows.filter((variant) => variant.stock_quantity === 0).length,
-      min_selling_price: activePrices.length ? Math.min(...activePrices) : null,
-      max_selling_price: activePrices.length ? Math.max(...activePrices) : null,
-      has_active_discount: hasActiveDiscount,
-      variants_quick: variantsQuick,
-      website_ready: websiteReady,
-      cost_summary: {
-        validCostCount,
-        missingCostCount,
-        totalBuyingValueInr,
-        totalFinalCostBhd,
-        totalSellingValueBhd,
-        variants: variantCostRows,
-      },
-    };
+    return buildProductListItem(product, variantRows, primaryImage?.url ?? null);
   });
 
   if (websiteFilter) {
@@ -455,6 +521,104 @@ export async function listProducts(
     pageSize: PAGE_SIZE,
     pageCount: Math.ceil((count ?? 0) / PAGE_SIZE),
   };
+}
+
+export type ProductExportResult = {
+  rows: ProductListItem[];
+  /** True when the export hit EXPORT_ROW_LIMIT — the file is not the complete filtered set. */
+  truncated: boolean;
+  error: string | null;
+};
+
+/**
+ * Same filters as listProducts() (search/status/category/website), but returns every
+ * matching row up to a safety cap instead of one page — used by Print current list /
+ * Download PDF / Download CSV on the Product Catalog page. Column selection for cost/profit
+ * fields is the caller's responsibility (gated by canViewBuyingCost/canViewCostData) —
+ * this always returns the full ProductListItem so permission checks stay in one place
+ * (the export route), not duplicated into every data-fetch path.
+ */
+export async function listProductsForExport(
+  filters: Omit<ProductListFilters, "page"> = {},
+): Promise<ProductExportResult> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) {
+    return { rows: [], truncated: false, error: LOAD_ERROR };
+  }
+
+  const websiteFilter = filters.websiteFilter ?? "";
+  const search = normalizeSearch(filters.q);
+  let query = supabase
+    .from("products")
+    .select("*, categories(id, name)")
+    .order("created_at", { ascending: false })
+    .limit(EXPORT_ROW_LIMIT);
+
+  if (search) {
+    query = query.or(`name.ilike.%${search}%,sku.ilike.%${search}%,collection.ilike.%${search}%`);
+  }
+
+  if (!filters.status || filters.status === "active_inactive") {
+    query = query.in("status", [PRODUCT_STATUSES.active, PRODUCT_STATUSES.inactive, PRODUCT_STATUSES.draft]);
+  } else if (filters.status !== "all") {
+    query = query.eq("status", filters.status as ProductStatus);
+  }
+
+  if (filters.categoryId && filters.categoryId !== "all") {
+    query = query.eq("category_id", filters.categoryId);
+  }
+
+  const { data: products, error } = await query;
+  if (error) {
+    console.error("[product.service] listProductsForExport: products query failed:", error);
+    return { rows: [], truncated: false, error: LOAD_ERROR };
+  }
+  const rows = (products ?? []) as unknown as ProductRelationRow[];
+  const productIds = rows.map((product) => product.id);
+
+  const [variantResult, imageResult] = await Promise.all([
+    (productIds.length
+      ? supabase
+          .from("product_variants")
+          .select("id, product_id, variant_sku, color, size, stock_quantity, minimum_stock, selling_price, discount_price, discount_price_bhd, discount_start_at, discount_end_at, status, regular_selling_price_bhd, latest_supplier_unit_cost_inr, latest_exchange_rate_to_bhd, latest_additional_landed_cost_bhd")
+          .in("product_id", productIds)
+      : Promise.resolve({ data: [] as ProductVariantRow[], error: null })) as unknown as Promise<{
+      data: ProductVariantRow[] | null;
+      error: unknown;
+    }>,
+    productIds.length
+      ? supabase
+          .from("product_images")
+          .select("id, product_id, url, is_primary, sort_order")
+          .in("product_id", productIds)
+          .eq("is_primary", true)
+          .order("sort_order", { ascending: true })
+      : Promise.resolve({ data: [] as ProductImageRow[], error: null }),
+  ]);
+
+  if (variantResult.error) {
+    console.error("[product.service] listProductsForExport: variants query failed:", variantResult.error);
+    return { rows: [], truncated: false, error: LOAD_ERROR };
+  }
+  if (imageResult.error) {
+    console.error("[product.service] listProductsForExport: images query failed:", imageResult.error);
+    return { rows: [], truncated: false, error: LOAD_ERROR };
+  }
+
+  const productVariants = variantResult.data ?? [];
+  const primaryImages = imageResult.data ?? [];
+
+  let data = rows.map<ProductListItem>((product) => {
+    const variantRows = productVariants.filter((variant) => variant.product_id === product.id);
+    const primaryImage = primaryImages.find((image) => image.product_id === product.id);
+    return buildProductListItem(product, variantRows, primaryImage?.url ?? null);
+  });
+
+  if (websiteFilter) {
+    data = data.filter((product) => matchesWebsiteFilter(product, websiteFilter));
+  }
+
+  return { rows: data, truncated: rows.length >= EXPORT_ROW_LIMIT, error: null };
 }
 
 export async function getProduct(productId: string): Promise<ProductWithRelations | null> {
@@ -583,7 +747,11 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
     .single();
 
   if (productError || !product) {
-    return serviceError("Product could not be created. Please check the SKU and try again.");
+    console.error("[product.service] createProduct: product insert failed:", {
+      action: "create_product",
+      error: productError,
+    });
+    return serviceError("Product could not be created. Please try again.");
   }
 
   /** Best-effort cleanup so a mid-loop failure never leaves a half-created product
@@ -656,6 +824,11 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       .single();
 
     if (variantError || !createdVariant) {
+      console.error("[product.service] createProduct: variant insert failed:", {
+        action: "create_product",
+        productId: product.id,
+        error: variantError,
+      });
       await rollbackProduct();
       return serviceError("Could not create this product option. Please check the product details and try again.");
     }
@@ -671,6 +844,12 @@ export async function createProduct(input: ProductInput): Promise<ServiceResult<
       });
 
       if (stockError) {
+        console.error("[product.service] createProduct: opening stock RPC failed:", {
+          action: "create_product",
+          productId: product.id,
+          variantId: createdVariant.id,
+          error: stockError,
+        });
         return serviceError("Opening stock could not be recorded. Product was created but stock needs review.");
       }
 
@@ -837,6 +1016,11 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
     .single();
 
   if (productError || !product) {
+    console.error("[product.service] updateProduct: product update failed:", {
+      action: "update_product",
+      productId,
+      error: productError,
+    });
     return serviceError("Product could not be updated.");
   }
 
@@ -887,14 +1071,34 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
         .eq("product_id", productId);
 
       if (variantError) {
+        console.error("[product.service] updateProduct: variant update failed:", {
+          action: "update_product",
+          productId,
+          variantId: variant.id,
+          error: variantError,
+        });
+        if (variantError.code === "23505") {
+          return serviceError(VARIANT_SKU_CONFLICT_ERROR);
+        }
         return serviceError("One or more variants could not be updated.");
       }
     } else {
+      const skuResult = await resolveEditVariantSku(
+        supabase,
+        resolvedSku,
+        variant.variantSku,
+        variant.color,
+        variant.size,
+      );
+      if (!skuResult.ok) {
+        return serviceError(skuResult.error);
+      }
+
       const { data: createdVariant, error: variantError } = await supabase
         .from("product_variants")
         .insert({
           product_id: productId,
-          variant_sku: variant.variantSku,
+          variant_sku: skuResult.sku,
           barcode: normalizeBarcode(variant.barcode),
           color: variant.color,
           size: variant.size,
@@ -918,6 +1122,14 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
         .single();
 
       if (variantError || !createdVariant) {
+        console.error("[product.service] updateProduct: new variant insert failed:", {
+          action: "update_product",
+          productId,
+          error: variantError,
+        });
+        if (variantError?.code === "23505") {
+          return serviceError(VARIANT_SKU_CONFLICT_ERROR);
+        }
         return serviceError("A new variant could not be added.");
       }
 
@@ -932,6 +1144,12 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
         });
 
         if (stockError) {
+          console.error("[product.service] updateProduct: opening stock RPC failed:", {
+            action: "update_product",
+            productId,
+            variantId: createdVariant.id,
+            error: stockError,
+          });
           return serviceError("Opening stock for a new variant could not be recorded.");
         }
       }
@@ -1037,6 +1255,7 @@ export async function archiveProduct(productId: string): Promise<ServiceResult<P
     .single();
 
   if (error || !product) {
+    console.error("[product.service] archiveProduct failed:", { action: "archive_product", productId, error });
     return serviceError("Product could not be archived. Please try again.");
   }
 
@@ -1077,6 +1296,7 @@ export async function restoreProduct(
     .single();
 
   if (error || !product) {
+    console.error("[product.service] restoreProduct failed:", { action: "restore_product", productId, error });
     return serviceError("Product could not be restored. Please try again.");
   }
 

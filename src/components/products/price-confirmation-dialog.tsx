@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -13,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatInr, calcEstimatedProfit, calcEstimatedMargin } from "@/lib/utils/cost-conversion";
+import { titleize } from "@/lib/formatters/labels";
+import type { ProductOnlineStatus } from "@/types/database";
 
 export type PriceConfirmationRow = {
   key: string;
@@ -26,6 +30,16 @@ export type PriceConfirmationRow = {
   oldPriceBhd?: number;
 };
 
+/** Present only in the edit-product flow, and only when the website status actually
+ *  changed — shown as a small summary so staff notice a publish/unpublish alongside the
+ *  price changes rather than only finding out from the catalog afterward. */
+export type WebsiteStatusChange = {
+  oldStatus: ProductOnlineStatus;
+  newStatus: ProductOnlineStatus;
+  oldVisible: boolean;
+  newVisible: boolean;
+};
+
 type PriceConfirmationDialogProps = {
   open: boolean;
   rows: PriceConfirmationRow[];
@@ -36,6 +50,9 @@ type PriceConfirmationDialogProps = {
   title?: string;
   confirmLabel?: string;
   confirmPendingLabel?: string;
+  /** Shown under the title so staff can confirm which product this review is for. */
+  productName?: string;
+  websiteStatusChange?: WebsiteStatusChange | null;
 };
 
 /** Seeds the editable-price map from each row's suggested price — falls back to the final
@@ -54,6 +71,8 @@ export function PriceConfirmationDialog({
   title = "Confirm product prices",
   confirmLabel = "Create product",
   confirmPendingLabel = "Creating...",
+  productName,
+  websiteStatusChange,
 }: PriceConfirmationDialogProps) {
   const [prices, setPrices] = useState<Record<string, number>>(() => initialPrices(rows));
   // Tracks the open/closed transition so prices can be re-seeded from fresh rows the moment
@@ -73,7 +92,31 @@ export function PriceConfirmationDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          {productName ? <DialogDescription>{productName}</DialogDescription> : null}
         </DialogHeader>
+
+        {websiteStatusChange ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-musiva-border bg-musiva-ivory px-3 py-2 text-xs text-muted-foreground">
+            <span className="font-medium text-musiva-plum">Website status changing:</span>
+            <Badge variant="secondary">{titleize(websiteStatusChange.oldStatus)}</Badge>
+            <span>→</span>
+            <Badge
+              variant={
+                websiteStatusChange.newStatus === "published"
+                  ? "success"
+                  : websiteStatusChange.newStatus === "draft"
+                  ? "warning"
+                  : "secondary"
+              }
+            >
+              {titleize(websiteStatusChange.newStatus)}
+            </Badge>
+            <span>
+              ({websiteStatusChange.oldVisible ? "was visible" : "was hidden"} →{" "}
+              {websiteStatusChange.newVisible ? "now visible" : "now hidden"} on website)
+            </span>
+          </div>
+        ) : null}
 
         <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
           {rows.map((row) => {
@@ -82,10 +125,19 @@ export function PriceConfirmationDialog({
             const margin = calcEstimatedMargin(price, row.finalCostBhd);
             const belowCost = row.finalCostBhd > 0 && price > 0 && price < row.finalCostBhd;
             const totalIndiaCostInr = row.buyingPriceInr + row.importCostInr;
+            const isNewVariant = row.oldPriceBhd === undefined;
+            const priceChanged = row.oldPriceBhd !== undefined && row.oldPriceBhd !== price;
 
             return (
               <div key={row.key} className="rounded-md border border-musiva-border bg-white p-3">
-                <p className="font-medium text-musiva-plum">{row.optionLabel}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-medium text-musiva-plum">{row.optionLabel}</p>
+                  {isNewVariant ? (
+                    <Badge className="text-[10px]" variant="secondary">New option</Badge>
+                  ) : priceChanged ? (
+                    <Badge className="text-[10px]" variant="warning">Changed</Badge>
+                  ) : null}
+                </div>
                 <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
                   <div className="flex justify-between gap-2 sm:block">
                     <span>Buying India</span>
