@@ -3,6 +3,9 @@ import {
   RECEIVE_STOCK_REASONS,
   reasonToMovementType,
   RECEIVE_STOCK_REASON_LABELS,
+  STOCK_CORRECTION_REASONS,
+  STOCK_CORRECTION_REASON_LABELS,
+  buildCorrectionNote,
 } from "./stock-reason";
 
 describe("reasonToMovementType", () => {
@@ -37,5 +40,39 @@ describe("RECEIVE_STOCK_REASON_LABELS", () => {
 
   it("customer_return label is human-readable", () => {
     expect(RECEIVE_STOCK_REASON_LABELS["customer_return"]).toBe("Customer return");
+  });
+});
+
+describe("STOCK_CORRECTION_REASON_LABELS", () => {
+  it("has a label for every correction reason value", () => {
+    for (const reason of Object.values(STOCK_CORRECTION_REASONS)) {
+      expect(STOCK_CORRECTION_REASON_LABELS[reason]).toBeTruthy();
+    }
+  });
+
+  it("stock_count label is human-readable", () => {
+    expect(STOCK_CORRECTION_REASON_LABELS["stock_count"]).toBe("Stock count correction");
+  });
+});
+
+describe("buildCorrectionNote", () => {
+  it("uses the reason label alone when no extra note is typed — always non-empty for the 3-char minimum", () => {
+    expect(buildCorrectionNote(STOCK_CORRECTION_REASONS.stockCount, "")).toBe("Stock count correction");
+  });
+
+  it("uses the reason label alone when the note is only whitespace", () => {
+    expect(buildCorrectionNote(STOCK_CORRECTION_REASONS.damaged, "   ")).toBe("Damaged / unsellable");
+  });
+
+  it("combines the reason label with a trimmed extra note", () => {
+    expect(buildCorrectionNote(STOCK_CORRECTION_REASONS.stockCount, "  recounted after stocktake  ")).toBe(
+      "Stock count correction: recounted after stocktake",
+    );
+  });
+
+  it("produces a distinct, readable string per reason", () => {
+    expect(buildCorrectionNote(STOCK_CORRECTION_REASONS.lostOrStolen, "")).toBe("Lost or stolen");
+    expect(buildCorrectionNote(STOCK_CORRECTION_REASONS.dataEntryError, "")).toBe("Data entry error");
+    expect(buildCorrectionNote(STOCK_CORRECTION_REASONS.other, "")).toBe("Other");
   });
 });

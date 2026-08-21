@@ -5,9 +5,12 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  getProductCatalogColumns,
-  buildProductCatalogRow,
+  productStockTier,
   productStockStatusLabel,
+  getProductCatalogCsvColumns,
+  getProductCatalogPrintColumns,
+  buildProductCatalogCsvRow,
+  buildProductCatalogPrintRow,
 } from "./product-catalog-report";
 import type { ProductListItem } from "@/types/app";
 import type { StaffRole } from "@/types/database";
@@ -65,36 +68,50 @@ const ACCOUNTANT: StaffRole = "accountant";
 const OWNER: StaffRole = "owner";
 const MANAGER: StaffRole = "manager";
 
-describe("getProductCatalogColumns — role gating", () => {
-  it("gives roles with no cost visibility only the base columns", () => {
+describe("productStockTier / productStockStatusLabel", () => {
+  it("reports out_of_stock / Out of stock when any variant is out", () => {
+    expect(productStockTier({ out_of_stock_count: 1, low_stock_count: 0 })).toBe("out_of_stock");
+    expect(productStockStatusLabel({ out_of_stock_count: 1, low_stock_count: 0 })).toBe("Out of stock");
+  });
+
+  it("reports low_stock / Low stock when none are out but some are low", () => {
+    expect(productStockTier({ out_of_stock_count: 0, low_stock_count: 2 })).toBe("low_stock");
+    expect(productStockStatusLabel({ out_of_stock_count: 0, low_stock_count: 2 })).toBe("Low stock");
+  });
+
+  it("reports in_stock / In stock otherwise", () => {
+    expect(productStockTier({ out_of_stock_count: 0, low_stock_count: 0 })).toBe("in_stock");
+    expect(productStockStatusLabel({ out_of_stock_count: 0, low_stock_count: 0 })).toBe("In stock");
+  });
+});
+
+describe("getProductCatalogCsvColumns — cleaned columns + role gating", () => {
+  it("gives roles with no cost visibility only the cleaned base columns, led by Image URL", () => {
     for (const role of [SALES_STAFF, DELIVERY_COORDINATOR, null]) {
-      const columns = getProductCatalogColumns(role);
-      expect(columns).toEqual([
-        "Product name",
+      expect(getProductCatalogCsvColumns(role)).toEqual([
+        "Image URL",
         "Product code / SKU",
+        "Product name",
         "Category",
-        "Options count",
-        "Total stock",
-        "Stock status",
-        "Product status",
+        "Stock status summary",
         "Website status",
-        "From price BHD",
+        "Selling price BHD",
       ]);
     }
   });
 
-  it("adds buying-cost columns for inventory_staff but not profit columns (canEnterBuyingCost, not canViewCostData)", () => {
-    const columns = getProductCatalogColumns(INVENTORY_STAFF);
-    expect(columns).toContain("Cost status");
+  it("adds buying-cost columns for inventory_staff but not profit columns (canViewBuyingCost, not canViewCostData)", () => {
+    const columns = getProductCatalogCsvColumns(INVENTORY_STAFF);
     expect(columns).toContain("Total buying value India INR");
+    expect(columns).toContain("Final stock cost Bahrain BHD");
     expect(columns).not.toContain("Estimated gross profit BHD");
     expect(columns).not.toContain("Estimated margin %");
   });
 
   it("adds both buying-cost and profit columns for accountant, owner, and manager", () => {
     for (const role of [ACCOUNTANT, OWNER, MANAGER]) {
-      const columns = getProductCatalogColumns(role);
-      expect(columns).toContain("Cost status");
+      const columns = getProductCatalogCsvColumns(role);
+      expect(columns).toContain("Total buying value India INR");
       expect(columns).toContain("Estimated selling value BHD");
       expect(columns).toContain("Estimated gross profit BHD");
       expect(columns).toContain("Estimated margin %");
@@ -102,80 +119,88 @@ describe("getProductCatalogColumns — role gating", () => {
   });
 });
 
-describe("buildProductCatalogRow — base columns (every role)", () => {
-  it("includes the required base fields in order", () => {
-    const item = makeItem();
-    const row = buildProductCatalogRow(item, SALES_STAFF);
-    expect(row).toEqual([
-      "Satin Dress",
-      "MSV-10001",
-      "Dresses",
-      2,
-      8,
-      "In stock",
-      "Active",
-      "Published",
-      "BHD 11.000",
+describe("getProductCatalogPrintColumns — image-first suggested order", () => {
+  it("leads with Product image for the print/PDF view", () => {
+    expect(getProductCatalogPrintColumns(OWNER)[0].label).toBe("Product image");
+  });
+
+  it("matches the suggested column order for a fully-permitted role", () => {
+    const labels = getProductCatalogPrintColumns(OWNER).map((c) => c.label);
+    expect(labels).toEqual([
+      "Product image",
+      "Product code / SKU",
+      "Product name",
+      "Category",
+      "Stock status summary",
+      "Website status",
+      "Selling price BHD",
+      "Total buying value India INR",
+      "Final stock cost Bahrain BHD",
+      "Estimated selling value BHD",
+      "Estimated gross profit BHD",
+      "Estimated margin %",
     ]);
+  });
+});
+
+describe("buildProductCatalogCsvRow — base columns (every role)", () => {
+  it("includes the required base fields in order, with an Image URL cell first", () => {
+    const item = makeItem();
+    const row = buildProductCatalogCsvRow(item, SALES_STAFF);
+    expect(row).toEqual(["", "MSV-10001", "Satin Dress", "Dresses", "In stock", "Published", "BHD 11.000"]);
+  });
+
+  it("uses the product's primary image URL when available", () => {
+    const row = buildProductCatalogCsvRow(
+      makeItem({ primary_image_url: "https://cdn.example.com/satin-dress.jpg" }),
+      SALES_STAFF,
+    );
+    expect(row[0]).toBe("https://cdn.example.com/satin-dress.jpg");
   });
 
   it("row length always matches the column count for that role", () => {
     for (const role of [SALES_STAFF, INVENTORY_STAFF, ACCOUNTANT, OWNER, null]) {
-      const row = buildProductCatalogRow(makeItem(), role);
-      expect(row).toHaveLength(getProductCatalogColumns(role).length);
+      const row = buildProductCatalogCsvRow(makeItem(), role);
+      expect(row).toHaveLength(getProductCatalogCsvColumns(role).length);
     }
   });
 
   it("falls back to 'Uncategorized' when there is no category", () => {
-    const row = buildProductCatalogRow(makeItem({ category_name: null }), SALES_STAFF);
-    expect(row[2]).toBe("Uncategorized");
+    const row = buildProductCatalogCsvRow(makeItem({ category_name: null }), SALES_STAFF);
+    expect(row[3]).toBe("Uncategorized");
   });
 
   it("shows — when there is no selling price yet", () => {
-    const row = buildProductCatalogRow(makeItem({ min_selling_price: null }), SALES_STAFF);
+    const row = buildProductCatalogCsvRow(makeItem({ min_selling_price: null }), SALES_STAFF);
     expect(row[row.length - 1]).toBe("—");
   });
 });
 
-describe("productStockStatusLabel", () => {
-  it("reports Out of stock when any variant is out", () => {
-    expect(productStockStatusLabel({ out_of_stock_count: 1, low_stock_count: 0 })).toBe("Out of stock");
-  });
-
-  it("reports Low stock when none are out but some are low", () => {
-    expect(productStockStatusLabel({ out_of_stock_count: 0, low_stock_count: 2 })).toBe("Low stock");
-  });
-
-  it("reports In stock otherwise", () => {
-    expect(productStockStatusLabel({ out_of_stock_count: 0, low_stock_count: 0 })).toBe("In stock");
-  });
-});
-
-describe("buildProductCatalogRow — cost/profit permission safety", () => {
+describe("buildProductCatalogCsvRow — cost/profit permission safety", () => {
   it("never includes buying cost, INR, or profit data for sales_staff / delivery_coordinator", () => {
     for (const role of [SALES_STAFF, DELIVERY_COORDINATOR]) {
-      const row = buildProductCatalogRow(makeItem(), role).join(" | ");
-      expect(row).not.toMatch(/INR|BHD 33\.900|Cost complete|Missing cost/);
+      const row = buildProductCatalogCsvRow(makeItem(), role).join(" | ");
+      expect(row).not.toMatch(/₹7500|BHD 33\.900|BHD 54\.100/);
     }
   });
 
   it("includes buying-cost figures for inventory_staff", () => {
-    const row = buildProductCatalogRow(makeItem(), INVENTORY_STAFF);
-    // Cost status, valid count, missing count, total buying INR, final cost BHD
-    expect(row.slice(-5)).toEqual(["Missing cost: 1", 1, 1, "₹7500.00", "BHD 33.900"]);
+    const row = buildProductCatalogCsvRow(makeItem(), INVENTORY_STAFF);
+    expect(row.slice(-2)).toEqual(["₹7500.00", "BHD 33.900"]);
   });
 
   it("does not append profit columns for inventory_staff even though buying cost is shown", () => {
-    const row = buildProductCatalogRow(makeItem(), INVENTORY_STAFF);
-    expect(row).toHaveLength(getProductCatalogColumns(INVENTORY_STAFF).length);
+    const row = buildProductCatalogCsvRow(makeItem(), INVENTORY_STAFF);
+    expect(row).toHaveLength(getProductCatalogCsvColumns(INVENTORY_STAFF).length);
     expect(row.join(" | ")).not.toMatch(/Margin|Estimated gross profit/i);
   });
 
   it("includes profit and margin for owner/manager/accountant, computed from selling minus final cost", () => {
     for (const role of [OWNER, MANAGER, ACCOUNTANT]) {
-      const row = buildProductCatalogRow(makeItem(), role);
-      // selling 88 − final cost 33.9 = 54.1
+      const row = buildProductCatalogCsvRow(makeItem(), role);
+      // selling 88 − final cost 33.9 = 54.1; margin = 54.1 / 88 * 100 = 61.48%
       expect(row).toContain("BHD 54.100");
+      expect(row[row.length - 1]).toBe("61.48%");
     }
   });
 
@@ -190,22 +215,56 @@ describe("buildProductCatalogRow — cost/profit permission safety", () => {
         variants: [],
       },
     });
-    const row = buildProductCatalogRow(item, OWNER);
-    const profitIndex = getProductCatalogColumns(OWNER).indexOf("Estimated gross profit BHD");
-    const marginIndex = getProductCatalogColumns(OWNER).indexOf("Estimated margin %");
-    expect(row[profitIndex]).toBe("—");
-    expect(row[marginIndex]).toBe("—");
+    const row = buildProductCatalogCsvRow(item, OWNER);
+    const columns = getProductCatalogCsvColumns(OWNER);
+    expect(row[columns.indexOf("Estimated gross profit BHD")]).toBe("—");
+    expect(row[columns.indexOf("Estimated margin %")]).toBe("—");
   });
 });
 
-describe("buildProductCatalogRow — no mock/sample data", () => {
+describe("buildProductCatalogPrintRow — image cell, badge cell, and row accent", () => {
+  it("renders an image cell first, with a null url when there is no primary image", () => {
+    const row = buildProductCatalogPrintRow(makeItem(), OWNER);
+    expect(row.cells[0]).toEqual({ kind: "image", url: null, alt: "Satin Dress" });
+  });
+
+  it("renders the stock status summary as a tier-tagged badge cell", () => {
+    const row = buildProductCatalogPrintRow(makeItem({ low_stock_count: 1 }), OWNER);
+    expect(row.cells[4]).toEqual({ kind: "badge", label: "Low stock", tier: "low_stock" });
+  });
+
+  it("sets the row accentTier to match the stock tier", () => {
+    expect(buildProductCatalogPrintRow(makeItem(), OWNER).accentTier).toBe("in_stock");
+    expect(buildProductCatalogPrintRow(makeItem({ low_stock_count: 1 }), OWNER).accentTier).toBe("low_stock");
+    expect(buildProductCatalogPrintRow(makeItem({ out_of_stock_count: 1 }), OWNER).accentTier).toBe("out_of_stock");
+  });
+
+  it("cell count always matches the print column count for that role", () => {
+    for (const role of [SALES_STAFF, INVENTORY_STAFF, ACCOUNTANT, OWNER, null]) {
+      const row = buildProductCatalogPrintRow(makeItem(), role);
+      expect(row.cells).toHaveLength(getProductCatalogPrintColumns(role).length);
+    }
+  });
+
+  it("never leaks cost/profit cells to unauthorized roles", () => {
+    for (const role of [SALES_STAFF, DELIVERY_COORDINATOR]) {
+      const row = buildProductCatalogPrintRow(makeItem(), role);
+      const flat = row.cells
+        .map((c) => (typeof c === "object" && c !== null && "kind" in c ? JSON.stringify(c) : String(c ?? "")))
+        .join(" | ");
+      expect(flat).not.toMatch(/₹7500|BHD 33\.900|BHD 54\.100/);
+    }
+  });
+});
+
+describe("buildProductCatalogCsvRow — no mock/sample data", () => {
   it("every cell is derived from the passed-in item, not a hardcoded literal", () => {
     const itemA = makeItem({ name: "Alpha Kaftan", sku: "ALPHA-1" });
     const itemB = makeItem({ name: "Beta Abaya", sku: "BETA-2" });
-    const rowA = buildProductCatalogRow(itemA, OWNER);
-    const rowB = buildProductCatalogRow(itemB, OWNER);
-    expect(rowA[0]).toBe("Alpha Kaftan");
-    expect(rowB[0]).toBe("Beta Abaya");
-    expect(rowA[0]).not.toBe(rowB[0]);
+    const rowA = buildProductCatalogCsvRow(itemA, OWNER);
+    const rowB = buildProductCatalogCsvRow(itemB, OWNER);
+    expect(rowA[2]).toBe("Alpha Kaftan");
+    expect(rowB[2]).toBe("Beta Abaya");
+    expect(rowA[2]).not.toBe(rowB[2]);
   });
 });

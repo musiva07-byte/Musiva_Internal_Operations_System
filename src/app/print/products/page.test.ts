@@ -35,14 +35,18 @@ describe("Print Products page — real data, correct report identity", () => {
     expect(source).toContain('"Product Catalog Report"');
   });
 
-  it("gates columns through the shared permission-aware builder, not ad-hoc logic", () => {
-    expect(source).toContain("getProductCatalogColumns(role)");
-    expect(source).toContain("buildProductCatalogRow(item, role)");
+  it("gates columns through the shared permission-aware print builder, not ad-hoc logic", () => {
+    expect(source).toContain("getProductCatalogPrintColumns(role)");
+    expect(source).toContain("buildProductCatalogPrintRow(item, role)");
   });
 
   it("shows generated date/time and active filters", () => {
     expect(source).toContain("generatedAt={new Date()}");
     expect(source).toContain("filters={filters}");
+  });
+
+  it("renders in landscape so the extra cost/profit columns don't clip", () => {
+    expect(source).toMatch(/\blandscape\b/);
   });
 
   it("surfaces a load error as a friendly message instead of printing garbage/empty data", () => {

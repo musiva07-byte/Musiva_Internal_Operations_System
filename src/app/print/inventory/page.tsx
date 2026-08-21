@@ -4,7 +4,10 @@ import { ReportPrintToolbar } from "@/components/print/report-print-toolbar";
 import { ReportTemplate, type ReportFilterSummary } from "@/components/print/report-template";
 import { listInventoryVariantsForExport } from "@/lib/services/inventory.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
-import { getStockManagementColumns, buildStockManagementRow } from "@/lib/reports/stock-management-report";
+import {
+  getStockManagementPrintColumns,
+  buildStockManagementPrintRow,
+} from "@/lib/reports/stock-management-report";
 
 export const metadata: Metadata = {
   title: "Stock Management Report",
@@ -57,8 +60,8 @@ export default async function PrintInventoryPage({ searchParams }: PrintInventor
     filters.push({ label: "Products", value: PRODUCT_STATUS_LABELS[productStatus] });
   }
 
-  const columns = getStockManagementColumns(role);
-  const rows = exportResult.rows.map((variant) => buildStockManagementRow(variant, role));
+  const columns = getStockManagementPrintColumns(role);
+  const rows = exportResult.rows.map((variant) => buildStockManagementPrintRow(variant, role));
 
   return (
     <main className="min-h-screen bg-musiva-ivory py-6">
@@ -69,19 +72,23 @@ export default async function PrintInventoryPage({ searchParams }: PrintInventor
           <p className="text-center text-sm text-destructive">{exportResult.error}</p>
         </section>
       ) : (
-        <ReportTemplate
-          columns={columns}
-          emptyMessage="No stock records match the current filters."
-          filters={filters}
-          generatedAt={new Date()}
-          rows={rows}
-          title="Stock Management Report"
-          truncatedNotice={
-            exportResult.truncated
-              ? "This report only includes the first 3,000 matching stock records. Narrow your filters to see the rest."
-              : null
-          }
-        />
+        <div className="print-preview-scroll">
+          <ReportTemplate
+            columns={columns}
+            compact
+            emptyMessage="No stock records match the current filters."
+            filters={filters}
+            generatedAt={new Date()}
+            pageSize="a3-landscape"
+            rows={rows}
+            title="Stock Management Report"
+            truncatedNotice={
+              exportResult.truncated
+                ? "This report only includes the first 3,000 matching stock records. Narrow your filters to see the rest."
+                : null
+            }
+          />
+        </div>
       )}
     </main>
   );

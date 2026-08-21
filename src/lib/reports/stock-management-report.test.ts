@@ -6,8 +6,12 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  getStockManagementColumns,
-  buildStockManagementRow,
+  stockTierForQuantity,
+  stockStatusLabel,
+  getStockManagementCsvColumns,
+  getStockManagementPrintColumns,
+  buildStockManagementCsvRow,
+  buildStockManagementPrintRow,
 } from "./stock-management-report";
 import type { InventoryVariantItem } from "@/types/app";
 import type { StaffRole } from "@/types/database";
@@ -54,17 +58,67 @@ const INVENTORY_STAFF: StaffRole = "inventory_staff";
 const ACCOUNTANT: StaffRole = "accountant";
 const OWNER: StaffRole = "owner";
 
-describe("getStockManagementColumns — role gating", () => {
-  it("gives roles with no cost visibility only the base stock columns", () => {
+describe("stockTierForQuantity — fixed numeric thresholds", () => {
+  it("maps 3+ to in_stock", () => {
+    expect(stockTierForQuantity(3)).toBe("in_stock");
+    expect(stockTierForQuantity(5)).toBe("in_stock");
+  });
+
+  it("maps 1-2 to low_stock", () => {
+    expect(stockTierForQuantity(1)).toBe("low_stock");
+    expect(stockTierForQuantity(2)).toBe("low_stock");
+  });
+
+  it("maps 0 to out_of_stock", () => {
+    expect(stockTierForQuantity(0)).toBe("out_of_stock");
+  });
+
+  it("maps negative quantities to invalid", () => {
+    expect(stockTierForQuantity(-1)).toBe("invalid");
+  });
+});
+
+describe("stockStatusLabel — exact required wording", () => {
+  it('renders "3 units — In Stock" at the in-stock boundary', () => {
+    expect(stockStatusLabel(3)).toBe("3 units — In Stock");
+  });
+
+  it('renders "2 units — Low Stock" for low stock', () => {
+    expect(stockStatusLabel(2)).toBe("2 units — Low Stock");
+  });
+
+  it('renders "0 units — Out of Stock" for out of stock', () => {
+    expect(stockStatusLabel(0)).toBe("0 units — Out of Stock");
+  });
+
+  it('renders "Invalid stock" for a negative quantity', () => {
+    expect(stockStatusLabel(-1)).toBe("Invalid stock");
+  });
+
+  it("uses singular unit wording for exactly 1", () => {
+    expect(stockStatusLabel(1)).toBe("1 unit — Low Stock");
+  });
+});
+
+describe("getStockManagementCsvColumns — removed columns + role gating", () => {
+  it("never includes the removed technical columns for any role", () => {
+    for (const role of [SALES_STAFF, INVENTORY_STAFF, ACCOUNTANT, OWNER, null]) {
+      const columns = getStockManagementCsvColumns(role);
+      expect(columns).not.toContain("Variant code");
+      expect(columns).not.toContain("Available stock");
+      expect(columns).not.toContain("Minimum stock");
+      expect(columns).not.toContain("Cost status");
+    }
+  });
+
+  it("gives roles with no cost visibility only the base columns, led by Image URL", () => {
     for (const role of [SALES_STAFF, DELIVERY_COORDINATOR, null]) {
-      expect(getStockManagementColumns(role)).toEqual([
-        "Product name",
+      expect(getStockManagementCsvColumns(role)).toEqual([
+        "Image URL",
         "Product code / SKU",
+        "Product name",
         "Color",
         "Size",
-        "Variant code",
-        "Available stock",
-        "Minimum stock",
         "Stock status",
         "Selling price BHD",
       ]);
@@ -73,91 +127,181 @@ describe("getStockManagementColumns — role gating", () => {
 
   it("adds buying-cost columns (INR, exchange rate, final cost) for canViewBuyingCost roles", () => {
     for (const role of [INVENTORY_STAFF, ACCOUNTANT, OWNER]) {
-      const columns = getStockManagementColumns(role);
+      const columns = getStockManagementCsvColumns(role);
       expect(columns).toContain("Buying price India INR");
       expect(columns).toContain("Exchange rate");
       expect(columns).toContain("Final cost per piece BHD");
-      expect(columns).toContain("Cost status");
+      expect(columns).toContain("Total final cost BHD");
     }
   });
 
   it("only adds profit/margin columns for canViewCostData roles, not inventory_staff", () => {
-    expect(getStockManagementColumns(INVENTORY_STAFF)).not.toContain("Profit per piece BHD");
-    expect(getStockManagementColumns(INVENTORY_STAFF)).not.toContain("Margin %");
+    expect(getStockManagementCsvColumns(INVENTORY_STAFF)).not.toContain("Profit per piece BHD");
+    expect(getStockManagementCsvColumns(INVENTORY_STAFF)).not.toContain("Margin %");
     for (const role of [ACCOUNTANT, OWNER]) {
-      expect(getStockManagementColumns(role)).toContain("Profit per piece BHD");
-      expect(getStockManagementColumns(role)).toContain("Margin %");
+      expect(getStockManagementCsvColumns(role)).toContain("Profit per piece BHD");
+      expect(getStockManagementCsvColumns(role)).toContain("Margin %");
     }
   });
 });
 
-describe("buildStockManagementRow — base columns (every role)", () => {
-  it("includes the required base fields in order", () => {
-    const row = buildStockManagementRow(makeVariant(), SALES_STAFF);
+describe("getStockManagementPrintColumns — image-first, all 15 columns kept, compact labels", () => {
+  it("leads with an Image column whose full label is Product image", () => {
+    const columns = getStockManagementPrintColumns(OWNER);
+    expect(columns[0].label).toBe("Image");
+    expect(columns[0].fullLabel).toBe("Product image");
+  });
+
+  it("keeps every required column (via fullLabel or label) in the required order — none removed", () => {
+    const fullLabels = getStockManagementPrintColumns(OWNER).map((c) => c.fullLabel ?? c.label);
+    expect(fullLabels).toEqual([
+      "Product image",
+      "Product code / SKU",
+      "Product name",
+      "Color",
+      "Size",
+      "Stock status",
+      "Selling price BHD",
+      "Buying price India INR",
+      "Exchange rate",
+      "Buy Bahrain per piece BHD",
+      "Import cost per piece BHD",
+      "Final cost per piece BHD",
+      "Total final cost BHD",
+      "Profit per piece BHD",
+      "Margin %",
+    ]);
+  });
+
+  it("has the same column count as the CSV export for every role — nothing dropped from print only", () => {
+    for (const role of [SALES_STAFF, INVENTORY_STAFF, ACCOUNTANT, OWNER, null]) {
+      expect(getStockManagementPrintColumns(role)).toHaveLength(getStockManagementCsvColumns(role).length);
+    }
+  });
+
+  it("renders the required compact header labels for a fully-permitted role", () => {
+    const labels = getStockManagementPrintColumns(OWNER).map((c) => c.label);
+    expect(labels).toEqual([
+      "Image",
+      "Code / SKU",
+      "Product",
+      "Color",
+      "Size",
+      "Stock",
+      "Sell",
+      "Buy INR",
+      "Rate",
+      "Buy BHD",
+      "Import BHD",
+      "Final BHD",
+      "Total Cost",
+      "Profit",
+      "Margin",
+    ]);
+  });
+
+  it("marks every currency/numeric column right-aligned and nowrap, except the wrapping product name", () => {
+    const columns = getStockManagementPrintColumns(OWNER);
+    const productColumn = columns.find((c) => c.fullLabel === "Product name");
+    expect(productColumn?.nowrap).toBe(false);
+
+    const currencyLabels = [
+      "Sell",
+      "Buy INR",
+      "Rate",
+      "Buy BHD",
+      "Import BHD",
+      "Final BHD",
+      "Total Cost",
+      "Profit",
+      "Margin",
+    ];
+    for (const label of currencyLabels) {
+      const column = columns.find((c) => c.label === label);
+      expect(column?.align).toBe("right");
+      expect(column?.nowrap).not.toBe(false);
+    }
+  });
+
+  it("gives every column a fixed width so the wide table lays out predictably", () => {
+    for (const column of getStockManagementPrintColumns(OWNER)) {
+      expect(column.width).toMatch(/^\d+px$/);
+    }
+  });
+});
+
+describe("buildStockManagementCsvRow — base columns (every role)", () => {
+  it("includes the required base fields in order, with an Image URL cell first", () => {
+    const row = buildStockManagementCsvRow(makeVariant(), SALES_STAFF);
     expect(row).toEqual([
-      "Satin Dress",
+      "",
       "MSV-10001",
+      "Satin Dress",
       "Black",
       "M",
-      "05T-BLA-M",
-      5,
-      2,
-      "In Stock",
+      "5 units — In Stock",
       "BHD 11.000",
     ]);
   });
 
+  it("uses the variant's primary image URL when available", () => {
+    const row = buildStockManagementCsvRow(
+      makeVariant({ primary_image_url: "https://cdn.example.com/black-satin.jpg" }),
+      SALES_STAFF,
+    );
+    expect(row[0]).toBe("https://cdn.example.com/black-satin.jpg");
+  });
+
   it("row length always matches the column count for that role", () => {
     for (const role of [SALES_STAFF, INVENTORY_STAFF, ACCOUNTANT, OWNER, null]) {
-      const row = buildStockManagementRow(makeVariant(), role);
-      expect(row).toHaveLength(getStockManagementColumns(role).length);
+      const row = buildStockManagementCsvRow(makeVariant(), role);
+      expect(row).toHaveLength(getStockManagementCsvColumns(role).length);
     }
   });
 });
 
-describe("buildStockManagementRow — cost/profit permission safety", () => {
+describe("buildStockManagementCsvRow — cost/profit permission safety", () => {
   it("never includes buying INR, exchange rate, or cost figures for unauthorized roles", () => {
     for (const role of [SALES_STAFF, DELIVERY_COORDINATOR]) {
-      const row = buildStockManagementRow(makeVariant(), role).join(" | ");
-      expect(row).not.toMatch(/₹1500|0\.004520|BHD 6\.780|BHD 7\.280|Recorded/);
+      const row = buildStockManagementCsvRow(makeVariant(), role).join(" | ");
+      expect(row).not.toMatch(/₹1500|0\.004520|BHD 6\.780|BHD 7\.280/);
     }
   });
 
   it("includes correctly derived buying cost figures for inventory_staff", () => {
-    const row = buildStockManagementRow(makeVariant(), INVENTORY_STAFF);
+    const row = buildStockManagementCsvRow(makeVariant(), INVENTORY_STAFF);
     // buying 1500 INR × 0.00452 = 6.780, + import 0.5 = final 7.280; total = 7.280 × 5 = 36.400
-    expect(row.slice(-7)).toEqual([
+    expect(row.slice(-6)).toEqual([
       "₹1500.00",
-      "0.004520",
+      "1 INR = BHD 0.004520",
       "BHD 6.780",
       "BHD 0.500",
       "BHD 7.280",
       "BHD 36.400",
-      "Recorded",
     ]);
   });
 
   it("does not append profit/margin for inventory_staff even though cost is shown", () => {
-    const row = buildStockManagementRow(makeVariant(), INVENTORY_STAFF);
-    expect(row).toHaveLength(getStockManagementColumns(INVENTORY_STAFF).length);
+    const row = buildStockManagementCsvRow(makeVariant(), INVENTORY_STAFF);
+    expect(row).toHaveLength(getStockManagementCsvColumns(INVENTORY_STAFF).length);
     expect(row.join(" | ")).not.toMatch(/%/);
   });
 
   it("includes profit and margin for owner/accountant, derived from selling price minus final cost", () => {
     for (const role of [OWNER, ACCOUNTANT]) {
-      const row = buildStockManagementRow(makeVariant(), role);
+      const row = buildStockManagementCsvRow(makeVariant(), role);
       // selling 11.000 − final cost 7.280 = 3.720
       expect(row).toContain("BHD 3.720");
+      expect(row[row.length - 1]).toBe("33.82%");
     }
   });
 
   it("shows — for cost/profit fields when the variant has no recorded buying cost", () => {
     const variant = makeVariant({ latest_supplier_unit_cost_inr: null, latest_exchange_rate_to_bhd: null });
-    const row = buildStockManagementRow(variant, OWNER);
-    const columns = getStockManagementColumns(OWNER);
+    const row = buildStockManagementCsvRow(variant, OWNER);
+    const columns = getStockManagementCsvColumns(OWNER);
     expect(row[columns.indexOf("Buying price India INR")]).toBe("—");
     expect(row[columns.indexOf("Final cost per piece BHD")]).toBe("—");
-    expect(row[columns.indexOf("Cost status")]).toBe("Not recorded");
     expect(row[columns.indexOf("Profit per piece BHD")]).toBe("—");
     expect(row[columns.indexOf("Margin %")]).toBe("—");
   });
@@ -171,25 +315,66 @@ describe("buildStockManagementRow — cost/profit permission safety", () => {
       latest_landed_cost_bhd: 6012099.002,
       average_landed_cost_bhd: 6012099.002,
     });
-    const row = buildStockManagementRow(variant, OWNER);
-    const columns = getStockManagementColumns(OWNER);
+    const row = buildStockManagementCsvRow(variant, OWNER);
+    const columns = getStockManagementCsvColumns(OWNER);
     expect(row[columns.indexOf("Final cost per piece BHD")]).toBe("BHD 6.780");
-  });
-
-  it("flags a partial/invalid cost entry distinctly from missing", () => {
-    // INR present, rate missing — invalid, not "not recorded".
-    const variant = makeVariant({ latest_supplier_unit_cost_inr: 1500, latest_exchange_rate_to_bhd: null });
-    const row = buildStockManagementRow(variant, INVENTORY_STAFF);
-    const columns = getStockManagementColumns(INVENTORY_STAFF);
-    expect(row[columns.indexOf("Cost status")]).toBe("Invalid cost");
   });
 });
 
-describe("buildStockManagementRow — no mock/sample data", () => {
+describe("buildStockManagementPrintRow — image cell, badge cell, and row accent", () => {
+  it("renders an image cell first, falling back to a null-url placeholder when there is no image", () => {
+    const row = buildStockManagementPrintRow(makeVariant(), OWNER);
+    expect(row.cells[0]).toEqual({ kind: "image", url: null, alt: "Satin Dress — Black" });
+  });
+
+  it("uses the variant's primary image URL when available", () => {
+    const row = buildStockManagementPrintRow(
+      makeVariant({ primary_image_url: "https://cdn.example.com/black-satin.jpg" }),
+      OWNER,
+    );
+    expect(row.cells[0]).toEqual({
+      kind: "image",
+      url: "https://cdn.example.com/black-satin.jpg",
+      alt: "Satin Dress — Black",
+    });
+  });
+
+  it("renders the combined Stock Status as a tier-tagged badge cell", () => {
+    const row = buildStockManagementPrintRow(makeVariant({ stock_quantity: 2 }), OWNER);
+    const badgeCell = row.cells[5];
+    expect(badgeCell).toEqual({ kind: "badge", label: "2 units — Low Stock", tier: "low_stock" });
+  });
+
+  it("sets the row accentTier to match the stock tier for the highlight border", () => {
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 5 }), OWNER).accentTier).toBe("in_stock");
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 2 }), OWNER).accentTier).toBe("low_stock");
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 0 }), OWNER).accentTier).toBe("out_of_stock");
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: -3 }), OWNER).accentTier).toBe("invalid");
+  });
+
+  it("cell count always matches the print column count for that role", () => {
+    for (const role of [SALES_STAFF, INVENTORY_STAFF, ACCOUNTANT, OWNER, null]) {
+      const row = buildStockManagementPrintRow(makeVariant(), role);
+      expect(row.cells).toHaveLength(getStockManagementPrintColumns(role).length);
+    }
+  });
+
+  it("never leaks cost/profit cells to unauthorized roles", () => {
+    for (const role of [SALES_STAFF, DELIVERY_COORDINATOR]) {
+      const row = buildStockManagementPrintRow(makeVariant(), role);
+      const flat = row.cells
+        .map((c) => (typeof c === "object" && c !== null && "kind" in c ? JSON.stringify(c) : String(c ?? "")))
+        .join(" | ");
+      expect(flat).not.toMatch(/₹1500|0\.004520|BHD 6\.780|BHD 7\.280/);
+    }
+  });
+});
+
+describe("buildStockManagementCsvRow / buildStockManagementPrintRow — no mock/sample data", () => {
   it("every cell is derived from the passed-in variant, not a hardcoded literal", () => {
-    const rowA = buildStockManagementRow(makeVariant({ color: "Red", size: "S" }), OWNER);
-    const rowB = buildStockManagementRow(makeVariant({ color: "Blue", size: "L" }), OWNER);
-    expect(rowA[2]).toBe("Red");
-    expect(rowB[2]).toBe("Blue");
+    const rowA = buildStockManagementCsvRow(makeVariant({ color: "Red", size: "S" }), OWNER);
+    const rowB = buildStockManagementCsvRow(makeVariant({ color: "Blue", size: "L" }), OWNER);
+    expect(rowA[3]).toBe("Red");
+    expect(rowB[3]).toBe("Blue");
   });
 });

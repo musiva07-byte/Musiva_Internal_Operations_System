@@ -46,7 +46,7 @@ describe("COD banner text selection", () => {
     if (isCod) {
       return `AMOUNT TO COLLECT: ${formatBhd(amountDue)}`;
     }
-    return "PAID — NOTHING TO COLLECT";
+    return "PAID";
   }
 
   it("shows AMOUNT TO COLLECT with BHD for COD orders", () => {
@@ -57,8 +57,8 @@ describe("COD banner text selection", () => {
     expect(bannerText(true, 0)).toBe("AMOUNT TO COLLECT: BHD 0.000");
   });
 
-  it("shows PAID — NOTHING TO COLLECT for paid orders", () => {
-    expect(bannerText(false, 0)).toBe("PAID — NOTHING TO COLLECT");
+  it("shows just PAID (no 'nothing to collect' suffix) for paid orders", () => {
+    expect(bannerText(false, 0)).toBe("PAID");
   });
 
   it("3-decimal BHD formatting", () => {

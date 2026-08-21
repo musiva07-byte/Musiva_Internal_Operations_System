@@ -17,10 +17,11 @@ import { Pagination } from "@/components/products/pagination";
 import { ProductThumbnail } from "@/components/products/product-thumbnail";
 import { StockBadge } from "@/components/products/stock-badge";
 import { BuyingCostDialog } from "@/components/inventory/buying-cost-dialog";
+import { AddStockModal } from "@/components/inventory/add-stock-modal";
 import { ExportMenu } from "@/components/reports/export-menu";
 import { listInventoryVariants } from "@/lib/services/inventory.service";
 import { getCurrentStaffProfile } from "@/lib/auth/session";
-import { canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
+import { canAdjustInventory, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
 import { formatBhd } from "@/lib/formatters/currency";
 import { getBuyingCostStatus, getValidBuyingCost } from "@/lib/utils/cost-conversion";
 
@@ -44,6 +45,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
 
   const showCost = canViewBuyingCost(profile?.role);
   const showProfit = canViewCostData(profile?.role);
+  const canAddStock = canAdjustInventory(profile?.role);
 
   const hrefForPage = (nextPage: number) => {
     const next = new URLSearchParams();
@@ -293,15 +295,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button asChild size="sm" variant="outline">
-                        <Link
-                          href={`/admin/inventory/stock-entry?variantId=${variant.id}`}
-                          title="Add stock"
-                        >
-                          <PackagePlus aria-hidden className="h-4 w-4" />
-                          <span className="sr-only">Add stock</span>
-                        </Link>
-                      </Button>
+                      {canAddStock ? <AddStockModal variant={variant} /> : null}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button

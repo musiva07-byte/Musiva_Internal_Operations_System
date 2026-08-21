@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { listInventoryVariantsForExport } from "@/lib/services/inventory.service";
-import { getStockManagementColumns, buildStockManagementRow } from "@/lib/reports/stock-management-report";
+import { getStockManagementCsvColumns, buildStockManagementCsvRow } from "@/lib/reports/stock-management-report";
 import { buildCsv, csvFilename } from "@/lib/utils/csv";
 
 const FRIENDLY_ERROR = "Could not export the report. Please try again or contact the administrator.";
@@ -9,7 +9,7 @@ const FRIENDLY_ERROR = "Could not export the report. Please try again or contact
 /**
  * Stock Management "Download CSV" — mirrors the page's current filters (q/stock/
  * productStatus) via query params, and gates columns by role the same way /print/inventory
- * does (both call getStockManagementColumns/buildStockManagementRow — one source of truth).
+ * does (both ultimately call buildStockManagementRowData — one source of truth).
  * Requires only a signed-in staff profile, matching the Stock Management page itself.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -29,8 +29,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: FRIENDLY_ERROR }, { status: 500 });
     }
 
-    const columns = getStockManagementColumns(profile.role);
-    const rows = result.rows.map((variant) => buildStockManagementRow(variant, profile.role));
+    const columns = getStockManagementCsvColumns(profile.role);
+    const rows = result.rows.map((variant) => buildStockManagementCsvRow(variant, profile.role));
     const csv = buildCsv(columns, rows);
 
     return new NextResponse(csv, {

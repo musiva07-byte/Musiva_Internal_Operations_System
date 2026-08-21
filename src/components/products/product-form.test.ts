@@ -163,6 +163,53 @@ describe("Edit Product — add variant behavior", () => {
   });
 });
 
+describe("Edit Product — existing variant stock is read-only, changed only via inventory actions", () => {
+  it("never renders a plain editable number input registered to stockQuantity for an existing variant", () => {
+    // The only stockQuantity input left in JSX is the new-variant (Opening stock) one, gated
+    // by isNewVariant; existing variants get a hidden input instead (asserted below).
+    const stockInputPattern =
+      /<Input min=\{0\} type="number" \{\.\.\.form\.register\(`variants\.\$\{index\}\.stockQuantity`\)\} \/>/g;
+    const matches = formSource.match(stockInputPattern) ?? [];
+    expect(matches).toHaveLength(1);
+  });
+
+  it("keeps stockQuantity registered as a hidden field for an existing variant (never edited, but still submitted)", () => {
+    expect(formSource).toMatch(
+      /<input type="hidden" \{\.\.\.form\.register\(`variants\.\$\{index\}\.stockQuantity`\)\} \/>/,
+    );
+  });
+
+  it("shows the current stock as a plain read-only display, not an input", () => {
+    expect(formSource).toMatch(/\{originalVariant\?\.stock_quantity \?\? 0\} unit/);
+  });
+
+  it("shows the required helper text explaining why stock isn't directly editable", () => {
+    expect(formSource).toContain("Stock is managed through inventory actions.");
+  });
+
+  it("shows Receive stock and Correct quantity action buttons", () => {
+    expect(formSource).toContain("Receive stock");
+    expect(formSource).toContain("Correct quantity");
+    expect(formSource).toContain("ReceiveStockModal");
+    expect(formSource).toContain("CorrectQuantityModal");
+  });
+
+  it("gates the stock action buttons behind canAdjustInventory, not just page access", () => {
+    expect(formSource).toContain("const canAdjustStock = canAdjustInventory(userRole);");
+    expect(formSource).toMatch(/canAdjustStock && variantId \? \(/);
+  });
+
+  it("looks up the real persisted stock from the product prop, never from possibly-unsaved form state", () => {
+    expect(formSource).toMatch(
+      /const originalVariant = variantId \? product\?\.variants\.find\(\(v\) => v\.id === variantId\) : undefined;/,
+    );
+  });
+
+  it("refreshes the page after a successful stock action instead of leaving stale data on screen", () => {
+    expect(formSource).toMatch(/function handleStockActionSuccess\(\) \{\s*router\.refresh\(\);/);
+  });
+});
+
 describe("Edit Product — success feedback", () => {
   it("shows a success dialog after a save succeeds instead of redirecting silently", () => {
     expect(formSource).toContain("ProductSaveSuccessDialog");

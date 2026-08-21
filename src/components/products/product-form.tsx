@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2 } from "lucide-react";
+import { PackagePlus, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import type { Resolver } from "react-hook-form";
@@ -21,9 +21,16 @@ import {
   ProductSaveSuccessDialog,
   type SaveSuccessInfo,
 } from "@/components/products/product-save-success-dialog";
+import { ReceiveStockModal } from "@/components/products/receive-stock-modal";
+import { CorrectQuantityModal } from "@/components/products/correct-quantity-modal";
 import { PRODUCT_STATUSES } from "@/lib/constants";
 import { productSchema, type ProductInput } from "@/lib/validations/product.schema";
-import { canPublishProducts, canEnterBuyingCost, canViewCostData } from "@/lib/auth/permissions";
+import {
+  canPublishProducts,
+  canEnterBuyingCost,
+  canViewCostData,
+  canAdjustInventory,
+} from "@/lib/auth/permissions";
 import {
   deriveImportCostBhd,
   deriveVariantFinalCost,
@@ -187,6 +194,7 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
   const canPublish = canPublishProducts(userRole);
   const canEnterCost = canEnterBuyingCost(userRole);
   const canViewProfit = canViewCostData(userRole);
+  const canAdjustStock = canAdjustInventory(userRole);
   const hasEffectiveRate = currentExchangeRate !== null && currentExchangeRate > 0;
 
   const form = useForm<ProductInput>({
@@ -255,6 +263,20 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
   const [pendingValues, setPendingValues] = useState<ProductInput | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [successInfo, setSuccessInfo] = useState<SaveSuccessInfo | null>(null);
+
+  // ── stock actions (Receive stock / Correct quantity) ─────────────────────────
+  // Scoped to one already-saved variant at a time — looked up from `product` (the real,
+  // persisted data) rather than form state, since stock changes must never go through the
+  // product save form (see productVariantSchema / updateProduct's variant UPDATE payload,
+  // which never writes stock_quantity for an existing variant).
+  const [stockAction, setStockAction] = useState<{ type: "receive" | "correct"; variantId: string } | null>(
+    null,
+  );
+  const activeStockVariant = product?.variants.find((v) => v.id === stockAction?.variantId) ?? null;
+
+  function handleStockActionSuccess() {
+    router.refresh();
+  }
 
   function rowKeyFor(index: number, variant: ProductInput["variants"][number]): string {
     return variant.id ?? `new-${index}`;
@@ -470,6 +492,9 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
             const variantId = form.getValues(`variants.${index}.id`);
             const isNewVariant = isEditing && !variantId;
             const variantErrors = form.formState.errors.variants?.[index];
+            // Real, persisted stock — never the possibly-unsaved form value — so the display
+            // and the Receive stock / Correct quantity modals always agree with the database.
+            const originalVariant = variantId ? product?.variants.find((v) => v.id === variantId) : undefined;
             return (
             <div key={field.id} className="space-y-3 rounded-md border bg-musiva-ivory p-4">
               <input type="hidden" {...form.register(`variants.${index}.id`)} />
@@ -500,12 +525,46 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
                 </div>
                 <div className="space-y-2">
                   <Label>{isNewVariant ? "Opening stock" : "Current stock"}</Label>
-                  <Input
-                    readOnly={isEditing && Boolean(variantId)}
-                    className={isEditing && variantId ? "bg-muted" : undefined}
-                    type="number"
-                    {...form.register(`variants.${index}.stockQuantity`)}
-                  />
+                  {isNewVariant ? (
+                    <Input min={0} type="number" {...form.register(`variants.${index}.stockQuantity`)} />
+                  ) : (
+                    <>
+                      {/* Stock is never edited through this form — see productVariantSchema /
+                          updateProduct, which never writes stock_quantity for an existing
+                          variant. This hidden field just keeps the field array's shape intact
+                          for validation; its value is always the untouched original. */}
+                      <input type="hidden" {...form.register(`variants.${index}.stockQuantity`)} />
+                      <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-foreground">
+                        {originalVariant?.stock_quantity ?? 0} unit
+                        {(originalVariant?.stock_quantity ?? 0) !== 1 ? "s" : ""}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Stock is managed through inventory actions.
+                      </p>
+                      {canAdjustStock && variantId ? (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          <Button
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                            onClick={() => setStockAction({ type: "receive", variantId })}
+                          >
+                            <PackagePlus aria-hidden className="mr-1.5 h-3.5 w-3.5" />
+                            Receive stock
+                          </Button>
+                          <Button
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                            onClick={() => setStockAction({ type: "correct", variantId })}
+                          >
+                            <SlidersHorizontal aria-hidden className="mr-1.5 h-3.5 w-3.5" />
+                            Correct quantity
+                          </Button>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Status</Label>
@@ -786,6 +845,32 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
           onContinueEditing={() => {
             setSuccessInfo(null);
           }}
+        />
+      )}
+
+      {activeStockVariant && stockAction?.type === "receive" && (
+        <ReceiveStockModal
+          color={activeStockVariant.color}
+          currentStock={activeStockVariant.stock_quantity}
+          open={stockAction !== null}
+          productName={product?.name ?? ""}
+          size={activeStockVariant.size}
+          variantId={activeStockVariant.id}
+          onOpenChange={(next) => !next && setStockAction(null)}
+          onSuccess={handleStockActionSuccess}
+        />
+      )}
+
+      {activeStockVariant && stockAction?.type === "correct" && (
+        <CorrectQuantityModal
+          color={activeStockVariant.color}
+          currentStock={activeStockVariant.stock_quantity}
+          open={stockAction !== null}
+          productName={product?.name ?? ""}
+          size={activeStockVariant.size}
+          variantId={activeStockVariant.id}
+          onOpenChange={(next) => !next && setStockAction(null)}
+          onSuccess={handleStockActionSuccess}
         />
       )}
     </form>

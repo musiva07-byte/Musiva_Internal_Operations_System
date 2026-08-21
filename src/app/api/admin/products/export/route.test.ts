@@ -16,9 +16,9 @@ describe("Product Catalog CSV export route", () => {
     expect(source).toMatch(/if \(!profile\)/);
   });
 
-  it("gates columns through the shared permission-aware builder, not ad-hoc logic", () => {
-    expect(source).toContain("getProductCatalogColumns(profile.role)");
-    expect(source).toContain("buildProductCatalogRow(item, profile.role)");
+  it("gates columns through the shared permission-aware CSV builder, not ad-hoc logic", () => {
+    expect(source).toContain("getProductCatalogCsvColumns(profile.role)");
+    expect(source).toContain("buildProductCatalogCsvRow(item, profile.role)");
   });
 
   it("fetches real filtered data via listProductsForExport — never a hardcoded row array", () => {

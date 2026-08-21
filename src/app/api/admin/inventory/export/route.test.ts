@@ -16,9 +16,9 @@ describe("Stock Management CSV export route", () => {
     expect(source).toMatch(/if \(!profile\)/);
   });
 
-  it("gates columns through the shared permission-aware builder, not ad-hoc logic", () => {
-    expect(source).toContain("getStockManagementColumns(profile.role)");
-    expect(source).toContain("buildStockManagementRow(variant, profile.role)");
+  it("gates columns through the shared permission-aware CSV builder, not ad-hoc logic", () => {
+    expect(source).toContain("getStockManagementCsvColumns(profile.role)");
+    expect(source).toContain("buildStockManagementCsvRow(variant, profile.role)");
   });
 
   it("fetches real filtered data via listInventoryVariantsForExport — never a hardcoded row array", () => {

@@ -1,7 +1,6 @@
 import { BrandMark } from "@/components/print/brand-mark";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatDate } from "@/lib/formatters/date";
-import { titleize } from "@/lib/formatters/labels";
 import { formatBahrainPhone } from "@/lib/utils/phone";
 import type { OrderWithRelations } from "@/types/app";
 
@@ -36,7 +35,7 @@ export function LabelTemplate({ order, compact = false }: LabelTemplateProps) {
   return (
     <section className={compact ? "print-label-compact" : "print-page print-sheet"}>
       <header className="print-header">
-        <BrandMark />
+        <BrandMark subtitle="Bahrain" />
         <div className="text-right">
           <p className="text-lg font-black uppercase tracking-wide text-musiva-ink">Delivery Label</p>
           <p className="mt-0.5 text-sm font-semibold text-musiva-mauve">{order.order_number}</p>
@@ -63,7 +62,7 @@ export function LabelTemplate({ order, compact = false }: LabelTemplateProps) {
               AMOUNT TO COLLECT: {formatBhd(codAmount)}
             </p>
           ) : (
-            <p className="text-base font-black tracking-wide">PAID — NOTHING TO COLLECT</p>
+            <p className="text-base font-black tracking-wide">PAID</p>
           )}
         </div>
 
@@ -95,14 +94,10 @@ export function LabelTemplate({ order, compact = false }: LabelTemplateProps) {
         {/* Items summary */}
         <LabelWide label="Items" value={itemsSummary || "—"} />
 
-        {/* Payment status */}
-        <div className="grid grid-cols-2 border-b-2 border-[var(--brand-rose-deep)]">
-          <LabelCell label="Payment Status" value={titleize(order.payment_status)} />
-          <LabelCell
-            label={isCod ? "COD to Collect" : "Paid"}
-            value={isCod ? formatBhd(codAmount) : formatBhd(order.amount_paid)}
-            size="lg"
-          />
+        {/* Amount paid — the PAID / AMOUNT TO COLLECT banner above already carries the
+            payment status, so this stays a single wide field instead of duplicating it. */}
+        <div className="border-b-2 border-[var(--brand-rose-deep)]">
+          <LabelCell label="Amount Paid" value={formatBhd(order.amount_paid)} size="xl" />
         </div>
 
         {/* Delivery notes */}

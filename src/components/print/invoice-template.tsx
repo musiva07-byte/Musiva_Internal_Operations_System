@@ -20,7 +20,7 @@ export function InvoiceTemplate({ order, compact = false }: InvoiceTemplateProps
   return (
     <section className={compact ? "print-invoice-compact" : "print-page print-sheet"}>
       <header className="print-header">
-        <BrandMark />
+        <BrandMark subtitle="Bahrain" />
         <div className="text-right">
           <p className="text-xl font-semibold text-musiva-mauve">Receipt</p>
           <p className="mt-0.5 text-sm font-bold text-musiva-ink">{order.order_number}</p>

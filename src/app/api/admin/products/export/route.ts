@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { listProductsForExport } from "@/lib/services/product.service";
-import { getProductCatalogColumns, buildProductCatalogRow } from "@/lib/reports/product-catalog-report";
+import { getProductCatalogCsvColumns, buildProductCatalogCsvRow } from "@/lib/reports/product-catalog-report";
 import { buildCsv, csvFilename } from "@/lib/utils/csv";
 import type { WebsiteFilterValue } from "@/lib/validations/product-publishing";
 
@@ -11,10 +11,10 @@ const VALID_WEBSITE_FILTERS = new Set(["published", "draft", "hidden", "missing_
 /**
  * Product Catalog "Download CSV" — mirrors the page's current filters (q/status/categoryId/
  * website) via query params, and gates columns by role the same way /print/products does
- * (both call getProductCatalogColumns/buildProductCatalogRow — one source of truth for what
- * each role may see). Requires only a signed-in staff profile, matching the Product Catalog
- * page itself (viewing it is not restricted beyond authentication; cost/profit columns are
- * gated separately below that).
+ * (both ultimately call buildProductCatalogRowData — one source of truth for what each role
+ * may see). Requires only a signed-in staff profile, matching the Product Catalog page itself
+ * (viewing it is not restricted beyond authentication; cost/profit columns are gated
+ * separately below that).
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const { profile } = await getCurrentAuthState();
@@ -37,8 +37,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: FRIENDLY_ERROR }, { status: 500 });
     }
 
-    const columns = getProductCatalogColumns(profile.role);
-    const rows = result.rows.map((item) => buildProductCatalogRow(item, profile.role));
+    const columns = getProductCatalogCsvColumns(profile.role);
+    const rows = result.rows.map((item) => buildProductCatalogCsvRow(item, profile.role));
     const csv = buildCsv(columns, rows);
 
     return new NextResponse(csv, {

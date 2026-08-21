@@ -399,6 +399,11 @@ export async function addStock(input: StockEntryInput): Promise<ServiceResult<St
   });
 
   if (error || !data) {
+    console.error("[inventory.service] addStock: add_variant_stock RPC failed:", {
+      action: "add_stock",
+      variantId: parsed.data.productVariantId,
+      error,
+    });
     return serviceError("Stock could not be added. Please try again.");
   }
 
@@ -429,6 +434,11 @@ export async function adjustStock(input: StockAdjustmentInput): Promise<ServiceR
   });
 
   if (error || !data) {
+    console.error("[inventory.service] adjustStock: adjust_variant_stock RPC failed:", {
+      action: "adjust_stock",
+      variantId: parsed.data.productVariantId,
+      error,
+    });
     return serviceError("Stock adjustment could not be recorded. Please check the quantity and try again.");
   }
 

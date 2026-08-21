@@ -4,7 +4,10 @@ import { ReportPrintToolbar } from "@/components/print/report-print-toolbar";
 import { ReportTemplate, type ReportFilterSummary } from "@/components/print/report-template";
 import { listCategories, listProductsForExport } from "@/lib/services/product.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
-import { getProductCatalogColumns, buildProductCatalogRow } from "@/lib/reports/product-catalog-report";
+import {
+  getProductCatalogPrintColumns,
+  buildProductCatalogPrintRow,
+} from "@/lib/reports/product-catalog-report";
 import type { WebsiteFilterValue } from "@/lib/validations/product-publishing";
 
 export const metadata: Metadata = {
@@ -71,8 +74,8 @@ export default async function PrintProductsPage({ searchParams }: PrintProductsP
   }
   if (website && WEBSITE_LABELS[website]) filters.push({ label: "Website", value: WEBSITE_LABELS[website] });
 
-  const columns = getProductCatalogColumns(role);
-  const rows = exportResult.rows.map((item) => buildProductCatalogRow(item, role));
+  const columns = getProductCatalogPrintColumns(role);
+  const rows = exportResult.rows.map((item) => buildProductCatalogPrintRow(item, role));
 
   return (
     <main className="min-h-screen bg-musiva-ivory py-6">
@@ -88,6 +91,7 @@ export default async function PrintProductsPage({ searchParams }: PrintProductsP
           emptyMessage="No products match the current filters."
           filters={filters}
           generatedAt={new Date()}
+          pageSize="a4-landscape"
           rows={rows}
           title="Product Catalog Report"
           truncatedNotice={
