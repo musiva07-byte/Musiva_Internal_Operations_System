@@ -102,7 +102,36 @@ export const updateOrderSchema = z.object({
   notes: optionalText,
 });
 
+// ─── Order Edit: item variant/size/color/quantity changes ────────────────────
+// A distinct schema from orderItemSchema: `id` identifies an existing order_items row being
+// kept or changed — omitted (or null) for a brand-new line. See updateOrderItems() in
+// order.service.ts and order-item-changes.ts for how this is diffed against the order's
+// current items and turned into stock movements.
+export const orderItemEditSchema = z.object({
+  id: optionalUuid,
+  productVariantId: z.string().uuid("Select a product variant."),
+  quantity: z.coerce.number().int().positive("Quantity must be greater than zero."),
+  unitPrice: money,
+  discount: money.default(0),
+});
+
+export const updateOrderItemsSchema = z.object({
+  items: z.array(orderItemEditSchema).min(1, "An order must have at least one item."),
+  /** Optional staff note explaining the correction — folded into the audit log. */
+  note: optionalText,
+});
+
+// ─── Cancel / mark duplicate (completed or paid orders too) ──────────────────
+export const cancelOrderWithReasonSchema = z.object({
+  reason: z.string().trim().min(3, "Please provide a reason."),
+  linkedOrderNumber: optionalText,
+  returnStock: z.boolean().default(true),
+});
+
 export type DeliveryAddressInput = z.infer<typeof deliveryAddressSchema>;
 export type OrderItemInput = z.infer<typeof orderItemSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;
+export type OrderItemEditInput = z.infer<typeof orderItemEditSchema>;
+export type UpdateOrderItemsInput = z.infer<typeof updateOrderItemsSchema>;
+export type CancelOrderWithReasonInput = z.infer<typeof cancelOrderWithReasonSchema>;

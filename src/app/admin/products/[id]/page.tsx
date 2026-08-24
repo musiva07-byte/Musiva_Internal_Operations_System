@@ -7,6 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StockBadge } from "@/components/products/stock-badge";
 import { ProductImageWidget } from "@/components/products/product-image-widget";
 import { QuickAddStockDialog } from "@/components/products/quick-add-stock-dialog";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { getProduct } from "@/lib/services/product.service";
 import { getProductImage } from "@/lib/services/product-image.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
@@ -74,7 +76,13 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
             size="lg"
           />
           <div>
-            <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">
+            <Breadcrumb
+              segments={[{ label: "Product Catalog", href: "/admin/products" }, { label: product.name }]}
+            />
+            <div className="mt-2">
+              <BackLink href="/admin/products" label="Back to catalog" />
+            </div>
+            <p className="mt-2 text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">
               {product.sku}
             </p>
             <h1 className="mt-1 text-3xl font-semibold text-musiva-plum">{product.name}</h1>

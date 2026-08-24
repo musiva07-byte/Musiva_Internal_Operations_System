@@ -12,6 +12,7 @@ import { ProductRowActions } from "@/components/products/product-row-actions";
 import { ProductCostDialog } from "@/components/products/product-cost-dialog";
 import { WebsiteStatusControl } from "@/components/products/website-status-control";
 import { ExportMenu } from "@/components/reports/export-menu";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { listCategories, listProducts } from "@/lib/services/product.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { canPublishProducts, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
@@ -79,7 +80,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Catalog</p>
+          <Breadcrumb segments={[{ label: "Product Catalog" }]} />
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Product Catalog</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Manage product details, images, categories, pricing, and size/color options.

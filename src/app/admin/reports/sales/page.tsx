@@ -2,6 +2,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { getReportRange, getSalesReport } from "@/lib/services/report.service";
 import { formatBhd } from "@/lib/formatters/currency";
 import { titleize } from "@/lib/formatters/labels";
@@ -24,7 +26,10 @@ export default async function SalesReportPage({ searchParams }: SalesReportPageP
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Reports</p>
+          <Breadcrumb segments={[{ label: "Reports", href: "/admin/reports" }, { label: "Sales report" }]} />
+          <div className="mt-2">
+            <BackLink href="/admin/reports" label="Back to reports" />
+          </div>
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Sales report</h1>
           <p className="mt-2 text-sm text-muted-foreground">{range.label}</p>
         </div>

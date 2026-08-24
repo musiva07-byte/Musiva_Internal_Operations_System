@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { OrderQueue } from "@/components/orders/order-queue";
 import { listOrders, listOrdersTabCounts } from "@/lib/services/order.service";
 
@@ -58,9 +59,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">
-            Orders
-          </p>
+          <Breadcrumb segments={[{ label: "Orders" }]} />
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Sales orders</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Operational queue — default view is today&apos;s orders, newest first.

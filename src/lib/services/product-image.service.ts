@@ -11,6 +11,13 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
 const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 
+// Friendly, staff-facing messages — never the raw Supabase/Postgres error text.
+const FRIENDLY_TYPE_ERROR = "Please upload a JPG, PNG, or WebP image.";
+const FRIENDLY_SIZE_ERROR = "Image is too large. Please upload an image under 5 MB.";
+const FRIENDLY_STORAGE_UNAVAILABLE = "Image storage is not available. Please contact the administrator.";
+const FRIENDLY_UPLOAD_ERROR = "Could not upload image. Please try again.";
+const FRIENDLY_REMOVE_ERROR = "Could not remove image. Please try again.";
+
 function fileExtension(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() ?? "";
 }
@@ -53,7 +60,11 @@ export async function listProductImages(productId: string): Promise<ProductImage
 }
 
 /** Find the existing image row for a product's main image (color null) or a specific
- *  color (color set) — the one row the new upload/remove call should replace. */
+ *  color (color set) — the one row the new upload/remove call should replace. `limit(1)`
+ *  is defense in depth: the DB already enforces at most one row per (product, color-or-null)
+ *  via partial unique indexes (uniq_product_images_main / uniq_product_images_color), but
+ *  capping the query here means a `.maybeSingle()` can never itself error out with "multiple
+ *  rows returned" even if that guarantee were ever violated in a given environment. */
 async function findExistingImage(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
@@ -62,7 +73,7 @@ async function findExistingImage(
 ): Promise<ProductImageRow | null> {
   let query = supabase.from("product_images").select("*").eq("product_id", productId);
   query = color ? query.eq("color", color) : query.is("color", null);
-  const { data } = await query.maybeSingle();
+  const { data } = await query.limit(1).maybeSingle();
   return data ?? null;
 }
 
@@ -77,8 +88,15 @@ async function findExistingImage(
  *   3. Upload new file to Supabase Storage
  *   4. Delete old DB record and storage file (if any) — AFTER new upload succeeds
  *   5. Insert new DB record
+ *
+ * Every expected failure (permission, validation, storage, DB) returns a structured
+ * ServiceResult with a friendly message — this function never throws for those cases. Only a
+ * genuinely unexpected exception (network blip, malformed client, etc.) is caught by the
+ * uploadProductImage() wrapper below, logged with context, and turned into the same friendly
+ * shape so the caller (a Server Action) never rejects and the UI never has to render the
+ * global error page for an image action.
  */
-export async function uploadProductImage(
+async function uploadProductImageInternal(
   productId: string,
   file: File,
   color?: string | null,
@@ -93,14 +111,14 @@ export async function uploadProductImage(
 
   // ── File validation ───────────────────────────────────────────────────────────
   if (!ALLOWED_MIME_TYPES.includes(file.type)) {
-    return serviceError("Only JPEG, PNG, and WebP images are accepted.");
+    return serviceError(FRIENDLY_TYPE_ERROR);
   }
   const ext = fileExtension(file.name);
   if (!ALLOWED_EXTENSIONS.includes(ext)) {
-    return serviceError("Only .jpg, .jpeg, .png, and .webp files are accepted.");
+    return serviceError(FRIENDLY_TYPE_ERROR);
   }
   if (file.size > MAX_FILE_SIZE) {
-    return serviceError("Image must be 5 MB or smaller.");
+    return serviceError(FRIENDLY_SIZE_ERROR);
   }
   if (file.size === 0) {
     return serviceError("The selected file is empty.");
@@ -108,7 +126,12 @@ export async function uploadProductImage(
 
   const admin = createSupabaseAdminClient();
   if (!admin) {
-    return serviceError("Storage is not configured.");
+    console.error("[product-image] upload: admin client unavailable (missing service role env)", {
+      action: "upload",
+      productId,
+      imageType: normalizedColor ? "color" : "main",
+    });
+    return serviceError(FRIENDLY_STORAGE_UNAVAILABLE);
   }
 
   // ── Ensure the bucket exists (creates it if missing) ─────────────────────────
@@ -117,10 +140,20 @@ export async function uploadProductImage(
     fileSizeLimit: MAX_FILE_SIZE,
     allowedMimeTypes: ALLOWED_MIME_TYPES,
   });
-  // "already exists" is fine — any other error is a real problem
-  if (bucketError && !bucketError.message.includes("already exists") && !bucketError.message.includes("Duplicate")) {
-    console.error("[product-image] bucket create error:", bucketError);
-    return serviceError("Storage is not available. Please contact support.");
+  // A bucket that already exists is fine — matched loosely since Supabase Storage's exact
+  // wording for "already exists" varies by version ("The resource already exists", "Duplicate",
+  // 409 Conflict, ...). Any other error is a real problem.
+  if (bucketError) {
+    const message = bucketError.message?.toLowerCase() ?? "";
+    if (!message.includes("exist") && !message.includes("duplicate")) {
+      console.error("[product-image] upload: bucket create error", {
+        action: "upload",
+        productId,
+        imageType: normalizedColor ? "color" : "main",
+        error: bucketError.message,
+      });
+      return serviceError(FRIENDLY_STORAGE_UNAVAILABLE);
+    }
   }
 
   // ── Load existing image record (before upload, so we know what to clean up) ──
@@ -137,12 +170,32 @@ export async function uploadProductImage(
     });
 
   if (uploadError) {
-    console.error("[product-image] storage upload error:", uploadError);
-    return serviceError("Image upload failed. Please try again.");
+    console.error("[product-image] upload: storage upload error", {
+      action: "upload",
+      productId,
+      imageType: normalizedColor ? "color" : "main",
+      fileType: file.type,
+      fileSize: file.size,
+      error: uploadError.message,
+    });
+    return serviceError(FRIENDLY_UPLOAD_ERROR);
   }
 
   const { data: urlData } = admin.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-  const publicUrl = urlData.publicUrl;
+  const publicUrl = urlData?.publicUrl;
+
+  if (!publicUrl) {
+    console.error("[product-image] upload: getPublicUrl returned no URL", {
+      action: "upload",
+      productId,
+      imageType: normalizedColor ? "color" : "main",
+      path,
+    });
+    // The file did upload — clean it up rather than leaving an orphaned object with no
+    // reachable DB row, since we can't save a usable image record without a URL.
+    admin.storage.from(STORAGE_BUCKET).remove([path]).catch(() => undefined);
+    return serviceError(FRIENDLY_UPLOAD_ERROR);
+  }
 
   // ── Delete old record from DB (after new upload succeeds) ────────────────────
   if (existing) {
@@ -167,7 +220,13 @@ export async function uploadProductImage(
     .single();
 
   if (dbError || !imageRecord) {
-    console.error("[product-image] DB insert error:", dbError);
+    console.error("[product-image] upload: DB insert error", {
+      action: "upload",
+      productId,
+      imageType: normalizedColor ? "color" : "main",
+      error: dbError?.message,
+      code: dbError?.code,
+    });
     // New file is uploaded but DB record failed — try to clean up the orphaned file
     admin.storage.from(STORAGE_BUCKET).remove([path]).catch(() => undefined);
     return serviceError("Image was uploaded but could not be saved. Please try again.");
@@ -179,6 +238,24 @@ export async function uploadProductImage(
   return serviceSuccess(imageRecord);
 }
 
+export async function uploadProductImage(
+  productId: string,
+  file: File,
+  color?: string | null,
+): Promise<ServiceResult<ProductImageRow>> {
+  try {
+    return await uploadProductImageInternal(productId, file, color);
+  } catch (err) {
+    console.error("[product-image] upload: unexpected exception", {
+      action: "upload",
+      productId,
+      imageType: color?.trim() ? "color" : "main",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return serviceError(FRIENDLY_UPLOAD_ERROR);
+  }
+}
+
 /**
  * Remove a product's image. Pass `color` to remove that color's image instead of the
  * main image (unchanged default).
@@ -188,8 +265,11 @@ export async function uploadProductImage(
  *   2. Load existing record
  *   3. Delete DB record
  *   4. Delete storage file
+ *
+ * See uploadProductImage()'s doc comment — the same "never throw for expected failures,
+ * catch and log the rest" contract applies here via the removeProductImage() wrapper below.
  */
-export async function removeProductImage(
+async function removeProductImageInternal(
   productId: string,
   color?: string | null,
 ): Promise<ServiceResult<{ productId: string }>> {
@@ -198,7 +278,8 @@ export async function removeProductImage(
     return serviceError(auth.error ?? "You do not have permission to remove product images.");
   }
 
-  const existing = await findExistingImage(auth.supabase, productId, color?.trim() || null);
+  const normalizedColor = color?.trim() || null;
+  const existing = await findExistingImage(auth.supabase, productId, normalizedColor);
   if (!existing) {
     return serviceError("This product has no image to remove.");
   }
@@ -209,7 +290,14 @@ export async function removeProductImage(
     .eq("id", existing.id);
 
   if (dbError) {
-    return serviceError("Image could not be removed. Please try again.");
+    console.error("[product-image] remove: DB delete error", {
+      action: "remove",
+      productId,
+      imageType: normalizedColor ? "color" : "main",
+      error: dbError.message,
+      code: dbError.code,
+    });
+    return serviceError(FRIENDLY_REMOVE_ERROR);
   }
 
   // Delete from storage — fire-and-forget
@@ -222,4 +310,21 @@ export async function removeProductImage(
   revalidatePath(`/admin/products/${productId}`);
   revalidatePath(`/admin/products/${productId}/edit`);
   return serviceSuccess({ productId });
+}
+
+export async function removeProductImage(
+  productId: string,
+  color?: string | null,
+): Promise<ServiceResult<{ productId: string }>> {
+  try {
+    return await removeProductImageInternal(productId, color);
+  } catch (err) {
+    console.error("[product-image] remove: unexpected exception", {
+      action: "remove",
+      productId,
+      imageType: color?.trim() ? "color" : "main",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return serviceError(FRIENDLY_REMOVE_ERROR);
+  }
 }

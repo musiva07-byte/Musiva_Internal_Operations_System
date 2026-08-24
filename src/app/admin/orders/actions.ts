@@ -3,12 +3,19 @@
 import {
   createOrder,
   updateOrder,
+  updateOrderItems,
   cancelOrder,
+  cancelOrderWithReason,
   transitionOrderStatus,
   confirmOrderHandoff,
   bulkOrderAction,
 } from "@/lib/services/order.service";
-import type { CreateOrderInput, UpdateOrderInput } from "@/lib/validations/order.schema";
+import type {
+  CreateOrderInput,
+  UpdateOrderInput,
+  UpdateOrderItemsInput,
+  CancelOrderWithReasonInput,
+} from "@/lib/validations/order.schema";
 import type { OrderStatus } from "@/types/database";
 
 /** Snapshot returned to the client on successful order creation. */
@@ -55,6 +62,27 @@ export async function updateOrderAction(orderId: string, input: UpdateOrderInput
 
 export async function cancelOrderAction(orderId: string) {
   const result = await cancelOrder(orderId);
+  if (result.error || !result.data) return { ok: false, error: result.error };
+  return { ok: true, error: null };
+}
+
+/**
+ * Change order item variant/size/color/quantity, add, or remove a line — the Order Edit
+ * "Change option" workflow. Returns the refreshed order + items on success so the client can
+ * render the updated totals without a full page reload.
+ */
+export async function updateOrderItemsAction(orderId: string, input: UpdateOrderItemsInput) {
+  const result = await updateOrderItems(orderId, input);
+  if (result.error || !result.data) return { ok: false, error: result.error, order: null };
+  return { ok: true, error: null, order: result.data };
+}
+
+/**
+ * "Cancel / Mark duplicate" — the safe cleanup action for a wrong order (e.g. one replaced by
+ * a size/color correction). Works on completed/paid orders too, unlike cancelOrderAction.
+ */
+export async function cancelOrderWithReasonAction(orderId: string, input: CancelOrderWithReasonInput) {
+  const result = await cancelOrderWithReason(orderId, input);
   if (result.error || !result.data) return { ok: false, error: result.error };
   return { ok: true, error: null };
 }

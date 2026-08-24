@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { WebsiteRequestStatusBadge } from "@/components/website-requests/website-request-status-badge";
 import { WebsiteRequestStatusActions } from "@/components/website-requests/website-request-status-actions";
@@ -44,13 +44,15 @@ export default async function WebsiteRequestDetailPage({ params }: WebsiteReques
   return (
     <div className="space-y-6">
       <header>
-        <Link
-          href="/admin/website-requests"
-          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft aria-hidden className="h-3.5 w-3.5" />
-          Website Requests
-        </Link>
+        <Breadcrumb
+          segments={[
+            { label: "Website Requests", href: "/admin/website-requests" },
+            { label: request.request_number },
+          ]}
+        />
+        <div className="mt-2">
+          <BackLink href="/admin/website-requests" label="Back to website requests" />
+        </div>
         <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{request.request_number}</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Website requests are pending WhatsApp leads. Confirming here does not create an order or

@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { OrderStatusBadge } from "@/components/orders/status-badge";
 import { getDashboardData } from "@/lib/services/dashboard.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
@@ -569,18 +570,7 @@ export default async function DashboardPage() {
                       {order.customers?.full_name ?? "—"}
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          order.order_status === "cancelled"
-                            ? "danger"
-                            : order.order_status === "completed" ||
-                              order.order_status === "delivered"
-                            ? "success"
-                            : "secondary"
-                        }
-                      >
-                        {titleize(order.order_status)}
-                      </Badge>
+                      <OrderStatusBadge status={order.order_status} />
                     </TableCell>
                     <TableCell className="text-right">
                       {formatBhd(order.grand_total)}

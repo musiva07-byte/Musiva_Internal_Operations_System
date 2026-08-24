@@ -9,9 +9,11 @@ import {
   ORDER_STATUSES_REQUIRING_REASON,
   ORDER_ACTIVE_STATUSES,
   ORDER_COMPLETED_STATUSES,
+  ORDER_STATUSES,
   DELIVERY_NEXT_STATUSES,
   DELIVERY_STATUSES_REQUIRING_REASON,
 } from "@/lib/constants/statuses";
+import { orderStatusLabel } from "@/components/orders/status-badge";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -273,5 +275,26 @@ describe("COD detection helpers", () => {
     expect(isCodPending("cod", true)).toBe(false);
     expect(isCodPending("paid", false)).toBe(false);
     expect(isCodPending("unpaid", false)).toBe(false);
+  });
+});
+
+// ─── Display label is decoupled from the internal enum/transition values ──────
+// The "In Fulfilment" -> "Preparing" wording change (status-badge.tsx) is display-only. These
+// tests prove the transition table, active/completed sets, and the raw constant value all
+// still use the real "in_fulfilment" string — nothing here required a DB enum migration.
+
+describe("Staff-facing label change never touches the internal order_status value", () => {
+  it("ORDER_STATUSES.inFulfilment is still the raw 'in_fulfilment' string", () => {
+    expect(ORDER_STATUSES.inFulfilment).toBe("in_fulfilment");
+  });
+
+  it("ORDER_NEXT_STATUSES/ORDER_ACTIVE_STATUSES still key off 'in_fulfilment', not 'Preparing'", () => {
+    expect(ORDER_NEXT_STATUSES).toHaveProperty("in_fulfilment");
+    expect(ORDER_NEXT_STATUSES).not.toHaveProperty("Preparing");
+    expect(ORDER_ACTIVE_STATUSES.has("in_fulfilment")).toBe(true);
+  });
+
+  it("the staff-facing label for that same internal value is 'Preparing'", () => {
+    expect(orderStatusLabel("in_fulfilment")).toBe("Preparing");
   });
 });

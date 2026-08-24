@@ -45,6 +45,14 @@ export function canManageOrders(userRole: StaffRole | null | undefined) {
   );
 }
 
+/** Edit the items (variant/size/color/quantity) of a completed order, or an order whose
+ *  delivery already reached "delivered" — both cases retroactively rewrite stock/sale
+ *  history, so this is deliberately stricter than the base canManageOrders() a sales_staff
+ *  gets for orders still in progress. Owner/manager only. */
+export function canEditCompletedOrderItems(userRole: StaffRole | null | undefined) {
+  return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;
+}
+
 export function canManageDeliveries(userRole: StaffRole | null | undefined) {
   return (
     userRole === STAFF_ROLES.owner ||

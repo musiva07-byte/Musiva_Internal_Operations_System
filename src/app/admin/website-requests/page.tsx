@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { WebsiteRequestQueue } from "@/components/website-requests/website-request-queue";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
 import {
   listWebsiteRequestTabCounts,
   listWebsiteRequests,
@@ -55,9 +56,7 @@ export default async function WebsiteRequestsPage({ searchParams }: WebsiteReque
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">
-          Website Requests
-        </p>
+        <Breadcrumb segments={[{ label: "Website Requests" }]} />
         <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Website order requests</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Website requests are pending WhatsApp leads. Confirming here does not create an order or

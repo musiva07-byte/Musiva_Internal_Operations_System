@@ -4,18 +4,35 @@ import { requireStaffPermission } from "@/lib/auth/authorization";
 import {
   createOrderSchema,
   updateOrderSchema,
+  updateOrderItemsSchema,
+  cancelOrderWithReasonSchema,
   type CreateOrderInput,
   type UpdateOrderInput,
+  type UpdateOrderItemsInput,
+  type CancelOrderWithReasonInput,
 } from "@/lib/validations/order.schema";
 import { normalizeBahrainPhone } from "@/lib/utils/phone";
-import { ORDER_STATUSES, PAYMENT_STATUSES, ORDER_NEXT_STATUSES } from "@/lib/constants";
-import { canManageOrders } from "@/lib/auth/permissions";
+import {
+  ORDER_STATUSES,
+  PAYMENT_STATUSES,
+  ORDER_NEXT_STATUSES,
+  ORDER_COMPLETED_STATUSES,
+} from "@/lib/constants";
+import { canManageOrders, canEditCompletedOrderItems } from "@/lib/auth/permissions";
 import { titleize } from "@/lib/formatters/labels";
 import { createAuditLog } from "./audit.service";
 import { serviceError, serviceSuccess, type ServiceResult } from "./service-result";
+import {
+  diffOrderItems,
+  computeStockDeltas,
+  calculateOrderTotals,
+  type ExistingOrderItemLite,
+  type IncomingOrderItem,
+} from "./order-item-changes";
 import type {
   CustomerRow,
   DeliveryStatus,
+  OrderItemRow,
   OrderRow,
   OrderStatus,
   PaymentStatus,
@@ -283,6 +300,43 @@ export async function getOrder(orderId: string): Promise<OrderWithRelations | nu
   if (!customer) return null;
 
   return { ...order, customer, items: items ?? [], payments: payments ?? [], delivery: delivery ?? null };
+}
+
+export type AdjacentOrder = { id: string; order_number: string };
+
+/**
+ * Simple Previous/Next navigation for the order detail page — by created_at across all
+ * orders, independent of whatever tab/filter the staff member arrived from. "Previous" is the
+ * next-older order, "Next" is the next-newer order. Read-only, no pagination/cursor state.
+ */
+export async function getAdjacentOrders(
+  orderId: string,
+  createdAt: string,
+): Promise<{ previous: AdjacentOrder | null; next: AdjacentOrder | null }> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { previous: null, next: null };
+
+  const [{ data: previousRows }, { data: nextRows }] = await Promise.all([
+    supabase
+      .from("orders")
+      .select("id, order_number")
+      .lt("created_at", createdAt)
+      .neq("id", orderId)
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("orders")
+      .select("id, order_number")
+      .gt("created_at", createdAt)
+      .neq("id", orderId)
+      .order("created_at", { ascending: true })
+      .limit(1),
+  ]);
+
+  return {
+    previous: previousRows?.[0] ?? null,
+    next: nextRows?.[0] ?? null,
+  };
 }
 
 // ─── Confirmation handoff ─────────────────────────────────────────────────────
@@ -884,5 +938,351 @@ export async function updateOrder(
 
   revalidatePath("/admin/orders");
   revalidatePath(`/admin/orders/${orderId}`);
+  return serviceSuccess(data);
+}
+
+// ─── Update order items (variant / size / color / quantity) ──────────────────
+
+/**
+ * Edits an existing order's line items — change variant/size/color, change quantity, add a
+ * line, or remove a line — without creating a duplicate order. See order-item-changes.ts for
+ * the diff/stock-delta logic this function drives; stock is only ever written through
+ * add_variant_stock / deduct_variant_stock (never a direct product_variants update), so every
+ * correction leaves a stock_movements row.
+ *
+ * Permission: any canManageOrders() role may edit an active order. Editing a completed order,
+ * or one whose delivery already reached "delivered", requires canEditCompletedOrderItems()
+ * (owner/manager) — those cases retroactively rewrite stock/sale history.
+ */
+export type OrderWithItems = OrderRow & { items: OrderItemRow[] };
+
+export async function updateOrderItems(
+  orderId: string,
+  input: UpdateOrderItemsInput,
+): Promise<ServiceResult<OrderWithItems>> {
+  const parsed = updateOrderItemsSchema.safeParse(input);
+  if (!parsed.success) return serviceError(parsed.error.issues[0]?.message);
+
+  const auth = await validateAuthenticatedOrderUser();
+  if (auth.error || !auth.supabase || !auth.userId) {
+    return serviceError(auth.error ?? "You do not have permission to perform this action.");
+  }
+  const supabase = auth.supabase;
+
+  const { data: existingOrder } = await supabase
+    .from("orders")
+    .select("*, deliveries(delivery_status)")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (!existingOrder) return serviceError("Order was not found.");
+
+  const orderRow = existingOrder as unknown as OrderRow & {
+    deliveries?: { delivery_status: DeliveryStatus }[];
+  };
+
+  if (orderRow.order_status === ORDER_STATUSES.cancelled) {
+    return serviceError("This order is cancelled and its items cannot be edited.");
+  }
+
+  const isCompletedOrder = ORDER_COMPLETED_STATUSES.has(orderRow.order_status);
+  const deliveryDelivered =
+    Array.isArray(orderRow.deliveries) &&
+    orderRow.deliveries.some((d) => d.delivery_status === "delivered");
+
+  if ((isCompletedOrder || deliveryDelivered) && !canEditCompletedOrderItems(auth.role)) {
+    return serviceError(
+      isCompletedOrder
+        ? "This order is already completed. Only an owner or manager can edit it."
+        : "This order has already been delivered. Only an owner or manager can edit it.",
+    );
+  }
+
+  const { data: existingItemRows } = await supabase
+    .from("order_items")
+    .select("*")
+    .eq("order_id", orderId);
+
+  const existingItems: ExistingOrderItemLite[] = (existingItemRows ?? []).map((row) => ({
+    id: row.id,
+    productVariantId: row.product_variant_id,
+    quantity: row.quantity,
+    unitPrice: Number(row.unit_price),
+    discount: Number(row.discount),
+  }));
+  const existingIds = new Set(existingItems.map((item) => item.id));
+
+  // Defense in depth: an incoming id that doesn't belong to this order is downgraded to a new
+  // line rather than trusted as "changed" against the wrong row.
+  const incoming: IncomingOrderItem[] = parsed.data.items.map((item) => ({
+    ...item,
+    id: item.id && existingIds.has(item.id) ? item.id : null,
+  }));
+
+  const diff = diffOrderItems(existingItems, incoming);
+  const hasChanges = diff.added.length > 0 || diff.removed.length > 0 || diff.changed.length > 0;
+  if (!hasChanges) {
+    return serviceError("No changes were made to this order.");
+  }
+
+  // ── Validate every variant involved (existence, active status, stock) ──────────
+  const stockDeltas = computeStockDeltas(diff);
+  const involvedVariantIds = [
+    ...new Set([...stockDeltas.keys(), ...incoming.map((item) => item.productVariantId)]),
+  ];
+
+  const { data: variantRows } = await supabase
+    .from("product_variants")
+    .select("*, products!inner(name, sku)")
+    .in("id", involvedVariantIds);
+  const variants = (variantRows ?? []) as unknown as VariantRelationRow[];
+  const variantById = new Map(variants.map((variant) => [variant.id, variant]));
+
+  if (variants.length !== involvedVariantIds.length) {
+    return serviceError("One of the selected products is no longer available.");
+  }
+
+  for (const [variantId, delta] of stockDeltas) {
+    if (delta >= 0) continue; // add-back direction never needs a stock/active check
+    const variant = variantById.get(variantId);
+    if (!variant) continue; // already caught above
+    if (variant.status !== "active") {
+      return serviceError(`${variant.color} / ${variant.size} is no longer available.`);
+    }
+    if (variant.stock_quantity < Math.abs(delta)) {
+      return serviceError("Not enough stock available for this size/color.");
+    }
+  }
+
+  // ── Apply stock movements: returns first, deductions second ────────────────────
+  for (const [variantId, delta] of stockDeltas) {
+    if (delta <= 0) continue;
+    const { error } = await supabase.rpc("add_variant_stock", {
+      p_variant_id: variantId,
+      p_quantity: delta,
+      p_movement_type: "return_added",
+      p_reference_type: "order_item_correction",
+      p_reference_id: orderId,
+      p_note: `Stock returned: item corrected on order ${orderRow.order_number}.`,
+    });
+    if (error) {
+      console.error("[updateOrderItems] add_variant_stock failed:", error);
+      return serviceError("Could not update order. Please try again or contact the administrator.");
+    }
+  }
+
+  for (const [variantId, delta] of stockDeltas) {
+    if (delta >= 0) continue;
+    const { error } = await supabase.rpc("deduct_variant_stock", {
+      p_variant_id: variantId,
+      p_quantity: Math.abs(delta),
+      p_reference_type: "order_item_correction",
+      p_reference_id: orderId,
+      p_note: `Stock deducted: item corrected on order ${orderRow.order_number}.`,
+    });
+    if (error) {
+      console.error("[updateOrderItems] deduct_variant_stock failed:", error);
+      return serviceError("Not enough stock available for this size/color.");
+    }
+  }
+
+  // ── Write the order_items changes ───────────────────────────────────────────────
+  function snapshotFor(variantId: string) {
+    const variant = variantById.get(variantId);
+    return {
+      product_name_snapshot: variant?.products?.name ?? "Product",
+      variant_sku_snapshot: variant?.variant_sku ?? "",
+      size_snapshot: variant?.size ?? "",
+      color_snapshot: variant?.color ?? "",
+    };
+  }
+
+  if (diff.removed.length > 0) {
+    await supabase
+      .from("order_items")
+      .delete()
+      .in("id", diff.removed.map((item) => item.id));
+  }
+
+  for (const { old, new: next } of diff.changed) {
+    await supabase
+      .from("order_items")
+      .update({
+        product_variant_id: next.productVariantId,
+        quantity: next.quantity,
+        unit_price: next.unitPrice,
+        discount: next.discount,
+        line_total: Math.max(0, next.unitPrice * next.quantity - next.discount),
+        ...snapshotFor(next.productVariantId),
+      })
+      .eq("id", old.id);
+  }
+
+  if (diff.added.length > 0) {
+    await supabase.from("order_items").insert(
+      diff.added.map((item) => ({
+        order_id: orderId,
+        product_variant_id: item.productVariantId,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        discount: item.discount,
+        line_total: Math.max(0, item.unitPrice * item.quantity - item.discount),
+        ...snapshotFor(item.productVariantId),
+      })),
+    );
+  }
+
+  // ── Recalculate totals from the final item set ──────────────────────────────────
+  const finalItems = [
+    ...diff.unchanged.map((item) => ({ quantity: item.quantity, unitPrice: item.unitPrice, discount: item.discount })),
+    ...diff.changed.map((c) => ({ quantity: c.new.quantity, unitPrice: c.new.unitPrice, discount: c.new.discount })),
+    ...diff.added.map((item) => ({ quantity: item.quantity, unitPrice: item.unitPrice, discount: item.discount })),
+  ];
+  const { subtotal, discountTotal, grandTotal } = calculateOrderTotals(
+    finalItems,
+    Number(orderRow.delivery_charge),
+  );
+  const amountDue = Math.max(0, grandTotal - Number(orderRow.amount_paid));
+
+  const { data: updatedOrder, error: orderUpdateError } = await supabase
+    .from("orders")
+    .update({ subtotal, discount_total: discountTotal, grand_total: grandTotal, amount_due: amountDue })
+    .eq("id", orderId)
+    .select()
+    .single();
+
+  if (orderUpdateError || !updatedOrder) {
+    return serviceError(
+      "Order items were updated, but totals could not be recalculated. Please review this order.",
+    );
+  }
+
+  await createAuditLog({
+    action: "update_order_items",
+    tableName: "orders",
+    recordId: orderId,
+    userId: auth.userId,
+    metadata: {
+      order_number: orderRow.order_number,
+      removed: diff.removed.map((item) => ({ variant_id: item.productVariantId, quantity: item.quantity })),
+      added: diff.added.map((item) => ({ variant_id: item.productVariantId, quantity: item.quantity })),
+      changed: diff.changed.map((c) => ({
+        old: { variant_id: c.old.productVariantId, quantity: c.old.quantity },
+        new: { variant_id: c.new.productVariantId, quantity: c.new.quantity },
+      })),
+      stock_deltas: Object.fromEntries(stockDeltas),
+      previous_grand_total: orderRow.grand_total,
+      new_grand_total: grandTotal,
+      note: parsed.data.note ?? null,
+    },
+  });
+
+  revalidatePath("/admin/orders");
+  revalidatePath(`/admin/orders/${orderId}`);
+  revalidatePath("/admin/inventory");
+  revalidatePath("/admin/inventory/movements");
+  revalidatePath("/admin/dashboard");
+
+  const { data: finalItemRows } = await supabase
+    .from("order_items")
+    .select("*")
+    .eq("order_id", orderId)
+    .order("created_at", { ascending: true });
+
+  return serviceSuccess({ ...updatedOrder, items: finalItemRows ?? [] });
+}
+
+// ─── Cancel with reason (duplicate / wrong-order cleanup — completed orders too) ──
+
+/**
+ * Richer cancel action than cancelOrder(): also works on completed/paid orders (e.g. a
+ * duplicate created after a size/color correction), always requires a written reason, and
+ * lets staff choose whether to return items to stock. The order is never deleted — it stays
+ * in history as "cancelled" with the reason (and any linked correct order number) recorded in
+ * its notes and in the audit log.
+ */
+export async function cancelOrderWithReason(
+  orderId: string,
+  input: CancelOrderWithReasonInput,
+): Promise<ServiceResult<OrderRow>> {
+  const parsed = cancelOrderWithReasonSchema.safeParse(input);
+  if (!parsed.success) return serviceError(parsed.error.issues[0]?.message);
+
+  const auth = await validateAuthenticatedOrderUser();
+  if (auth.error || !auth.supabase || !auth.userId) {
+    return serviceError(auth.error ?? "You do not have permission to perform this action.");
+  }
+
+  const { data: existing } = await auth.supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (!existing) return serviceError("Order was not found.");
+
+  if (existing.order_status === ORDER_STATUSES.cancelled) {
+    return serviceError("This order is already cancelled.");
+  }
+
+  const isCompletedOrder = ORDER_COMPLETED_STATUSES.has(existing.order_status);
+  if (isCompletedOrder && !canEditCompletedOrderItems(auth.role)) {
+    return serviceError("Only an owner or manager can cancel a completed order.");
+  }
+
+  const noteParts = [`Cancelled: ${parsed.data.reason}`];
+  if (parsed.data.linkedOrderNumber) {
+    noteParts.push(`Correct order: ${parsed.data.linkedOrderNumber}`);
+  }
+  const combinedNotes = [existing.notes, noteParts.join(" — ")].filter(Boolean).join("\n");
+
+  const { data, error } = await auth.supabase
+    .from("orders")
+    .update({ order_status: ORDER_STATUSES.cancelled, notes: combinedNotes })
+    .eq("id", orderId)
+    .select()
+    .single();
+
+  if (error || !data) return serviceError("Order could not be cancelled.");
+
+  if (parsed.data.returnStock) {
+    const { data: items } = await auth.supabase
+      .from("order_items")
+      .select("*")
+      .eq("order_id", orderId);
+
+    if (items) {
+      for (const item of items) {
+        const { error: stockError } = await auth.supabase.rpc("add_variant_stock", {
+          p_variant_id: item.product_variant_id,
+          p_quantity: item.quantity,
+          p_movement_type: "cancelled_order_restore",
+          p_reference_type: "order",
+          p_reference_id: orderId,
+          p_note: `Stock restored: order ${existing.order_number} cancelled (${parsed.data.reason}).`,
+        });
+        if (stockError) {
+          console.error("[cancelOrderWithReason] add_variant_stock failed:", stockError);
+        }
+      }
+    }
+  }
+
+  await createAuditLog({
+    action: "cancel_order",
+    tableName: "orders",
+    recordId: orderId,
+    userId: auth.userId,
+    metadata: {
+      order_number: existing.order_number,
+      previous_status: existing.order_status,
+      reason: parsed.data.reason,
+      linked_order_number: parsed.data.linkedOrderNumber ?? null,
+      stock_returned: parsed.data.returnStock,
+    },
+  });
+
+  revalidatePath("/admin/orders");
+  revalidatePath(`/admin/orders/${orderId}`);
+  revalidatePath("/admin/inventory");
+  revalidatePath("/admin/dashboard");
   return serviceSuccess(data);
 }

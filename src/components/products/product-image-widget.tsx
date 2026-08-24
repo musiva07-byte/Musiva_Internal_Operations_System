@@ -1,9 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Camera, ImageOff, Loader2, Trash2, Upload, X } from "lucide-react";
+import { Camera, CheckCircle2, ImageOff, Loader2, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -60,6 +60,15 @@ export function ProductImageWidget({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [isPending, startTransition] = useTransition();
 
+  // Brief success confirmation shown after upload/remove — auto-clears itself, since the
+  // dialog that triggered the action closes immediately and can't hold the message.
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  useEffect(() => {
+    if (!successMessage) return;
+    const timer = setTimeout(() => setSuccessMessage(null), 4000);
+    return () => clearTimeout(timer);
+  }, [successMessage]);
+
   // Optimistic image URL — updated immediately after successful upload/remove
   const [optimisticUrl, setOptimisticUrl] = useState<string | null>(currentUrl);
 
@@ -82,13 +91,15 @@ export function ProductImageWidget({
     }
 
     if (!ACCEPT_MIME.includes(file.type)) {
-      setFileError("Only JPEG, PNG, and WebP images are accepted.");
+      setFileError("Please upload a JPG, PNG, or WebP image.");
       clearSelection();
       return;
     }
 
     if (file.size > MAX_BYTES) {
-      setFileError(`Image must be ${MAX_SIZE_MB} MB or smaller. Selected file is ${(file.size / 1024 / 1024).toFixed(1)} MB.`);
+      setFileError(
+        `Image is too large. Please upload an image under ${MAX_SIZE_MB} MB. Selected file is ${(file.size / 1024 / 1024).toFixed(1)} MB.`,
+      );
       clearSelection();
       return;
     }
@@ -125,13 +136,14 @@ export function ProductImageWidget({
       const result = await uploadProductImageAction(productId, fd, color);
 
       if (!result.ok || !result.url) {
-        setActionError(result.error ?? "Upload failed. Please try again.");
+        setActionError(result.error ?? "Could not upload image. Please try again.");
         return;
       }
 
       // Optimistic update
       setOptimisticUrl(result.url);
       close();
+      setSuccessMessage("Product image updated successfully.");
       router.refresh();
     });
   }
@@ -149,13 +161,14 @@ export function ProductImageWidget({
       const result = await removeProductImageAction(productId, color);
 
       if (!result.ok) {
-        setActionError(result.error ?? "Remove failed. Please try again.");
+        setActionError(result.error ?? "Could not remove image. Please try again.");
         setConfirmRemove(false);
         return;
       }
 
       setOptimisticUrl(null);
       close();
+      setSuccessMessage("Product image removed successfully.");
       router.refresh();
     });
   }
@@ -308,15 +321,23 @@ export function ProductImageWidget({
           <DialogTitle>{dialogTitle}</DialogTitle>
         </DialogHeader>
 
-        {/* Current or new preview */}
+        {/* Current or new preview — next/image throws for an empty/missing src, so this
+            renders a placeholder instead whenever neither a preview nor the current image
+            URL is available (e.g. mid-animation right after a successful remove). */}
         <div className="relative mx-auto h-52 w-40 overflow-hidden rounded-lg border border-musiva-border bg-musiva-blush/20">
-          <Image
-            alt="Product image"
-            className="object-cover object-top"
-            fill
-            sizes="160px"
-            src={previewUrl ?? optimisticUrl ?? ""}
-          />
+          {previewUrl || optimisticUrl ? (
+            <Image
+              alt="Product image"
+              className="object-cover object-top"
+              fill
+              sizes="160px"
+              src={previewUrl || optimisticUrl || ""}
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <ImageOff aria-hidden className="h-8 w-8 text-muted-foreground/40" />
+            </div>
+          )}
         </div>
 
         {/* File selection for replace */}
@@ -393,10 +414,19 @@ export function ProductImageWidget({
   );
 
   return (
-    <>
+    <div className="relative inline-flex">
       {thumbnailWrapper}
       {canEdit && uploadDialog}
       {canEdit && manageDialog}
-    </>
+      {successMessage && (
+        <div
+          role="status"
+          className="absolute -bottom-2 left-1/2 z-10 flex -translate-x-1/2 translate-y-full items-center gap-1.5 whitespace-nowrap rounded-md border border-musiva-sage/30 bg-white px-2.5 py-1.5 text-xs font-medium text-musiva-sage shadow-soft"
+        >
+          <CheckCircle2 aria-hidden className="h-3.5 w-3.5" />
+          {successMessage}
+        </div>
+      )}
+    </div>
   );
 }

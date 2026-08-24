@@ -19,6 +19,7 @@ import { StockBadge } from "@/components/products/stock-badge";
 import { BuyingCostDialog } from "@/components/inventory/buying-cost-dialog";
 import { AddStockModal } from "@/components/inventory/add-stock-modal";
 import { ExportMenu } from "@/components/reports/export-menu";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { listInventoryVariants } from "@/lib/services/inventory.service";
 import { getCurrentStaffProfile } from "@/lib/auth/session";
 import { canAdjustInventory, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
@@ -70,7 +71,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Stock</p>
+          <Breadcrumb segments={[{ label: "Stock Management" }]} />
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Stock Management</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Check available stock and add items as they arrive.

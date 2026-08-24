@@ -197,7 +197,7 @@ describe("uploadProductImage", () => {
     mockStorageUpload.mockResolvedValue({ error: { message: "storage error" } });
 
     const result = await uploadProductImage("product-1", makeFile());
-    expect(result.error).toMatch(/upload failed/i);
+    expect(result.error).toMatch(/could not upload image/i);
   });
 
   it("uploads successfully and inserts DB record", async () => {
@@ -237,6 +237,72 @@ describe("uploadProductImage", () => {
     expect(result.error).toMatch(/could not be saved/i);
     // Should attempt to clean up the orphaned storage file
     expect(mockStorageRemove).toHaveBeenCalled();
+  });
+
+  it("accepts a valid PNG", async () => {
+    mockAuthGranted();
+    mockDbSelect.mockResolvedValue({ data: null });
+    mockStorageUpload.mockResolvedValue({ error: null });
+    mockDbInsert.mockResolvedValue({
+      data: { id: "img-png", product_id: "product-1", url: "https://cdn/new.png", path: "product-1/new.png", is_primary: true },
+      error: null,
+    });
+
+    const result = await uploadProductImage("product-1", makeFile("dress.png", "image/png"));
+    expect(result.error).toBeNull();
+  });
+
+  it("accepts a valid WebP", async () => {
+    mockAuthGranted();
+    mockDbSelect.mockResolvedValue({ data: null });
+    mockStorageUpload.mockResolvedValue({ error: null });
+    mockDbInsert.mockResolvedValue({
+      data: { id: "img-webp", product_id: "product-1", url: "https://cdn/new.webp", path: "product-1/new.webp", is_primary: true },
+      error: null,
+    });
+
+    const result = await uploadProductImage("product-1", makeFile("dress.webp", "image/webp"));
+    expect(result.error).toBeNull();
+  });
+
+  it("does not remove the old image (DB or storage) when the new upload fails", async () => {
+    mockAuthGranted();
+    const existing = { id: "img-old", product_id: "product-1", url: "https://cdn/old.jpg", path: "product-1/old.jpg" };
+    mockDbSelect.mockResolvedValue({ data: existing });
+    mockStorageUpload.mockResolvedValue({ error: { message: "network error" } });
+
+    const result = await uploadProductImage("product-1", makeFile());
+    expect(result.error).toBeTruthy();
+    expect(mockDbDelete).not.toHaveBeenCalled();
+    expect(mockStorageRemove).not.toHaveBeenCalled();
+  });
+
+  it("returns a friendly error and cleans up the file when getPublicUrl yields no URL", async () => {
+    mockAuthGranted();
+    mockDbSelect.mockResolvedValue({ data: null });
+    mockStorageUpload.mockResolvedValue({ error: null });
+    mockStorageGetPublicUrl.mockReturnValue({ data: { publicUrl: "" } });
+    mockStorageRemove.mockResolvedValue({ error: null });
+
+    const result = await uploadProductImage("product-1", makeFile());
+    expect(result.error).toMatch(/could not upload image/i);
+    expect(mockDbInsert).not.toHaveBeenCalled();
+    expect(mockStorageRemove).toHaveBeenCalled();
+  });
+
+  it("catches an unexpected exception and returns a friendly message instead of throwing (never crashes the page)", async () => {
+    mockAuthGranted();
+    mockDbSelect.mockResolvedValue({ data: null });
+    mockStorageUpload.mockImplementation(() => {
+      throw new Error("unexpected network failure");
+    });
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(uploadProductImage("product-1", makeFile())).resolves.toEqual(
+      expect.objectContaining({ error: expect.stringMatching(/could not upload image/i) }),
+    );
+    expect(consoleSpy).toHaveBeenCalled();
+    consoleSpy.mockRestore();
   });
 
   describe("color images", () => {
@@ -354,6 +420,20 @@ describe("removeProductImage", () => {
     mockDbDelete.mockResolvedValue({ error: { message: "db error" } });
 
     const result = await removeProductImage("product-1");
-    expect(result.error).toMatch(/could not be removed/i);
+    expect(result.error).toMatch(/could not remove image/i);
+  });
+
+  it("catches an unexpected exception and returns a friendly message instead of throwing (never crashes the page)", async () => {
+    mockAuthGranted();
+    mockDbSelect.mockImplementation(() => {
+      throw new Error("unexpected connection failure");
+    });
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(removeProductImage("product-1")).resolves.toEqual(
+      expect.objectContaining({ error: expect.stringMatching(/could not remove image/i) }),
+    );
+    expect(consoleSpy).toHaveBeenCalled();
+    consoleSpy.mockRestore();
   });
 });

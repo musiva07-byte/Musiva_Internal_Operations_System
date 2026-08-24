@@ -1,11 +1,27 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Edit, ExternalLink, FileText, MessageCircle, Printer, Tags, Truck } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Edit,
+  ExternalLink,
+  FileText,
+  MessageCircle,
+  Printer,
+  Tags,
+  Truck,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { OrderStatusBadge, PaymentStatusBadge } from "@/components/orders/status-badge";
-import { getOrder } from "@/lib/services/order.service";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
+import { OrderStatusBadge, PaymentStatusBadge, orderStatusHelperText } from "@/components/orders/status-badge";
+import { CancelDuplicateDialog } from "@/components/orders/cancel-duplicate-dialog";
+import { getOrder, getAdjacentOrders } from "@/lib/services/order.service";
+import { getCurrentAuthState } from "@/lib/auth/session";
+import { canManageOrders } from "@/lib/auth/permissions";
+import { ORDER_STATUSES } from "@/lib/constants";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatBahrainPhone } from "@/lib/utils/phone";
 import { buildWhatsAppMessage, buildWhatsAppUrl } from "@/lib/utils/whatsapp";
@@ -18,12 +34,16 @@ type OrderDetailPageProps = {
 
 export default async function OrderDetailPage({ params }: OrderDetailPageProps) {
   const { id } = await params;
-  const order = await getOrder(id);
+  const [order, { profile }] = await Promise.all([getOrder(id), getCurrentAuthState()]);
 
   if (!order) {
     notFound();
   }
 
+  const { previous: previousOrder, next: nextOrder } = await getAdjacentOrders(order.id, order.created_at);
+
+  const canCancel = canManageOrders(profile?.role ?? null) && order.order_status !== ORDER_STATUSES.cancelled;
+  const statusHelperText = orderStatusHelperText(order.order_status);
   const isDelivery = order.fulfilment_method === "delivery";
   const customerPhone =
     formatBahrainPhone(order.customer.mobile_normalized) || order.customer.mobile;
@@ -42,9 +62,42 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Order</p>
+          <Breadcrumb segments={[{ label: "Orders", href: "/admin/orders" }, { label: order.order_number }]} />
+          <div className="mt-2">
+            <BackLink href="/admin/orders" label="Back to orders" />
+          </div>
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{order.order_number}</h1>
           <p className="mt-2 text-sm text-muted-foreground">{formatDateTime(order.created_at)}</p>
+          <div className="mt-2 flex items-center gap-3 text-sm">
+            {previousOrder ? (
+              <Link
+                href={`/admin/orders/${previousOrder.id}`}
+                className="flex items-center gap-1 font-medium text-musiva-plum hover:underline"
+              >
+                <ChevronLeft aria-hidden className="h-3.5 w-3.5" />
+                Previous order
+              </Link>
+            ) : (
+              <span className="flex items-center gap-1 text-muted-foreground/50">
+                <ChevronLeft aria-hidden className="h-3.5 w-3.5" />
+                Previous order
+              </span>
+            )}
+            {nextOrder ? (
+              <Link
+                href={`/admin/orders/${nextOrder.id}`}
+                className="flex items-center gap-1 font-medium text-musiva-plum hover:underline"
+              >
+                Next order
+                <ChevronRight aria-hidden className="h-3.5 w-3.5" />
+              </Link>
+            ) : (
+              <span className="flex items-center gap-1 text-muted-foreground/50">
+                Next order
+                <ChevronRight aria-hidden className="h-3.5 w-3.5" />
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -104,13 +157,22 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
               Edit
             </Link>
           </Button>
+
+          {/* Cancel / Mark duplicate — safe cleanup for a wrong order (e.g. replaced by a
+              size/color correction). Server enforces owner/manager for completed orders. */}
+          {canCancel && <CancelDuplicateDialog orderId={order.id} orderNumber={order.order_number} />}
         </div>
       </header>
 
       <section className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader><CardTitle className="text-sm text-muted-foreground">Order status</CardTitle></CardHeader>
-          <CardContent><OrderStatusBadge status={order.order_status} /></CardContent>
+          <CardContent>
+            <OrderStatusBadge status={order.order_status} />
+            {statusHelperText && (
+              <p className="mt-1.5 text-xs text-muted-foreground">{statusHelperText}</p>
+            )}
+          </CardContent>
         </Card>
         <Card>
           <CardHeader><CardTitle className="text-sm text-muted-foreground">Payment</CardTitle></CardHeader>

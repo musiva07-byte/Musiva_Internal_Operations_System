@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { getProductCostReport } from "@/lib/services/report.service";
 import { listCategories } from "@/lib/services/product.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
@@ -30,7 +32,10 @@ export default async function ProductCostReportPage({ searchParams }: PageProps)
     return (
       <div className="space-y-6">
         <header>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Reports</p>
+          <Breadcrumb segments={[{ label: "Reports", href: "/admin/reports" }, { label: "Product cost report" }]} />
+          <div className="mt-2">
+            <BackLink href="/admin/reports" label="Back to reports" />
+          </div>
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Product cost report</h1>
         </header>
         <Card className="shadow-soft">
@@ -76,7 +81,10 @@ export default async function ProductCostReportPage({ searchParams }: PageProps)
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Reports</p>
+        <Breadcrumb segments={[{ label: "Reports", href: "/admin/reports" }, { label: "Product cost report" }]} />
+        <div className="mt-2">
+          <BackLink href="/admin/reports" label="Back to reports" />
+        </div>
         <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Product cost report</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Buying cost, selling value, and margin per product. Only variants with a valid buying

@@ -1,6 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { getInventoryReport } from "@/lib/services/report.service";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatDateTime } from "@/lib/formatters/date";
@@ -12,7 +14,10 @@ export default async function InventoryReportPage() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Reports</p>
+        <Breadcrumb segments={[{ label: "Reports", href: "/admin/reports" }, { label: "Inventory report" }]} />
+        <div className="mt-2">
+          <BackLink href="/admin/reports" label="Back to reports" />
+        </div>
         <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Inventory report</h1>
         <p className="mt-2 text-sm text-muted-foreground">Current stock, value, low stock, and movement history.</p>
       </header>

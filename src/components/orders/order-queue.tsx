@@ -40,11 +40,32 @@ const TABS: { id: Tab; label: string; countKey: keyof OrderTabCounts }[] = [
   { id: "today", label: "Today", countKey: "today" },
   { id: "new", label: "New", countKey: "new" },
   { id: "confirmed", label: "Confirmed", countKey: "confirmed" },
-  { id: "in_fulfilment", label: "In Fulfilment", countKey: "in_fulfilment" },
+  { id: "in_fulfilment", label: "Preparing", countKey: "in_fulfilment" },
   { id: "completed", label: "Completed", countKey: "completed" },
   { id: "cancelled", label: "Cancelled", countKey: "cancelled" },
   { id: "all", label: "All orders", countKey: "all" },
 ];
+
+// Tab-specific empty-state copy — staff-facing only, does not affect the "today"/"new"/etc.
+// tab values themselves (still the same internal order_status/tab keys used for filtering).
+const EMPTY_STATE_COPY: Record<Tab, { title: string; subtitle?: string }> = {
+  today: { title: "No orders today yet." },
+  new: {
+    title: "No new orders right now.",
+    subtitle: "Orders waiting for confirmation will appear here.",
+  },
+  confirmed: {
+    title: "No confirmed orders waiting.",
+    subtitle: "Confirmed orders will appear here before preparation.",
+  },
+  in_fulfilment: {
+    title: "No orders being prepared right now.",
+    subtitle: "Packed, pickup, and delivery orders will appear here.",
+  },
+  completed: { title: "No completed orders found for this view." },
+  cancelled: { title: "No cancelled orders found." },
+  all: { title: "No orders found." },
+};
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -339,9 +360,43 @@ export function OrderQueue({
     selectedIds.size > 0 && selectedIds.size === orders.data.length;
   const someSelected = selectedIds.size > 0;
   const hasActiveFilters = Boolean(currentQ || currentPaymentStatus || currentFulfilment);
-  const emptyContent = orders.loadError ? orders.loadError : tabCounts.all === 0 && !hasActiveFilters ? (
-    <div className="flex flex-col items-center gap-3"><div><p className="font-medium text-foreground">No orders yet.</p><p>Create your first sale to start tracking customer orders.</p></div><Button asChild size="sm"><Link href="/admin/orders/new">New sale</Link></Button></div>
-  ) : "No orders found.";
+
+  let emptyContent: ReactNode;
+  if (orders.loadError) {
+    emptyContent = orders.loadError;
+  } else if (tabCounts.all === 0 && !hasActiveFilters) {
+    emptyContent = (
+      <div className="flex flex-col items-center gap-3">
+        <div>
+          <p className="font-medium text-foreground">No orders yet.</p>
+          <p>Create your first sale to start tracking customer orders.</p>
+        </div>
+        <Button asChild size="sm">
+          <Link href="/admin/orders/new">New sale</Link>
+        </Button>
+      </div>
+    );
+  } else {
+    const copy = EMPTY_STATE_COPY[currentTab as Tab] ?? EMPTY_STATE_COPY.all;
+    emptyContent = (
+      <div className="flex flex-col items-center gap-3">
+        <div>
+          <p className="font-medium text-foreground">{copy.title}</p>
+          {copy.subtitle && <p>{copy.subtitle}</p>}
+        </div>
+        <div className="flex flex-wrap justify-center gap-2">
+          {hasActiveFilters && (
+            <Button asChild size="sm" variant="outline">
+              <a href={tabUrl(currentTab)}>Clear filters</a>
+            </Button>
+          )}
+          <Button asChild size="sm">
+            <Link href="/admin/orders/new">New sale</Link>
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -408,7 +463,7 @@ export function OrderQueue({
         </Select>
 
         <Select defaultValue={currentFulfilment} name="fulfilment" className="h-8 w-40 text-sm">
-          <option value="">All fulfilment</option>
+          <option value="">All order types</option>
           <option value="delivery">Delivery</option>
           <option value="walk_in">Walk-in</option>
           <option value="customer_pickup">Pickup</option>
