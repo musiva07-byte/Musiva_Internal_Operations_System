@@ -177,11 +177,11 @@ describe("uploadProductImage", () => {
     expect(result.error).toBeTruthy();
   });
 
-  it("rejects a file over 5 MB", async () => {
+  it("rejects a file over 4 MB (kept under Vercel's 4.5 MB hard request-body cap)", async () => {
     mockAuthGranted();
-    const tooBig = makeFile("large.jpg", "image/jpeg", 6 * 1024 * 1024);
+    const tooBig = makeFile("large.jpg", "image/jpeg", 4.2 * 1024 * 1024);
     const result = await uploadProductImage("product-1", tooBig);
-    expect(result.error).toMatch(/5 MB/i);
+    expect(result.error).toMatch(/4 MB/i);
   });
 
   it("rejects an empty file", async () => {

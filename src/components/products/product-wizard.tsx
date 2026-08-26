@@ -55,7 +55,11 @@ type ProductWizardProps = {
   currentExchangeRateSource: string | null;
 };
 
-const MAX_IMAGE_MB = 5;
+// Vercel Functions hard-cap every request body at 4.5 MB (infrastructure-level, not
+// configurable) — this must stay comfortably under that. Same 4 MB limit as
+// product-image-widget.tsx/product-image.service.ts, since both submit to the same
+// uploadProductImageAction.
+const MAX_IMAGE_MB = 4;
 const MAX_IMAGE_BYTES = MAX_IMAGE_MB * 1024 * 1024;
 const IMAGE_ACCEPT = ".jpg,.jpeg,.png,.webp";
 const IMAGE_ACCEPT_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
@@ -689,13 +693,13 @@ export function ProductWizard({
       return;
     }
     if (!IMAGE_ACCEPT_MIME.includes(file.type)) {
-      setImageError("Only JPEG, PNG, and WebP images are accepted.");
+      setImageError("Please upload a JPG, PNG, or WebP image.");
       clearImageSelection();
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
       setImageError(
-        `Image must be ${MAX_IMAGE_MB} MB or smaller. Selected file is ${(file.size / 1024 / 1024).toFixed(1)} MB.`,
+        `Image is too large. Please upload an image under ${MAX_IMAGE_MB} MB. Selected file is ${(file.size / 1024 / 1024).toFixed(1)} MB.`,
       );
       clearImageSelection();
       return;

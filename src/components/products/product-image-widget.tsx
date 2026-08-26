@@ -16,7 +16,10 @@ import {
 import { uploadProductImageAction, removeProductImageAction } from "@/app/admin/products/image-actions";
 import { cn } from "@/lib/utils";
 
-const MAX_SIZE_MB = 5;
+// Vercel Functions hard-cap every request body at 4.5 MB (infrastructure-level, not
+// configurable). This must stay comfortably under that — see product-image.service.ts and
+// next.config.ts, which use the same 4 MB limit for the same reason.
+const MAX_SIZE_MB = 4;
 const MAX_BYTES = MAX_SIZE_MB * 1024 * 1024;
 const ACCEPT = ".jpg,.jpeg,.png,.webp";
 const ACCEPT_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];

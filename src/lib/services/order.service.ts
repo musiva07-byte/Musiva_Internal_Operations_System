@@ -100,16 +100,65 @@ function customerPayload(input: CreateOrderInput["customer"]) {
 
 // ─── List and fetch ───────────────────────────────────────────────────────────
 
-export async function listOrderableVariants(): Promise<OrderableVariantItem[]> {
+/** Strips characters that have special meaning in a PostgREST filter string (`,` separates
+ *  OR conditions, `(`/`)` delimit an `in.(...)` list) so a staff-typed search term can never
+ *  be misread as filter syntax. Applied before every ilike/`.or()` interpolation below. */
+function sanitizeSearchTerm(value: string): string {
+  return value.replace(/[,()]/g, " ").trim();
+}
+
+/**
+ * New Sale's product picker. With no search term, returns a default browse list — the 100
+ * most recently updated active variants, unchanged from before.
+ *
+ * With a search term, this searches the FULL active catalog server-side (product name via a
+ * first lookup on `products`, then variant_sku/barcode/color/size directly) instead of
+ * filtering only within that same 100-row browse window client-side. That client-side-only
+ * filtering was the bug: once the catalog passed 100 active variants, any variant whose
+ * `updated_at` fell outside the most-recently-touched 100 became permanently unsearchable in
+ * New Sale even while in stock — confirmed live (161 active variants; two in-stock variants
+ * of "A LINE 3 PEASE SET" were invisible to a "39" search because two other, out-of-stock
+ * variants of the same product had been touched more recently and displaced them from the
+ * window). Search results are capped at 100 rows — a real search should never return an
+ * effectively unbounded list either.
+ */
+export async function listOrderableVariants(filters: { q?: string } = {}): Promise<OrderableVariantItem[]> {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return [];
 
-  const { data } = await supabase
+  const q = filters.q?.trim() ? sanitizeSearchTerm(filters.q) : "";
+
+  let productIds: string[] = [];
+  if (q) {
+    const { data: matchingProducts } = await supabase
+      .from("products")
+      .select("id")
+      .ilike("name", `%${q}%`)
+      .limit(50);
+    productIds = (matchingProducts ?? []).map((p) => p.id);
+  }
+
+  let query = supabase
     .from("product_variants")
     .select("*, products!inner(name, sku)")
     .eq("status", "active")
     .order("updated_at", { ascending: false })
     .limit(100);
+
+  if (q) {
+    const orParts = [
+      `variant_sku.ilike.%${q}%`,
+      `barcode.ilike.%${q}%`,
+      `color.ilike.%${q}%`,
+      `size.ilike.%${q}%`,
+    ];
+    if (productIds.length > 0) {
+      orParts.push(`product_id.in.(${productIds.join(",")})`);
+    }
+    query = query.or(orParts.join(","));
+  }
+
+  const { data } = await query;
 
   const rows = (data ?? []) as unknown as VariantRelationRow[];
   return rows.map((row) => ({

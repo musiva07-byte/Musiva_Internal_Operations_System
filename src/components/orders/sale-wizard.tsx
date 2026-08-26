@@ -31,6 +31,7 @@ import { formatBahrainPhone } from "@/lib/utils/phone";
 import { createOrderAction } from "@/app/admin/orders/actions";
 import type { CreateOrderActionResult } from "@/app/admin/orders/actions";
 import { searchCustomerAction } from "@/app/admin/orders/customer-search-action";
+import { searchOrderableVariantsAction } from "@/app/admin/orders/product-search-action";
 import type { CustomerAddressRow, CustomerRow, FulfilmentMethod } from "@/types/database";
 import type { CustomerSearchResult, OrderableVariantItem } from "@/types/app";
 import { cn } from "@/lib/utils";
@@ -256,17 +257,44 @@ function ItemsStep({
   setCart: (c: CartItem[]) => void;
 }) {
   const [search, setSearch] = useState("");
+  // null = not searching (browse the initial `variants` list). Once staff type anything, this
+  // holds real server-side search results across the FULL catalog — never a client-side
+  // filter over just the initial list, which is capped and can silently hide in-stock items
+  // once the catalog passes that cap (see listOrderableVariants' doc comment).
+  const [searchResults, setSearchResults] = useState<OrderableVariantItem[] | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const filtered = variants.filter((v) => {
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      v.product_name.toLowerCase().includes(q) ||
-      v.variant_sku.toLowerCase().includes(q) ||
-      v.color.toLowerCase().includes(q) ||
-      v.size.toLowerCase().includes(q)
-    );
-  });
+  // Same debounce-from-the-input-handler pattern as CustomerStep's mobile search above —
+  // deliberately not a useEffect, so the debounced fetch is only ever triggered by an actual
+  // keystroke, not by every render.
+  const triggerProductSearch = useCallback((value: string) => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        const results = await searchOrderableVariantsAction(trimmed);
+        setSearchResults(results);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 350);
+  }, []);
+
+  function handleSearchChange(value: string) {
+    setSearch(value);
+    triggerProductSearch(value);
+  }
+
+  const filtered = searchResults ?? variants;
 
   function addToCart(v: OrderableVariantItem) {
     const existing = cart.find((c) => c.variantId === v.id);
@@ -390,14 +418,24 @@ function ItemsStep({
           <Input
             placeholder="Search by name, SKU, colour, or size…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-9"
           />
+          {isSearching && (
+            <Loader2 aria-hidden className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+          )}
         </div>
+        {search.trim() && (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Searching the full catalog for &ldquo;{search.trim()}&rdquo;.
+          </p>
+        )}
       </div>
 
       <div className="max-h-72 overflow-y-auto rounded-xl border border-[hsl(var(--border))]">
-        {filtered.length === 0 ? (
+        {isSearching && filtered.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Searching…</p>
+        ) : filtered.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">No products found.</p>
         ) : (
           <div className="divide-y divide-[hsl(var(--border))]">

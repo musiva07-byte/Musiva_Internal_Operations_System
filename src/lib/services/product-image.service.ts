@@ -7,13 +7,17 @@ import { serviceError, serviceSuccess, type ServiceResult } from "./service-resu
 import type { ProductImageRow } from "@/types/database";
 
 const STORAGE_BUCKET = "product-images";
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+// Vercel Functions hard-cap every request body at 4.5 MB — an infrastructure limit that
+// next.config.ts's serverActions.bodySizeLimit cannot raise (see next.config.ts). Our own
+// limit must stay comfortably under that so a real, app-accepted upload can never be rejected
+// by the platform itself before it reaches our error handling.
+const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
 const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 
 // Friendly, staff-facing messages — never the raw Supabase/Postgres error text.
 const FRIENDLY_TYPE_ERROR = "Please upload a JPG, PNG, or WebP image.";
-const FRIENDLY_SIZE_ERROR = "Image is too large. Please upload an image under 5 MB.";
+const FRIENDLY_SIZE_ERROR = "Image is too large. Please upload an image under 4 MB.";
 const FRIENDLY_STORAGE_UNAVAILABLE = "Image storage is not available. Please contact the administrator.";
 const FRIENDLY_UPLOAD_ERROR = "Could not upload image. Please try again.";
 const FRIENDLY_REMOVE_ERROR = "Could not remove image. Please try again.";

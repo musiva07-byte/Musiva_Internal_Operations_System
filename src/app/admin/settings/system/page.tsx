@@ -193,7 +193,7 @@ export default async function SystemPage() {
           </p>
           <p className="text-xs">
             Recommended: keep each product image under 1 MB after compression. Accepted formats:
-            WebP, JPEG, PNG. Maximum upload size: 5 MB.
+            WebP, JPEG, PNG. Maximum upload size: 4 MB.
           </p>
         </CardContent>
       </Card>
