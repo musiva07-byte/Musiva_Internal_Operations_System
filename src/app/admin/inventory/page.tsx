@@ -20,6 +20,7 @@ import { BuyingCostDialog } from "@/components/inventory/buying-cost-dialog";
 import { AddStockModal } from "@/components/inventory/add-stock-modal";
 import { ExportMenu } from "@/components/reports/export-menu";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { PageHeader } from "@/components/layout/page-header";
 import { listInventoryVariants } from "@/lib/services/inventory.service";
 import { getCurrentStaffProfile } from "@/lib/auth/session";
 import { canAdjustInventory, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
@@ -69,39 +70,39 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <Breadcrumb segments={[{ label: "Stock Management" }]} />
-          <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Stock Management</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Check available stock and add items as they arrive.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <ExportMenu
-            csvHref={`/api/admin/inventory/export${exportQuery ? `?${exportQuery}` : ""}`}
-            printHref={`/print/inventory${exportQuery ? `?${exportQuery}` : ""}`}
-          />
-          <Button asChild variant="outline">
-            <Link href="/admin/inventory/movements">
-              <ClipboardList aria-hidden className="mr-2 h-4 w-4" />
-              Stock history
-            </Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/admin/inventory/adjustments">
-              <SlidersHorizontal aria-hidden className="mr-2 h-4 w-4" />
-              Correct quantity
-            </Link>
-          </Button>
+      <PageHeader
+        breadcrumb={<Breadcrumb segments={[{ label: "Stock Management" }]} />}
+        title="Stock Management"
+        description="Check available stock and add items as they arrive."
+        secondaryActions={
+          <>
+            <ExportMenu
+              csvHref={`/api/admin/inventory/export${exportQuery ? `?${exportQuery}` : ""}`}
+              printHref={`/print/inventory${exportQuery ? `?${exportQuery}` : ""}`}
+            />
+            <Button asChild variant="outline">
+              <Link href="/admin/inventory/movements">
+                <ClipboardList aria-hidden className="mr-2 h-4 w-4" />
+                Stock history
+              </Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/admin/inventory/adjustments">
+                <SlidersHorizontal aria-hidden className="mr-2 h-4 w-4" />
+                Correct quantity
+              </Link>
+            </Button>
+          </>
+        }
+        primaryActions={
           <Button asChild>
             <Link href="/admin/inventory/stock-entry">
               <PackagePlus aria-hidden className="mr-2 h-4 w-4" />
               Receive stock
             </Link>
           </Button>
-        </div>
-      </header>
+        }
+      />
 
       <Card className="shadow-soft">
         <CardContent className="pt-6">

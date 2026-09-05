@@ -5,6 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pagination } from "@/components/products/pagination";
+import { PageHeader } from "@/components/layout/page-header";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { listSuppliers } from "@/lib/services/supplier.service";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatDate } from "@/lib/formatters/date";
@@ -33,21 +35,19 @@ export default async function SuppliersPage({ searchParams }: SuppliersPageProps
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Suppliers</p>
-          <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Supplier directory</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Manage vendor details and review purchase history for boutique stock sourcing.
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/admin/suppliers/new">
-            <Plus aria-hidden className="mr-2 h-4 w-4" />
-            New supplier
-          </Link>
-        </Button>
-      </header>
+      <PageHeader
+        breadcrumb={<Breadcrumb segments={[{ label: "Management" }, { label: "Suppliers" }]} />}
+        title="Supplier directory"
+        description="Manage vendor details and review purchase history for boutique stock sourcing."
+        primaryActions={
+          <Button asChild>
+            <Link href="/admin/suppliers/new">
+              <Plus aria-hidden className="mr-2 h-4 w-4" />
+              New supplier
+            </Link>
+          </Button>
+        }
+      />
 
       <Card className="shadow-soft">
         <CardContent className="pt-6">
@@ -78,7 +78,24 @@ export default async function SuppliersPage({ searchParams }: SuppliersPageProps
             {suppliers.data.length === 0 ? (
               <TableRow>
                 <TableCell className="h-28 text-center text-muted-foreground" colSpan={5}>
-                  No suppliers found.
+                  {!q ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <div>
+                        <p className="font-medium text-foreground">No suppliers yet.</p>
+                        <p>Add a supplier before creating purchase orders.</p>
+                      </div>
+                      <Button asChild size="sm">
+                        <Link href="/admin/suppliers/new">New supplier</Link>
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-3">
+                      <p>No suppliers found for &ldquo;{q}&rdquo;.</p>
+                      <Button asChild size="sm" variant="outline">
+                        <Link href="/admin/suppliers">Clear filters</Link>
+                      </Button>
+                    </div>
+                  )}
                 </TableCell>
               </TableRow>
             ) : (

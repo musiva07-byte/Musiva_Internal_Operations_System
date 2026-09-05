@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  ChevronLeft,
-  ChevronRight,
   Edit,
   ExternalLink,
   FileText,
@@ -16,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { BackLink } from "@/components/layout/back-link";
+import { PreviousNextNav } from "@/components/layout/previous-next-nav";
 import { OrderStatusBadge, PaymentStatusBadge, orderStatusHelperText } from "@/components/orders/status-badge";
 import { CancelDuplicateDialog } from "@/components/orders/cancel-duplicate-dialog";
 import { getOrder, getAdjacentOrders } from "@/lib/services/order.service";
@@ -68,36 +67,13 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
           </div>
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{order.order_number}</h1>
           <p className="mt-2 text-sm text-muted-foreground">{formatDateTime(order.created_at)}</p>
-          <div className="mt-2 flex items-center gap-3 text-sm">
-            {previousOrder ? (
-              <Link
-                href={`/admin/orders/${previousOrder.id}`}
-                className="flex items-center gap-1 font-medium text-musiva-plum hover:underline"
-              >
-                <ChevronLeft aria-hidden className="h-3.5 w-3.5" />
-                Previous order
-              </Link>
-            ) : (
-              <span className="flex items-center gap-1 text-muted-foreground/50">
-                <ChevronLeft aria-hidden className="h-3.5 w-3.5" />
-                Previous order
-              </span>
-            )}
-            {nextOrder ? (
-              <Link
-                href={`/admin/orders/${nextOrder.id}`}
-                className="flex items-center gap-1 font-medium text-musiva-plum hover:underline"
-              >
-                Next order
-                <ChevronRight aria-hidden className="h-3.5 w-3.5" />
-              </Link>
-            ) : (
-              <span className="flex items-center gap-1 text-muted-foreground/50">
-                Next order
-                <ChevronRight aria-hidden className="h-3.5 w-3.5" />
-              </span>
-            )}
-          </div>
+          <PreviousNextNav
+            previous={previousOrder ? { id: previousOrder.id, label: previousOrder.order_number } : null}
+            next={nextOrder ? { id: nextOrder.id, label: nextOrder.order_number } : null}
+            hrefFor={(orderId) => `/admin/orders/${orderId}`}
+            previousLabel="Previous order"
+            nextLabel="Next order"
+          />
         </div>
 
         <div className="flex flex-wrap gap-2">

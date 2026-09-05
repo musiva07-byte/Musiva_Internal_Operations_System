@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { receivePurchaseFormAction } from "@/app/admin/purchases/actions";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
+import { MarkReceivedButton } from "@/components/purchases/mark-received-button";
 import { PURCHASE_PAYMENT_STATUSES, PURCHASE_STATUSES } from "@/lib/constants";
 import { getPurchase } from "@/lib/services/purchase.service";
 import { getCurrentStaffProfile } from "@/lib/auth/session";
@@ -66,7 +66,16 @@ export default async function PurchasePage({ params }: PurchasePageProps) {
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Purchases</p>
+          <Breadcrumb
+            segments={[
+              { label: "Management" },
+              { label: "Purchases", href: "/admin/purchases" },
+              { label: purchase.purchase_number },
+            ]}
+          />
+          <div className="mt-2">
+            <BackLink href="/admin/purchases" label="Back to purchases" />
+          </div>
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{purchase.purchase_number}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Supplier:{" "}
@@ -78,14 +87,7 @@ export default async function PurchasePage({ params }: PurchasePageProps) {
             </Link>
           </p>
         </div>
-        {canReceive ? (
-          <form action={receivePurchaseFormAction.bind(null, purchase.id)}>
-            <Button type="submit">
-              <CheckCircle2 aria-hidden className="mr-2 h-4 w-4" />
-              Mark received
-            </Button>
-          </form>
-        ) : null}
+        {canReceive ? <MarkReceivedButton purchaseId={purchase.id} /> : null}
       </header>
 
       {/* Status cards */}

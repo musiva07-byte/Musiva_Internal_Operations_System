@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1753,7 +1754,7 @@ export function ProductWizard({
         </p>
       ) : null}
 
-      <div className="flex justify-between gap-3">
+      <StickyActionBar className="flex justify-between gap-3">
         {step < 4 && (
           <Button
             type="button"
@@ -1821,7 +1822,7 @@ export function ProductWizard({
             </>
           )}
         </div>
-      </div>
+      </StickyActionBar>
 
       {canViewProfit && (
         <PriceConfirmationDialog

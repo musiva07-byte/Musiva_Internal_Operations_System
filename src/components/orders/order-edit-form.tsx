@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
+import { SuccessDialog } from "@/components/layout/success-dialog";
 import { ORDER_STATUSES, PAYMENT_METHODS, PAYMENT_STATUSES } from "@/lib/constants";
 import { titleize } from "@/lib/formatters/labels";
 import { updateOrderSchema, type UpdateOrderInput } from "@/lib/validations/order.schema";
@@ -21,6 +23,7 @@ export function OrderEditForm({ order }: { order: OrderRow }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
   const form = useForm<UpdateOrderInput>({
     resolver: zodResolver(updateOrderSchema) as Resolver<UpdateOrderInput>,
     defaultValues: {
@@ -40,7 +43,7 @@ export function OrderEditForm({ order }: { order: OrderRow }) {
         setFormError(result.error ?? "Order could not be updated.");
         return;
       }
-      router.push(`/admin/orders/${order.id}`);
+      setSaved(true);
       router.refresh();
     });
   }
@@ -84,16 +87,33 @@ export function OrderEditForm({ order }: { order: OrderRow }) {
             <Textarea {...form.register("notes")} />
           </div>
           {formError ? <p className="text-sm text-destructive md:col-span-2">{formError}</p> : null}
-          <div className="flex justify-end gap-3 md:col-span-2">
+          <StickyActionBar className="flex justify-end gap-3 md:col-span-2">
             <Button type="button" variant="outline" onClick={() => router.back()}>
               Cancel
             </Button>
             <Button disabled={isPending} type="submit">
               {isPending ? "Saving..." : "Save order"}
             </Button>
-          </div>
+          </StickyActionBar>
         </form>
       </CardContent>
+
+      <SuccessDialog
+        open={saved}
+        onOpenChange={(open) => !open && setSaved(false)}
+        title="Order updated successfully"
+        description={`${order.order_number} — status and payment details saved.`}
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => router.push("/admin/orders")}>
+              Back to Orders
+            </Button>
+            <Button type="button" onClick={() => router.push(`/admin/orders/${order.id}`)}>
+              View order
+            </Button>
+          </>
+        }
+      />
     </Card>
   );
 }

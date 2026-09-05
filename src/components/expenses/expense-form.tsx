@@ -11,8 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
+import { SuccessDialog } from "@/components/layout/success-dialog";
 import { createExpenseAction } from "@/app/admin/expenses/actions";
 import { EXPENSE_CATEGORIES, PAYMENT_METHODS } from "@/lib/constants";
+import { formatBhd } from "@/lib/formatters/currency";
 import { titleize } from "@/lib/formatters/labels";
 import { expenseSchema, type ExpenseInput } from "@/lib/validations/expense.schema";
 
@@ -24,6 +27,7 @@ export function ExpenseForm() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ id: string; amount: number; category: string } | null>(null);
   const form = useForm<ExpenseInput>({
     resolver: zodResolver(expenseSchema) as Resolver<ExpenseInput>,
     defaultValues: {
@@ -45,7 +49,7 @@ export function ExpenseForm() {
         setFormError(result.error ?? "Expense could not be created.");
         return;
       }
-      router.push(`/admin/expenses/${result.id}`);
+      setSaved({ id: result.id, amount: values.amount, category: values.category });
       router.refresh();
     });
   }
@@ -96,14 +100,33 @@ export function ExpenseForm() {
 
       {formError ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{formError}</p> : null}
 
-      <div className="flex justify-end gap-3">
+      <StickyActionBar className="flex justify-end gap-3">
         <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
         <Button disabled={isPending} type="submit">
           {isPending ? "Saving..." : "Save expense"}
         </Button>
-      </div>
+      </StickyActionBar>
+
+      {saved && (
+        <SuccessDialog
+          open={saved !== null}
+          onOpenChange={(open) => !open && router.push(`/admin/expenses/${saved.id}`)}
+          title="Expense recorded successfully"
+          description={`${titleize(saved.category)} — ${formatBhd(saved.amount)}`}
+          footer={
+            <>
+              <Button type="button" variant="outline" onClick={() => router.push("/admin/expenses")}>
+                Back to expenses
+              </Button>
+              <Button type="button" onClick={() => router.push(`/admin/expenses/${saved.id}`)}>
+                View expense
+              </Button>
+            </>
+          }
+        />
+      )}
     </form>
   );
 }

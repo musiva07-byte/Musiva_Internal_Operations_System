@@ -1,5 +1,10 @@
+import Link from "next/link";
+import { Database } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { SettingsForm } from "@/components/settings/settings-form";
 import { ExchangeRateSettings } from "@/components/settings/exchange-rate-settings";
+import { PageHeader } from "@/components/layout/page-header";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { getSettings } from "@/lib/services/settings.service";
 import { getCurrentExchangeRate } from "@/lib/services/exchange-rate.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
@@ -28,13 +33,19 @@ export default async function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Settings</p>
-        <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Business settings</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Configure Musiva identity, print text, delivery defaults, and receipt settings.
-        </p>
-      </header>
+      <PageHeader
+        breadcrumb={<Breadcrumb segments={[{ label: "Settings" }]} />}
+        title="Business settings"
+        description="Configure Musiva identity, print text, delivery defaults, and receipt settings."
+        secondaryActions={
+          <Button asChild variant="outline">
+            <Link href="/admin/settings/system">
+              <Database aria-hidden className="mr-2 h-4 w-4" />
+              System usage
+            </Link>
+          </Button>
+        }
+      />
 
       {settings ? (
         <SettingsForm settings={settings} />

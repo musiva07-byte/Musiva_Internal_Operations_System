@@ -28,14 +28,15 @@ describe("Order Detail page — Previous/Next order navigation", () => {
     expect(source).toContain("getAdjacentOrders(order.id, order.created_at)");
   });
 
-  it("renders Previous order and Next order links/placeholders", () => {
-    expect(source).toContain("Previous order");
-    expect(source).toContain("Next order");
+  it("renders the shared PreviousNextNav with Previous order / Next order labels", () => {
+    expect(source).toContain("PreviousNextNav");
+    expect(source).toContain('previousLabel="Previous order"');
+    expect(source).toContain('nextLabel="Next order"');
   });
 
-  it("disables (does not link) Previous/Next when there is no adjacent order", () => {
-    expect(source).toMatch(/previousOrder \? \(/);
-    expect(source).toMatch(/nextOrder \? \(/);
+  it("passes null when there is no adjacent order (PreviousNextNav renders the disabled state)", () => {
+    expect(source).toMatch(/previous=\{previousOrder \? \{ id: previousOrder\.id, label: previousOrder\.order_number \} : null\}/);
+    expect(source).toMatch(/next=\{nextOrder \? \{ id: nextOrder\.id, label: nextOrder\.order_number \} : null\}/);
   });
 });
 

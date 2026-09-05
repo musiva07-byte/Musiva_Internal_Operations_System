@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ReturnStatusBadge } from "@/components/returns/return-status-badge";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { getReturn } from "@/lib/services/return.service";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatDateTime } from "@/lib/formatters/date";
@@ -26,7 +28,16 @@ export default async function ReturnDetailPage({ params }: ReturnDetailPageProps
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Return</p>
+          <Breadcrumb
+            segments={[
+              { label: "Daily Work" },
+              { label: "Returns & Exchanges", href: "/admin/returns" },
+              { label: returnRecord.order.order_number },
+            ]}
+          />
+          <div className="mt-2">
+            <BackLink href="/admin/returns" label="Back to returns" />
+          </div>
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{returnRecord.order.order_number}</h1>
           <p className="mt-2 text-sm text-muted-foreground">{formatDateTime(returnRecord.created_at)}</p>
         </div>

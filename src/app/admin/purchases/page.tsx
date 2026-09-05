@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pagination } from "@/components/products/pagination";
+import { PageHeader } from "@/components/layout/page-header";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { PURCHASE_PAYMENT_STATUSES, PURCHASE_STATUSES } from "@/lib/constants";
 import { listPurchases } from "@/lib/services/purchase.service";
 import { formatBhd } from "@/lib/formatters/currency";
@@ -55,21 +57,19 @@ export default async function PurchasesPage({ searchParams }: PurchasesPageProps
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Purchases</p>
-          <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Purchase orders</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Track supplier stock orders, arrival status, received units, and payment status.
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/admin/purchases/new">
-            <Plus aria-hidden className="mr-2 h-4 w-4" />
-            New purchase
-          </Link>
-        </Button>
-      </header>
+      <PageHeader
+        breadcrumb={<Breadcrumb segments={[{ label: "Management" }, { label: "Purchases" }]} />}
+        title="Purchase orders"
+        description="Track supplier stock orders, arrival status, received units, and payment status."
+        primaryActions={
+          <Button asChild>
+            <Link href="/admin/purchases/new">
+              <Plus aria-hidden className="mr-2 h-4 w-4" />
+              New purchase
+            </Link>
+          </Button>
+        }
+      />
 
       <Card className="shadow-soft">
         <CardContent className="pt-6">
@@ -118,7 +118,24 @@ export default async function PurchasesPage({ searchParams }: PurchasesPageProps
             {purchases.data.length === 0 ? (
               <TableRow>
                 <TableCell className="h-28 text-center text-muted-foreground" colSpan={7}>
-                  No purchase orders found.
+                  {!q && status === "all" && paymentStatus === "all" ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <div>
+                        <p className="font-medium text-foreground">No purchase orders yet.</p>
+                        <p>Create a purchase order to receive supplier stock into inventory.</p>
+                      </div>
+                      <Button asChild size="sm">
+                        <Link href="/admin/purchases/new">New purchase</Link>
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-3">
+                      <p>No purchase orders found.</p>
+                      <Button asChild size="sm" variant="outline">
+                        <Link href="/admin/purchases">Clear filters</Link>
+                      </Button>
+                    </div>
+                  )}
                 </TableCell>
               </TableRow>
             ) : (

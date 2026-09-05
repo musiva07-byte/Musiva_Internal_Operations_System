@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
+import { SuccessDialog } from "@/components/layout/success-dialog";
 import { createPurchaseAction } from "@/app/admin/purchases/actions";
 import { PURCHASE_PAYMENT_STATUSES, PURCHASE_STATUSES } from "@/lib/constants";
 import { formatBhd, formatSupplierCurrency } from "@/lib/formatters/currency";
@@ -51,6 +53,7 @@ export function PurchaseForm({ suppliers, variants }: PurchaseFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ id: string; number: string; total: number } | null>(null);
 
   const form = useForm<PurchaseInput>({
     resolver: zodResolver(purchaseSchema) as Resolver<PurchaseInput>,
@@ -142,7 +145,7 @@ export function PurchaseForm({ suppliers, variants }: PurchaseFormProps) {
         setFormError(result.error ?? "Purchase could not be created.");
         return;
       }
-      router.push(`/admin/purchases/${result.id}`);
+      setSaved({ id: result.id, number: result.purchaseNumber ?? "", total: calc.grandTotal });
       router.refresh();
     });
   }
@@ -381,14 +384,34 @@ export function PurchaseForm({ suppliers, variants }: PurchaseFormProps) {
         </p>
       ) : null}
 
-      <div className="flex justify-end gap-3">
+      <StickyActionBar className="flex justify-end gap-3">
         <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
         <Button disabled={isPending} type="submit">
           {isPending ? "Saving..." : "Save purchase"}
         </Button>
-      </div>
+      </StickyActionBar>
+
+      {saved && (
+        <SuccessDialog
+          open={saved !== null}
+          onOpenChange={(open) => !open && router.push(`/admin/purchases/${saved.id}`)}
+          title="Purchase order created successfully"
+          description={saved.number || undefined}
+          stats={[{ label: "Grand total", value: formatBhd(saved.total) }]}
+          footer={
+            <>
+              <Button type="button" variant="outline" onClick={() => router.push("/admin/purchases")}>
+                Back to purchases
+              </Button>
+              <Button type="button" onClick={() => router.push(`/admin/purchases/${saved.id}`)}>
+                View purchase
+              </Button>
+            </>
+          }
+        />
+      )}
     </form>
   );
 }

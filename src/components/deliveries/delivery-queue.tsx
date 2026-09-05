@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, CheckSquare, LayoutList, Search, Table2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -347,9 +348,26 @@ export function DeliveryQueue({
   const allSelected =
     selectedIds.size > 0 && selectedIds.size === deliveries.data.length;
   const someSelected = selectedIds.size > 0;
-  const emptyContent = deliveries.loadError ? deliveries.loadError : tabCounts.all === 0 && !currentQ ? (
-    <div><p className="font-medium text-foreground">No deliveries in this queue.</p><p>Delivery orders will appear here after sales are created.</p></div>
-  ) : "No deliveries found.";
+  const emptyContent = deliveries.loadError ? (
+    deliveries.loadError
+  ) : tabCounts.all === 0 && !currentQ ? (
+    <div className="flex flex-col items-center gap-3">
+      <div>
+        <p className="font-medium text-foreground">No deliveries in this queue.</p>
+        <p>Delivery orders will appear here after sales are created.</p>
+      </div>
+      <Button asChild size="sm" variant="outline">
+        <Link href="/admin/orders">Back to Orders</Link>
+      </Button>
+    </div>
+  ) : (
+    <div className="flex flex-col items-center gap-3">
+      <p>No deliveries found.</p>
+      <Button asChild size="sm" variant="outline">
+        <Link href="/admin/deliveries?tab=all">Clear filters</Link>
+      </Button>
+    </div>
+  );
 
   return (
     <div className="space-y-4">

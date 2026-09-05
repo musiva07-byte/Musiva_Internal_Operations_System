@@ -130,6 +130,40 @@ export async function getCustomer(customerId: string): Promise<CustomerWithOrder
   };
 }
 
+export type AdjacentCustomer = { id: string; full_name: string };
+
+/** Previous/next customer navigation for the customer detail page — same pattern as
+ *  getAdjacentOrders in order.service.ts. */
+export async function getAdjacentCustomers(
+  customerId: string,
+  createdAt: string,
+): Promise<{ previous: AdjacentCustomer | null; next: AdjacentCustomer | null }> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { previous: null, next: null };
+
+  const [{ data: previousRows }, { data: nextRows }] = await Promise.all([
+    supabase
+      .from("customers")
+      .select("id, full_name")
+      .lt("created_at", createdAt)
+      .neq("id", customerId)
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("customers")
+      .select("id, full_name")
+      .gt("created_at", createdAt)
+      .neq("id", customerId)
+      .order("created_at", { ascending: true })
+      .limit(1),
+  ]);
+
+  return {
+    previous: previousRows?.[0] ?? null,
+    next: nextRows?.[0] ?? null,
+  };
+}
+
 export async function createCustomer(input: CustomerInput): Promise<ServiceResult<CustomerRow>> {
   const parsed = customerSchema.safeParse(input);
 

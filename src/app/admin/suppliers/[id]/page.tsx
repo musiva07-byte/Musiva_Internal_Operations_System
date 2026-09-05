@@ -4,6 +4,8 @@ import { Edit, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { getSupplier } from "@/lib/services/supplier.service";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatDate } from "@/lib/formatters/date";
@@ -28,7 +30,16 @@ export default async function SupplierPage({ params }: SupplierPageProps) {
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Suppliers</p>
+          <Breadcrumb
+            segments={[
+              { label: "Management" },
+              { label: "Suppliers", href: "/admin/suppliers" },
+              { label: supplier.supplier_name },
+            ]}
+          />
+          <div className="mt-2">
+            <BackLink href="/admin/suppliers" label="Back to suppliers" />
+          </div>
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{supplier.supplier_name}</h1>
           <p className="mt-2 text-sm text-muted-foreground">{supplier.contact_person ?? "Supplier profile"}</p>
         </div>

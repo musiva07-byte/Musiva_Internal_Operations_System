@@ -13,6 +13,7 @@ import { ProductCostDialog } from "@/components/products/product-cost-dialog";
 import { WebsiteStatusControl } from "@/components/products/website-status-control";
 import { ExportMenu } from "@/components/reports/export-menu";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { PageHeader } from "@/components/layout/page-header";
 import { listCategories, listProducts } from "@/lib/services/product.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { canPublishProducts, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
@@ -78,27 +79,25 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <Breadcrumb segments={[{ label: "Product Catalog" }]} />
-          <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Product Catalog</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Manage product details, images, categories, pricing, and size/color options.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <PageHeader
+        breadcrumb={<Breadcrumb segments={[{ label: "Product Catalog" }]} />}
+        title="Product Catalog"
+        description="Manage product details, images, categories, pricing, and size/color options."
+        secondaryActions={
           <ExportMenu
             csvHref={`/api/admin/products/export${exportQuery ? `?${exportQuery}` : ""}`}
             printHref={`/print/products${exportQuery ? `?${exportQuery}` : ""}`}
           />
+        }
+        primaryActions={
           <Button asChild>
             <Link href="/admin/products/new">
               <Plus aria-hidden className="mr-2 h-4 w-4" />
               New product
             </Link>
           </Button>
-        </div>
-      </header>
+        }
+      />
 
       <Card className="shadow-soft">
         <CardContent className="pt-6">

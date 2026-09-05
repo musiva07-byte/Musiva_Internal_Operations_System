@@ -10,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
+import { SuccessDialog } from "@/components/layout/success-dialog";
 import { createStaffAction } from "@/app/admin/staff/actions";
 import { STAFF_ROLES } from "@/lib/constants";
 import { titleize } from "@/lib/formatters/labels";
@@ -28,6 +30,7 @@ export function StaffForm() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ id: string; name: string; role: string } | null>(null);
   const form = useForm<StaffInput>({
     resolver: zodResolver(staffSchema) as Resolver<StaffInput>,
     defaultValues: {
@@ -47,7 +50,7 @@ export function StaffForm() {
         setFormError(result.error ?? "Staff user could not be created.");
         return;
       }
-      router.push(`/admin/staff/${result.id}`);
+      setSaved({ id: result.id, name: values.fullName, role: values.role });
       router.refresh();
     });
   }
@@ -85,14 +88,34 @@ export function StaffForm() {
 
       {formError ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{formError}</p> : null}
 
-      <div className="flex justify-end gap-3">
+      <StickyActionBar className="flex justify-end gap-3">
         <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
         <Button disabled={isPending} type="submit">
           {isPending ? "Creating..." : "Create staff user"}
         </Button>
-      </div>
+      </StickyActionBar>
+
+      {saved && (
+        <SuccessDialog
+          open={saved !== null}
+          onOpenChange={(open) => !open && router.push(`/admin/staff/${saved.id}`)}
+          title="Staff user created successfully"
+          description={saved.name}
+          stats={[{ label: "Role", value: titleize(saved.role) }]}
+          footer={
+            <>
+              <Button type="button" variant="outline" onClick={() => router.push("/admin/staff")}>
+                Back to staff
+              </Button>
+              <Button type="button" onClick={() => router.push(`/admin/staff/${saved.id}`)}>
+                View staff profile
+              </Button>
+            </>
+          }
+        />
+      )}
     </form>
   );
 }

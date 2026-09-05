@@ -18,6 +18,7 @@ import {
 import { customerNameError } from "@/lib/utils/customer-name";
 import { OrderSuccessModal, type OrderSuccessSnapshot } from "@/components/orders/order-success-modal";
 import { Button } from "@/components/ui/button";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1137,7 +1138,7 @@ export function SaleWizard({ variants }: SaleWizardProps) {
       )}
 
       {/* Navigation */}
-      <div className="flex items-center justify-between">
+      <StickyActionBar className="flex items-center justify-between">
         <Button
           type="button"
           variant="outline"
@@ -1166,7 +1167,7 @@ export function SaleWizard({ variants }: SaleWizardProps) {
             </Button>
           )}
         </div>
-      </div>
+      </StickyActionBar>
     </div>
   );
 }

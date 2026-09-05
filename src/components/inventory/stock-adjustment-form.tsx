@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
+import { SuccessDialog } from "@/components/layout/success-dialog";
 import { stockAdjustmentSchema, type StockAdjustmentInput } from "@/lib/validations/inventory.schema";
 import { adjustStockAction } from "@/app/admin/inventory/actions";
 import type { InventoryVariantItem } from "@/types/app";
@@ -19,10 +21,13 @@ type StockAdjustmentFormProps = {
   variants: InventoryVariantItem[];
 };
 
+type SavedInfo = { label: string; previousQuantity: number; newQuantity: number };
+
 export function StockAdjustmentForm({ variants }: StockAdjustmentFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<SavedInfo | null>(null);
   const form = useForm<StockAdjustmentInput>({
     resolver: zodResolver(stockAdjustmentSchema) as Resolver<StockAdjustmentInput>,
     defaultValues: {
@@ -36,13 +41,21 @@ export function StockAdjustmentForm({ variants }: StockAdjustmentFormProps) {
 
   function onSubmit(values: StockAdjustmentInput) {
     setFormError(null);
+    const variant = variants.find((v) => v.id === values.productVariantId);
     startTransition(async () => {
       const result = await adjustStockAction(values);
       if (!result.ok) {
         setFormError(result.error ?? "Stock adjustment could not be recorded.");
         return;
       }
-      router.push("/admin/inventory/movements");
+      if (variant) {
+        setSaved({
+          label: `${variant.product_name} — ${variant.color} / ${variant.size}`,
+          previousQuantity: variant.stock_quantity,
+          newQuantity: Number(values.newQuantity),
+        });
+      }
+      form.reset();
       router.refresh();
     });
   }
@@ -76,13 +89,39 @@ export function StockAdjustmentForm({ variants }: StockAdjustmentFormProps) {
             <Textarea {...form.register("note")} placeholder="Reason for this manual adjustment" />
           </div>
           {formError ? <p className="text-sm text-destructive md:col-span-2">{formError}</p> : null}
-          <div className="flex justify-end md:col-span-2">
+          <StickyActionBar className="flex justify-end md:col-span-2">
             <Button disabled={isPending} type="submit">
               {isPending ? "Recording..." : "Record adjustment"}
             </Button>
-          </div>
+          </StickyActionBar>
         </form>
       </CardContent>
+
+      {saved && (
+        <SuccessDialog
+          open={saved !== null}
+          onOpenChange={(open) => !open && setSaved(null)}
+          title="Quantity corrected"
+          description={saved.label}
+          stats={[
+            { label: "Previous quantity", value: saved.previousQuantity },
+            { label: "New quantity", value: saved.newQuantity },
+          ]}
+          footer={
+            <>
+              <Button type="button" variant="outline" onClick={() => setSaved(null)}>
+                Correct another
+              </Button>
+              <Button type="button" variant="outline" onClick={() => router.push("/admin/inventory/movements")}>
+                View Stock History
+              </Button>
+              <Button type="button" onClick={() => router.push("/admin/inventory")}>
+                Back to Stock Management
+              </Button>
+            </>
+          }
+        />
+      )}
     </Card>
   );
 }

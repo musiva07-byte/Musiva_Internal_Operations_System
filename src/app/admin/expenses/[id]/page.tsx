@@ -4,6 +4,8 @@ import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { getExpense } from "@/lib/services/expense.service";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatDate, formatDateTime } from "@/lib/formatters/date";
@@ -25,7 +27,16 @@ export default async function ExpensePage({ params }: ExpensePageProps) {
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Expenses</p>
+          <Breadcrumb
+            segments={[
+              { label: "Management" },
+              { label: "Expenses", href: "/admin/expenses" },
+              { label: formatBhd(expense.amount) },
+            ]}
+          />
+          <div className="mt-2">
+            <BackLink href="/admin/expenses" label="Back to expenses" />
+          </div>
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{formatBhd(expense.amount)}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {titleize(expense.category)} on {formatDate(expense.expense_date)}

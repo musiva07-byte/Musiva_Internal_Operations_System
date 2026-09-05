@@ -7,6 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import type { Resolver } from "react-hook-form";
 import { Button } from "@/components/ui/button";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -796,14 +797,14 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
 
       {formError ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{formError}</p> : null}
 
-      <div className="flex justify-end gap-3">
+      <StickyActionBar className="flex justify-end gap-3">
         <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
         <Button disabled={isPending} type="submit">
           {isPending ? "Saving..." : canViewProfit ? "Review & save" : "Save product"}
         </Button>
-      </div>
+      </StickyActionBar>
 
       {canViewProfit && pendingValues && (
         <PriceConfirmationDialog

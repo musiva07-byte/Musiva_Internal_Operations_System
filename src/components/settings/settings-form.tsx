@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
 import { updateSettingsAction } from "@/app/admin/settings/actions";
 import { settingsSchema, type SettingsInput } from "@/lib/validations/settings.schema";
 import type { SettingsRow } from "@/types/database";
@@ -123,11 +124,11 @@ export function SettingsForm({ settings }: SettingsFormProps) {
       {formError ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{formError}</p> : null}
       {formMessage ? <p className="rounded-md border border-musiva-sage/20 bg-musiva-sage/5 p-3 text-sm text-musiva-sage">{formMessage}</p> : null}
 
-      <div className="flex justify-end">
+      <StickyActionBar className="flex justify-end">
         <Button disabled={isPending} type="submit">
           {isPending ? "Saving..." : "Save settings"}
         </Button>
-      </div>
+      </StickyActionBar>
     </form>
   );
 }

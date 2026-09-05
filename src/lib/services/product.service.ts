@@ -662,6 +662,43 @@ export async function getProduct(productId: string): Promise<ProductWithRelation
   };
 }
 
+export type AdjacentProduct = { id: string; name: string };
+
+/** Previous/next product navigation for the product detail page — same pattern as
+ *  getAdjacentOrders in order.service.ts. Non-archived products only, ordered by created_at
+ *  to match the catalog's default listing order. */
+export async function getAdjacentProducts(
+  productId: string,
+  createdAt: string,
+): Promise<{ previous: AdjacentProduct | null; next: AdjacentProduct | null }> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { previous: null, next: null };
+
+  const [{ data: previousRows }, { data: nextRows }] = await Promise.all([
+    supabase
+      .from("products")
+      .select("id, name")
+      .neq("status", "archived")
+      .lt("created_at", createdAt)
+      .neq("id", productId)
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("products")
+      .select("id, name")
+      .neq("status", "archived")
+      .gt("created_at", createdAt)
+      .neq("id", productId)
+      .order("created_at", { ascending: true })
+      .limit(1),
+  ]);
+
+  return {
+    previous: previousRows?.[0] ?? null,
+    next: nextRows?.[0] ?? null,
+  };
+}
+
 export async function createProduct(input: ProductInput): Promise<ServiceResult<ProductRow>> {
   const parsed = productSchema.safeParse(input);
 

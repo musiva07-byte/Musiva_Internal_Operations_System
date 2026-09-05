@@ -12,6 +12,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "System — Settings" };
@@ -95,7 +97,10 @@ export default async function SystemPage() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Settings</p>
+        <Breadcrumb segments={[{ label: "Settings", href: "/admin/settings" }, { label: "System" }]} />
+        <div className="mt-2">
+          <BackLink href="/admin/settings" label="Back to settings" />
+        </div>
         <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">System usage</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Live record counts, data health checks, and emergency data export.

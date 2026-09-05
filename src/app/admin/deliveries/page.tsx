@@ -1,4 +1,5 @@
 import { DeliveryQueue } from "@/components/deliveries/delivery-queue";
+import { PageHeader } from "@/components/layout/page-header";
 import { listDeliveries, listDeliveryTabCounts } from "@/lib/services/delivery.service";
 
 type DeliveriesPageProps = {
@@ -53,15 +54,11 @@ export default async function DeliveriesPage({ searchParams }: DeliveriesPagePro
 
   return (
     <div className="space-y-6">
-      <header>
-        <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">
-          Deliveries
-        </p>
-        <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Delivery queue</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Operational queue — default view is today&apos;s deliveries, newest first.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Deliveries"
+        title="Delivery queue"
+        description="Operational queue — default view is today's deliveries, newest first."
+      />
 
       <DeliveryQueue
         deliveries={deliveries}

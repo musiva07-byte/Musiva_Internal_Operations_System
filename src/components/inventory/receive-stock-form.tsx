@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
+import { SuccessDialog } from "@/components/layout/success-dialog";
 import { addStockAction } from "@/app/admin/inventory/actions";
 import {
   RECEIVE_STOCK_REASON_LABELS,
@@ -52,10 +54,19 @@ function groupByProduct(variants: InventoryVariantItem[]): GroupedProduct[] {
   );
 }
 
+type SavedInfo = {
+  productName: string;
+  color: string;
+  size: string;
+  quantityAdded: number;
+  newStock: number;
+};
+
 export function ReceiveStockForm({ variants }: ReceiveStockFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<SavedInfo | null>(null);
 
   const [search, setSearch] = useState("");
   const [selectedProductSku, setSelectedProductSku] = useState<string>("");
@@ -107,6 +118,7 @@ export function ReceiveStockForm({ variants }: ReceiveStockFormProps) {
     }
 
     setFormError(null);
+    const variantAtSubmit = selectedVariant;
     startTransition(async () => {
       const result = await addStockAction({
         productVariantId: selectedVariantId,
@@ -122,7 +134,20 @@ export function ReceiveStockForm({ variants }: ReceiveStockFormProps) {
         return;
       }
 
-      router.push("/admin/inventory");
+      if (variantAtSubmit) {
+        setSaved({
+          productName: variantAtSubmit.product_name,
+          color: variantAtSubmit.color,
+          size: variantAtSubmit.size,
+          quantityAdded: quantity,
+          newStock: variantAtSubmit.stock_quantity + quantity,
+        });
+      }
+      setSearch("");
+      setSelectedProductSku("");
+      setSelectedVariantId("");
+      setQuantity(1);
+      setNote("");
       router.refresh();
     });
   }
@@ -302,7 +327,7 @@ export function ReceiveStockForm({ variants }: ReceiveStockFormProps) {
           </p>
         ) : null}
 
-        <div className="flex justify-end gap-3">
+        <StickyActionBar className="flex justify-end gap-3">
           <Button type="button" variant="outline" onClick={() => router.back()}>
             Cancel
           </Button>
@@ -314,7 +339,7 @@ export function ReceiveStockForm({ variants }: ReceiveStockFormProps) {
               ? `Add ${quantity} unit${quantity !== 1 ? "s" : ""}`
               : "Add stock"}
           </Button>
-        </div>
+        </StickyActionBar>
       </form>
 
       {/* Preview panel */}
@@ -383,6 +408,32 @@ export function ReceiveStockForm({ variants }: ReceiveStockFormProps) {
           </CardContent>
         </Card>
       </div>
+
+      {saved && (
+        <SuccessDialog
+          open={saved !== null}
+          onOpenChange={(open) => !open && setSaved(null)}
+          title="Stock added successfully"
+          description={`${saved.productName} — ${saved.color} / ${saved.size}`}
+          stats={[
+            { label: "Quantity added", value: `+${saved.quantityAdded}` },
+            { label: "New stock", value: `${saved.newStock} units` },
+          ]}
+          footer={
+            <>
+              <Button type="button" variant="outline" onClick={() => setSaved(null)}>
+                Add more stock
+              </Button>
+              <Button type="button" variant="outline" onClick={() => router.push("/admin/inventory/movements")}>
+                View Stock History
+              </Button>
+              <Button type="button" onClick={() => router.push("/admin/inventory")}>
+                Back to Stock Management
+              </Button>
+            </>
+          }
+        />
+      )}
     </div>
   );
 }

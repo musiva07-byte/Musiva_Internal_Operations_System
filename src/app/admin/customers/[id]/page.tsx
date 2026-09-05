@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Edit } from "lucide-react";
+import { Edit, ShoppingBag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { OrderStatusBadge, PaymentStatusBadge } from "@/components/orders/status-badge";
-import { getCustomer } from "@/lib/services/customer.service";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
+import { PreviousNextNav } from "@/components/layout/previous-next-nav";
+import { getCustomer, getAdjacentCustomers } from "@/lib/services/customer.service";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatDate } from "@/lib/formatters/date";
 
@@ -22,21 +25,40 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
   }
 
   const totalSpending = customer.orders.reduce((sum, order) => sum + Number(order.grand_total), 0);
+  const { previous, next } = await getAdjacentCustomers(customer.id, customer.created_at);
 
   return (
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Customer</p>
+          <Breadcrumb segments={[{ label: "Customers", href: "/admin/customers" }, { label: customer.full_name }]} />
+          <div className="mt-2">
+            <BackLink href="/admin/customers" label="Back to customers" />
+          </div>
           <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{customer.full_name}</h1>
           <p className="mt-2 text-sm text-muted-foreground">{customer.mobile}</p>
+          <PreviousNextNav
+            previous={previous ? { id: previous.id, label: previous.full_name } : null}
+            next={next ? { id: next.id, label: next.full_name } : null}
+            hrefFor={(customerId) => `/admin/customers/${customerId}`}
+            previousLabel="Previous customer"
+            nextLabel="Next customer"
+          />
         </div>
-        <Button asChild>
-          <Link href={`/admin/customers/${customer.id}/edit`}>
-            <Edit aria-hidden className="mr-2 h-4 w-4" />
-            Edit customer
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link href={`/admin/orders/new`}>
+              <ShoppingBag aria-hidden className="mr-2 h-4 w-4" />
+              New sale
+            </Link>
+          </Button>
+          <Button asChild>
+            <Link href={`/admin/customers/${customer.id}/edit`}>
+              <Edit aria-hidden className="mr-2 h-4 w-4" />
+              Edit customer
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <section className="grid gap-4 md:grid-cols-3">

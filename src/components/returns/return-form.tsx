@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
+import { SuccessDialog } from "@/components/layout/success-dialog";
 import {
   RETURN_CONDITIONS,
   RETURN_ITEM_ACTIONS,
@@ -40,6 +42,7 @@ export function ReturnForm({ orders, orderItems }: ReturnFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ id: string; orderNumber: string; refundAmount: number } | null>(null);
   const form = useForm<ReturnInput>({
     resolver: zodResolver(returnSchema) as Resolver<ReturnInput>,
     defaultValues: {
@@ -73,7 +76,12 @@ export function ReturnForm({ orders, orderItems }: ReturnFormProps) {
         setFormError(result.error ?? "Return could not be created.");
         return;
       }
-      router.push(`/admin/returns/${result.id}`);
+      const order = orders.find((o) => o.id === values.originalOrderId);
+      setSaved({
+        id: result.id,
+        orderNumber: order?.order_number ?? "",
+        refundAmount: values.refundAmount,
+      });
       router.refresh();
     });
   }
@@ -193,14 +201,34 @@ export function ReturnForm({ orders, orderItems }: ReturnFormProps) {
 
       {formError ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{formError}</p> : null}
 
-      <div className="flex justify-end gap-3">
+      <StickyActionBar className="flex justify-end gap-3">
         <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
         <Button disabled={isPending} type="submit">
           {isPending ? "Processing..." : "Process return"}
         </Button>
-      </div>
+      </StickyActionBar>
+
+      {saved && (
+        <SuccessDialog
+          open={saved !== null}
+          onOpenChange={(open) => !open && router.push(`/admin/returns/${saved.id}`)}
+          title="Return processed successfully"
+          description={saved.orderNumber ? `Order ${saved.orderNumber}` : undefined}
+          stats={[{ label: "Refund amount", value: formatBhd(saved.refundAmount) }]}
+          footer={
+            <>
+              <Button type="button" variant="outline" onClick={() => router.push("/admin/returns")}>
+                Back to returns
+              </Button>
+              <Button type="button" onClick={() => router.push(`/admin/returns/${saved.id}`)}>
+                View return
+              </Button>
+            </>
+          }
+        />
+      )}
     </form>
   );
 }

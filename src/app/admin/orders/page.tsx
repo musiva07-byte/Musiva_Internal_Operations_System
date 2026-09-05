@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { PageHeader } from "@/components/layout/page-header";
 import { OrderQueue } from "@/components/orders/order-queue";
 import { listOrders, listOrdersTabCounts } from "@/lib/services/order.service";
 
@@ -57,21 +58,19 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <Breadcrumb segments={[{ label: "Orders" }]} />
-          <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Sales orders</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Operational queue — default view is today&apos;s orders, newest first.
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/admin/orders/new">
-            <Plus aria-hidden className="mr-2 h-4 w-4" />
-            New sale
-          </Link>
-        </Button>
-      </header>
+      <PageHeader
+        breadcrumb={<Breadcrumb segments={[{ label: "Orders" }]} />}
+        title="Sales orders"
+        description="Operational queue — default view is today's orders, newest first."
+        primaryActions={
+          <Button asChild>
+            <Link href="/admin/orders/new">
+              <Plus aria-hidden className="mr-2 h-4 w-4" />
+              New sale
+            </Link>
+          </Button>
+        }
+      />
 
       <OrderQueue
         orders={orders}

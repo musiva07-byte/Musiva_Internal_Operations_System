@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { BarChart3, Boxes, CircleDollarSign, Tag, Users } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader } from "@/components/layout/page-header";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { canViewCostData } from "@/lib/auth/permissions";
 
@@ -44,13 +45,11 @@ export default async function ReportsPage() {
   const visibleReports = showCostReport ? [...reports, costReport] : reports;
   return (
     <div className="space-y-6">
-      <header>
-        <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Reports</p>
-        <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Business reports</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Review boutique performance using server-side filtered operational data.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Reports"
+        title="Business reports"
+        description="Review boutique performance using server-side filtered operational data."
+      />
 
       <section className="grid gap-4 md:grid-cols-2">
         {visibleReports.map((report) => {

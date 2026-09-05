@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,6 +7,8 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pagination } from "@/components/products/pagination";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { listStockMovements } from "@/lib/services/inventory.service";
 import { STOCK_MOVEMENT_TYPES } from "@/lib/constants";
 import { formatDateTime } from "@/lib/formatters/date";
@@ -38,8 +41,13 @@ export default async function StockMovementsPage({ searchParams }: MovementsPage
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Inventory</p>
-        <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Stock movements</h1>
+        <Breadcrumb
+          segments={[{ label: "Stock Management", href: "/admin/inventory" }, { label: "Stock History" }]}
+        />
+        <div className="mt-2">
+          <BackLink href="/admin/inventory" label="Back to stock" />
+        </div>
+        <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Stock History</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Audit trail for every stock entry, adjustment, sale deduction, return, and restore.
         </p>
@@ -64,6 +72,14 @@ export default async function StockMovementsPage({ searchParams }: MovementsPage
               Filter
             </Button>
           </form>
+          {(q || movementType !== "all") && (
+            <Link
+              href="/admin/inventory/movements"
+              className="mt-3 inline-block text-sm font-medium text-musiva-plum hover:underline"
+            >
+              Reset filters
+            </Link>
+          )}
         </CardContent>
       </Card>
 

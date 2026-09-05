@@ -9,7 +9,8 @@ import { ProductImageWidget } from "@/components/products/product-image-widget";
 import { QuickAddStockDialog } from "@/components/products/quick-add-stock-dialog";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { BackLink } from "@/components/layout/back-link";
-import { getProduct } from "@/lib/services/product.service";
+import { PreviousNextNav } from "@/components/layout/previous-next-nav";
+import { getProduct, getAdjacentProducts } from "@/lib/services/product.service";
 import { getProductImage } from "@/lib/services/product-image.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { canManageProducts, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
@@ -36,6 +37,11 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
   if (!product) {
     notFound();
   }
+
+  const { previous: previousProduct, next: nextProduct } = await getAdjacentProducts(
+    product.id,
+    product.created_at,
+  );
 
   const totalStock = product.variants.reduce((sum, variant) => sum + variant.stock_quantity, 0);
   const role = auth.profile?.role ?? null;
@@ -82,6 +88,13 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
             <div className="mt-2">
               <BackLink href="/admin/products" label="Back to catalog" />
             </div>
+            <PreviousNextNav
+              previous={previousProduct ? { id: previousProduct.id, label: previousProduct.name } : null}
+              next={nextProduct ? { id: nextProduct.id, label: nextProduct.name } : null}
+              hrefFor={(productId) => `/admin/products/${productId}`}
+              previousLabel="Previous product"
+              nextLabel="Next product"
+            />
             <p className="mt-2 text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">
               {product.sku}
             </p>

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pagination } from "@/components/products/pagination";
 import { CustomerRowActions } from "@/components/customers/customer-row-actions";
+import { PageHeader } from "@/components/layout/page-header";
 import { listCustomers } from "@/lib/services/customer.service";
 import { formatBhd } from "@/lib/formatters/currency";
 import { formatDate } from "@/lib/formatters/date";
@@ -34,19 +35,19 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Customers</p>
-          <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Customer records</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Search by customer name, mobile, or WhatsApp.</p>
-        </div>
-        <Button asChild>
-          <Link href="/admin/customers/new">
-            <Plus aria-hidden className="mr-2 h-4 w-4" />
-            New customer
-          </Link>
-        </Button>
-      </header>
+      <PageHeader
+        eyebrow="Customers"
+        title="Customer records"
+        description="Search by customer name, mobile, or WhatsApp."
+        primaryActions={
+          <Button asChild>
+            <Link href="/admin/customers/new">
+              <Plus aria-hidden className="mr-2 h-4 w-4" />
+              New customer
+            </Link>
+          </Button>
+        }
+      />
 
       <Card className="shadow-soft">
         <CardContent className="pt-6">
@@ -94,7 +95,12 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
                       </Button>
                     </div>
                   ) : (
-                    "No customers found."
+                    <div className="flex flex-col items-center gap-3">
+                      <p>No customers found for &ldquo;{q}&rdquo;.</p>
+                      <Button asChild size="sm" variant="outline">
+                        <Link href="/admin/customers">Clear filters</Link>
+                      </Button>
+                    </div>
                   )}
                 </TableCell>
               </TableRow>

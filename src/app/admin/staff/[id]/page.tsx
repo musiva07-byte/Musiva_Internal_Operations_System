@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { BackLink } from "@/components/layout/back-link";
 import { getStaffProfile } from "@/lib/services/staff.service";
 import { formatDateTime } from "@/lib/formatters/date";
 import { titleize } from "@/lib/formatters/labels";
@@ -20,7 +22,16 @@ export default async function StaffDetailPage({ params }: StaffDetailPageProps) 
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-sm font-medium uppercase tracking-[0.22em] text-musiva-gold">Staff</p>
+        <Breadcrumb
+          segments={[
+            { label: "Management" },
+            { label: "Staff & Roles", href: "/admin/staff" },
+            { label: profile.full_name },
+          ]}
+        />
+        <div className="mt-2">
+          <BackLink href="/admin/staff" label="Back to staff" />
+        </div>
         <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">{profile.full_name}</h1>
         <p className="mt-2 text-sm text-muted-foreground">{profile.email}</p>
       </header>

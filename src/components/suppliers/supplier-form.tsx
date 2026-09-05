@@ -10,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { StickyActionBar } from "@/components/layout/sticky-action-bar";
+import { SuccessDialog } from "@/components/layout/success-dialog";
 import { createSupplierAction, updateSupplierAction } from "@/app/admin/suppliers/actions";
 import { supplierSchema, type SupplierInput } from "@/lib/validations/supplier.schema";
 import type { SupplierRow } from "@/types/database";
@@ -20,8 +22,11 @@ type SupplierFormProps = {
 
 export function SupplierForm({ supplier }: SupplierFormProps) {
   const router = useRouter();
+  const isEditing = Boolean(supplier);
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [savedName, setSavedName] = useState<string>("");
   const form = useForm<SupplierInput>({
     resolver: zodResolver(supplierSchema) as Resolver<SupplierInput>,
     defaultValues: {
@@ -47,7 +52,8 @@ export function SupplierForm({ supplier }: SupplierFormProps) {
         return;
       }
 
-      router.push(`/admin/suppliers/${result.id}`);
+      setSavedId(result.id);
+      setSavedName(values.supplierName);
       router.refresh();
     });
   }
@@ -87,14 +93,33 @@ export function SupplierForm({ supplier }: SupplierFormProps) {
 
       {formError ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{formError}</p> : null}
 
-      <div className="flex justify-end gap-3">
+      <StickyActionBar className="flex justify-end gap-3">
         <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
         <Button disabled={isPending} type="submit">
           {isPending ? "Saving..." : "Save supplier"}
         </Button>
-      </div>
+      </StickyActionBar>
+
+      {savedId && (
+        <SuccessDialog
+          open={savedId !== null}
+          onOpenChange={(open) => !open && router.push(`/admin/suppliers/${savedId}`)}
+          title={isEditing ? "Supplier updated successfully" : "Supplier created successfully"}
+          description={savedName}
+          footer={
+            <>
+              <Button type="button" variant="outline" onClick={() => router.push("/admin/suppliers")}>
+                Back to suppliers
+              </Button>
+              <Button type="button" onClick={() => router.push(`/admin/suppliers/${savedId}`)}>
+                View supplier
+              </Button>
+            </>
+          }
+        />
+      )}
     </form>
   );
 }

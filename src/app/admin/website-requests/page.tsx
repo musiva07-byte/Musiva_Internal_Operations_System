@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { WebsiteRequestQueue } from "@/components/website-requests/website-request-queue";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { PageHeader } from "@/components/layout/page-header";
 import {
   listWebsiteRequestTabCounts,
   listWebsiteRequests,
@@ -55,14 +56,11 @@ export default async function WebsiteRequestsPage({ searchParams }: WebsiteReque
 
   return (
     <div className="space-y-6">
-      <header>
-        <Breadcrumb segments={[{ label: "Website Requests" }]} />
-        <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Website order requests</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Website requests are pending WhatsApp leads. Confirming here does not create an order or
-          deduct stock.
-        </p>
-      </header>
+      <PageHeader
+        breadcrumb={<Breadcrumb segments={[{ label: "Website Requests" }]} />}
+        title="Website order requests"
+        description="Website requests are pending WhatsApp leads. Confirming here does not create an order or deduct stock."
+      />
 
       <WebsiteRequestQueue
         requests={enrichedRequests}
