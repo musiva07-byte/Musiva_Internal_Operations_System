@@ -12,6 +12,7 @@ import type {
   PricingStatus,
   ProductImageRow,
   ProductRow,
+  ProductStatus,
   ProductVariantRow,
   PurchaseOrderItemRow,
   PurchaseOrderRow,
@@ -139,7 +140,26 @@ export type OrderWithRelations = OrderRow & {
   delivery: DeliveryRow | null;
 };
 
-export type OrderableVariantItem = ProductVariantRow & {
+/**
+ * New Sale / Order Edit product picker row. Deliberately NOT `ProductVariantRow & {...}` —
+ * that full row includes buying/landed cost, supplier unit cost, and barcode, which must never
+ * reach a sales_staff browser. listOrderableVariants() selects only these fields at the
+ * database level (not just hides them in the UI), so the safety holds even if this type were
+ * ever misused. */
+export type OrderableVariantItem = {
+  id: string;
+  product_id: string;
+  variant_sku: string;
+  color: string;
+  size: string;
+  /** @deprecated Use regular_selling_price_bhd */
+  selling_price: number;
+  regular_selling_price_bhd: number | null;
+  discount_price_bhd: number | null;
+  discount_start_at: string | null;
+  discount_end_at: string | null;
+  stock_quantity: number;
+  status: ProductStatus;
   product_name: string;
   product_sku: string;
 };

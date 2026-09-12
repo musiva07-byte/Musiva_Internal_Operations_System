@@ -94,7 +94,10 @@ export function OrderForm({ variants }: OrderFormProps) {
     if (!variant) {
       return;
     }
-    form.setValue(`items.${index}.unitPrice`, Number(variant.discount_price ?? variant.selling_price));
+    form.setValue(
+      `items.${index}.unitPrice`,
+      Number(variant.regular_selling_price_bhd ?? variant.selling_price),
+    );
   }
 
   function onSubmit(values: CreateOrderInput) {

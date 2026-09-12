@@ -36,6 +36,7 @@ import type {
   OrderRow,
   OrderStatus,
   PaymentStatus,
+  ProductStatus,
   ProductVariantRow,
 } from "@/types/database";
 import type {
@@ -68,7 +69,7 @@ type OrderRelationRow = OrderRow & {
 };
 
 type VariantRelationRow = ProductVariantRow & {
-  products?: { name: string; sku: string } | null;
+  products?: { name: string; sku: string; status: ProductStatus } | null;
 };
 
 function toPage(value: number | undefined) {
@@ -107,51 +108,85 @@ function sanitizeSearchTerm(value: string): string {
   return value.replace(/[,()]/g, " ").trim();
 }
 
+/** Server-side search/browse cap for the New Sale / Order Edit product picker — a real search
+ *  should never return an effectively unbounded list. The UI shows a "showing first N results"
+ *  hint when a search hits this cap. */
+const ORDERABLE_VARIANT_LIMIT = 50;
+
 /**
- * New Sale's product picker. With no search term, returns a default browse list — the 100
- * most recently updated active variants, unchanged from before.
+ * New Sale's (and Order Edit's) product picker — internal sales, so this is deliberately more
+ * permissive than the public storefront and Product Catalog's own default filters: it does
+ * NOT require website-published/online status, and only requires the product itself to be
+ * "active" (not draft/inactive/archived) and the variant to be "active" with stock_quantity > 0
+ * (unless `includeOutOfStock` is set). Only safe, sellable-relevant columns are selected —
+ * never buying/landed cost, supplier unit cost, or barcode — so that data never reaches a
+ * sales_staff browser regardless of how the UI renders it.
  *
- * With a search term, this searches the FULL active catalog server-side (product name via a
- * first lookup on `products`, then variant_sku/barcode/color/size directly) instead of
- * filtering only within that same 100-row browse window client-side. That client-side-only
- * filtering was the bug: once the catalog passed 100 active variants, any variant whose
- * `updated_at` fell outside the most-recently-touched 100 became permanently unsearchable in
- * New Sale even while in stock — confirmed live (161 active variants; two in-stock variants
- * of "A LINE 3 PEASE SET" were invisible to a "39" search because two other, out-of-stock
- * variants of the same product had been touched more recently and displaced them from the
- * window). Search results are capped at 100 rows — a real search should never return an
- * effectively unbounded list either.
+ * With no search term, returns a default browse list — the most recently updated matching
+ * variants, capped at ORDERABLE_VARIANT_LIMIT.
+ *
+ * With a search term, this searches the FULL catalog server-side across product name, product
+ * code/SKU, collection, category name, variant SKU, color, and size — instead of filtering
+ * only within that same capped browse window client-side. That client-side-only filtering was
+ * a real production bug (see order-product-search.test.ts). A second, since-reported bug: the
+ * product-level lookup only checked `name`, so a product-code search like "16B1ACD5" (stored in
+ * `products.sku`, the same column Product Catalog searches) never matched anything even though
+ * Product Catalog found the product instantly — confirmed live. Fixed by searching
+ * name/sku/collection together, plus a category-name lookup, exactly mirroring
+ * listProducts' own filter fields for the product-level part.
  */
-export async function listOrderableVariants(filters: { q?: string } = {}): Promise<OrderableVariantItem[]> {
+export async function listOrderableVariants(
+  filters: { q?: string; includeOutOfStock?: boolean } = {},
+): Promise<OrderableVariantItem[]> {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return [];
 
   const q = filters.q?.trim() ? sanitizeSearchTerm(filters.q) : "";
+  const includeOutOfStock = filters.includeOutOfStock ?? false;
 
   let productIds: string[] = [];
   if (q) {
-    const { data: matchingProducts } = await supabase
-      .from("products")
-      .select("id")
-      .ilike("name", `%${q}%`)
-      .limit(50);
+    const [{ data: matchingProducts }, { data: matchingCategories }] = await Promise.all([
+      supabase
+        .from("products")
+        .select("id")
+        .eq("status", "active")
+        .or(`name.ilike.%${q}%,sku.ilike.%${q}%,collection.ilike.%${q}%`)
+        .limit(50),
+      supabase.from("categories").select("id").ilike("name", `%${q}%`).limit(20),
+    ]);
     productIds = (matchingProducts ?? []).map((p) => p.id);
+
+    const categoryIds = (matchingCategories ?? []).map((c) => c.id);
+    if (categoryIds.length > 0) {
+      const { data: productsInCategory } = await supabase
+        .from("products")
+        .select("id")
+        .eq("status", "active")
+        .in("category_id", categoryIds)
+        .limit(50);
+      for (const product of productsInCategory ?? []) {
+        if (!productIds.includes(product.id)) productIds.push(product.id);
+      }
+    }
   }
 
   let query = supabase
     .from("product_variants")
-    .select("*, products!inner(name, sku)")
+    .select(
+      "id, product_id, variant_sku, color, size, selling_price, regular_selling_price_bhd, discount_price_bhd, discount_start_at, discount_end_at, stock_quantity, status, products!inner(name, sku, status)",
+    )
     .eq("status", "active")
+    .eq("products.status", "active")
     .order("updated_at", { ascending: false })
-    .limit(100);
+    .limit(ORDERABLE_VARIANT_LIMIT);
+
+  if (!includeOutOfStock) {
+    query = query.gt("stock_quantity", 0);
+  }
 
   if (q) {
-    const orParts = [
-      `variant_sku.ilike.%${q}%`,
-      `barcode.ilike.%${q}%`,
-      `color.ilike.%${q}%`,
-      `size.ilike.%${q}%`,
-    ];
+    const orParts = [`variant_sku.ilike.%${q}%`, `color.ilike.%${q}%`, `size.ilike.%${q}%`];
     if (productIds.length > 0) {
       orParts.push(`product_id.in.(${productIds.join(",")})`);
     }
@@ -162,7 +197,18 @@ export async function listOrderableVariants(filters: { q?: string } = {}): Promi
 
   const rows = (data ?? []) as unknown as VariantRelationRow[];
   return rows.map((row) => ({
-    ...row,
+    id: row.id,
+    product_id: row.product_id,
+    variant_sku: row.variant_sku,
+    color: row.color,
+    size: row.size,
+    selling_price: row.selling_price,
+    regular_selling_price_bhd: row.regular_selling_price_bhd,
+    discount_price_bhd: row.discount_price_bhd,
+    discount_start_at: row.discount_start_at,
+    discount_end_at: row.discount_end_at,
+    stock_quantity: row.stock_quantity,
+    status: row.status,
     product_name: row.products?.name ?? "Unknown product",
     product_sku: row.products?.sku ?? "",
   }));
@@ -698,7 +744,7 @@ export async function createOrder(input: CreateOrderInput): Promise<ServiceResul
 
   const { data: variantRows } = await supabase
     .from("product_variants")
-    .select("*, products!inner(name, sku)")
+    .select("*, products!inner(name, sku, status)")
     .in("id", variantIds);
 
   const variants = (variantRows ?? []) as unknown as VariantRelationRow[];
@@ -707,10 +753,20 @@ export async function createOrder(input: CreateOrderInput): Promise<ServiceResul
     return serviceError("Please select valid products.");
   }
 
+  // Re-validate against the database at the moment of creation — never trust the picker's
+  // search-result snapshot alone. A variant/product could have been archived, or stock could
+  // have changed, since the staff member searched for it.
   for (const item of orderInput.items) {
     const variant = variants.find((row) => row.id === item.productVariantId);
-    if (!variant || variant.stock_quantity < item.quantity) {
-      return serviceError("Not enough stock available.");
+    if (!variant) {
+      return serviceError("Please select valid products.");
+    }
+    const label = `${variant.products?.name ?? "This product"} — ${variant.color} / ${variant.size}`;
+    if (variant.status !== "active" || variant.products?.status !== "active") {
+      return serviceError(`${label} is no longer available for sale.`);
+    }
+    if (variant.stock_quantity < item.quantity) {
+      return serviceError(`Not enough stock for ${label}. Available: ${variant.stock_quantity}.`);
     }
   }
 

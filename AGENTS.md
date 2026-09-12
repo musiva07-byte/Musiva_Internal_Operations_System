@@ -2034,3 +2034,28 @@ Prioritize:
 Use the latest Moosiva logo and the updated muted mauve, blush, warm ivory, champagne, and rose-gold brand system throughout the admin interface and print templates.
 
 The final result should feel like a premium boutique control panel, not a generic inventory app.
+
+---
+
+## 41. Development Safety Rules
+
+Added 2026-09-12 after a real staff-blocking incident: Product Catalog search could find a
+product by its product code (`products.sku`), but New Sale's item picker searched only
+`products.name`, so the same code returned "No products found." in New Sale and blocked a sale.
+See `context/staff-workflow-smoke-tests.md` for the full manual checklist and
+`src/app/admin/orders/new/new-sale-critical-path.test.ts` for the automated regression suite.
+
+> Any change to Product Catalog search, product SKU fields, product variant queries, website
+> visibility, stock filtering, or the New Sale item picker must run the New Sale search parity
+> tests (`src/lib/services/order-product-search.test.ts` and
+> `src/app/admin/orders/new/new-sale-critical-path.test.ts`) before merge/deploy.
+
+> Internal sales visibility is separate from public website visibility. Website hidden products
+> can still be sold internally if active and in stock. Never make New Sale / internal stock
+> selection require `website_visible`, `online_status = published`, or any other public-facing
+> flag.
+
+Before every production deploy, run the "Post-deploy staff QA checklist" in
+`context/staff-workflow-smoke-tests.md` — it specifically exercises New Sale search by a known
+product code, one test sale, stock deduction, the receipt popup, and Product Catalog's
+return-to-page behavior.

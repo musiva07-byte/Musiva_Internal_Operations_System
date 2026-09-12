@@ -1,8 +1,11 @@
 import { SaleWizard } from "@/components/orders/sale-wizard";
 import { listOrderableVariants } from "@/lib/services/order.service";
+import { getCurrentAuthState } from "@/lib/auth/session";
+import { canManageProducts } from "@/lib/auth/permissions";
 
 export default async function NewOrderPage() {
-  const variants = await listOrderableVariants();
+  const [variants, auth] = await Promise.all([listOrderableVariants(), getCurrentAuthState()]);
+  const canAddProduct = canManageProducts(auth.profile?.role ?? null);
 
   return (
     <div className="space-y-6">
@@ -13,7 +16,7 @@ export default async function NewOrderPage() {
           Search or register a customer, pick items, set payment and delivery, then review.
         </p>
       </header>
-      <SaleWizard variants={variants} />
+      <SaleWizard variants={variants} canAddProduct={canAddProduct} />
     </div>
   );
 }

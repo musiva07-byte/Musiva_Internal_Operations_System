@@ -8,6 +8,9 @@ import type { OrderableVariantItem } from "@/types/app";
  * server-side (see listOrderableVariants' doc comment for why this can't be a client-side
  * filter over a fixed initial list).
  */
-export async function searchOrderableVariantsAction(query: string): Promise<OrderableVariantItem[]> {
-  return listOrderableVariants({ q: query });
+export async function searchOrderableVariantsAction(
+  query: string,
+  includeOutOfStock = false,
+): Promise<OrderableVariantItem[]> {
+  return listOrderableVariants({ q: query, includeOutOfStock });
 }

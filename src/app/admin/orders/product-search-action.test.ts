@@ -20,12 +20,20 @@ beforeEach(() => {
 });
 
 describe("searchOrderableVariantsAction", () => {
-  it("passes the typed query through to listOrderableVariants", async () => {
+  it("passes the typed query through to listOrderableVariants, defaulting includeOutOfStock to false", async () => {
     mockListOrderableVariants.mockResolvedValue([{ id: "variant-1" }]);
 
     const result = await searchOrderableVariantsAction("39");
 
-    expect(mockListOrderableVariants).toHaveBeenCalledWith({ q: "39" });
+    expect(mockListOrderableVariants).toHaveBeenCalledWith({ q: "39", includeOutOfStock: false });
     expect(result).toEqual([{ id: "variant-1" }]);
+  });
+
+  it("passes includeOutOfStock through when the 'Show out-of-stock too' toggle is on", async () => {
+    mockListOrderableVariants.mockResolvedValue([]);
+
+    await searchOrderableVariantsAction("39", true);
+
+    expect(mockListOrderableVariants).toHaveBeenCalledWith({ q: "39", includeOutOfStock: true });
   });
 });

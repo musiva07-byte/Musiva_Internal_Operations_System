@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Check,
   ChevronRight,
@@ -42,6 +43,8 @@ import { cn } from "@/lib/utils";
 type SaleWizardProps = {
   variants: OrderableVariantItem[];
   preselectedCustomerId?: string;
+  /** Owner/manager only — gates the "Add new product" shortcut in the Items step's empty state. */
+  canAddProduct?: boolean;
 };
 
 type WizardStep = 1 | 2 | 3 | 4;
@@ -248,32 +251,42 @@ function CustomerStep({
 
 // ─── step 2: items ────────────────────────────────────────────────────────────
 
+/** Server-side search/browse cap — must match ORDERABLE_VARIANT_LIMIT in order.service.ts.
+ *  Used only to decide whether to show the "showing first N results" hint. */
+const ORDERABLE_VARIANT_DISPLAY_LIMIT = 50;
+
 function ItemsStep({
   variants,
   cart,
   setCart,
+  canAddProduct,
 }: {
   variants: OrderableVariantItem[];
   cart: CartItem[];
   setCart: (c: CartItem[]) => void;
+  canAddProduct?: boolean;
 }) {
   const [search, setSearch] = useState("");
-  // null = not searching (browse the initial `variants` list). Once staff type anything, this
-  // holds real server-side search results across the FULL catalog — never a client-side
-  // filter over just the initial list, which is capped and can silently hide in-stock items
-  // once the catalog passes that cap (see listOrderableVariants' doc comment).
+  // null = not searching (browse the initial `variants` list). Once staff type anything — or
+  // toggle "Show out-of-stock too" — this holds real server-side results across the FULL
+  // catalog — never a client-side filter over just the initial list, which is capped and can
+  // silently hide in-stock items once the catalog passes that cap (see listOrderableVariants'
+  // doc comment).
   const [searchResults, setSearchResults] = useState<OrderableVariantItem[] | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [showOutOfStock, setShowOutOfStock] = useState(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Same debounce-from-the-input-handler pattern as CustomerStep's mobile search above —
   // deliberately not a useEffect, so the debounced fetch is only ever triggered by an actual
-  // keystroke, not by every render.
-  const triggerProductSearch = useCallback((value: string) => {
+  // keystroke or toggle click, not by every render. `term`/`outOfStock` are passed explicitly
+  // (not read from closed-over state) so a toggle click always searches with its own latest
+  // value even while a previous debounced keystroke is still pending.
+  const runProductSearch = useCallback((term: string, outOfStock: boolean, delayMs: number) => {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
 
-    const trimmed = value.trim();
-    if (!trimmed) {
+    const trimmed = term.trim();
+    if (!trimmed && !outOfStock) {
       setSearchResults(null);
       setIsSearching(false);
       return;
@@ -282,20 +295,32 @@ function ItemsStep({
     setIsSearching(true);
     searchDebounceRef.current = setTimeout(async () => {
       try {
-        const results = await searchOrderableVariantsAction(trimmed);
+        const results = await searchOrderableVariantsAction(trimmed, outOfStock);
         setSearchResults(results);
       } finally {
         setIsSearching(false);
       }
-    }, 350);
+    }, delayMs);
   }, []);
 
   function handleSearchChange(value: string) {
     setSearch(value);
-    triggerProductSearch(value);
+    runProductSearch(value, showOutOfStock, 350);
+  }
+
+  function handleClearSearch() {
+    setSearch("");
+    runProductSearch("", showOutOfStock, 0);
+  }
+
+  function handleToggleOutOfStock() {
+    const next = !showOutOfStock;
+    setShowOutOfStock(next);
+    runProductSearch(search, next, 0);
   }
 
   const filtered = searchResults ?? variants;
+  const isTruncated = filtered.length >= ORDERABLE_VARIANT_DISPLAY_LIMIT;
 
   function addToCart(v: OrderableVariantItem) {
     const existing = cart.find((c) => c.variantId === v.id);
@@ -417,7 +442,7 @@ function ItemsStep({
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search by name, SKU, colour, or size…"
+            placeholder="Search by name, product code, SKU, colour, size, or category…"
             value={search}
             onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-9"
@@ -426,24 +451,71 @@ function ItemsStep({
             <Loader2 aria-hidden className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
           )}
         </div>
-        {search.trim() && (
-          <p className="mt-1.5 text-xs text-muted-foreground">
-            Searching the full catalog for &ldquo;{search.trim()}&rdquo;.
-          </p>
-        )}
+        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+          {search.trim() ? (
+            <p className="text-xs text-muted-foreground">
+              Searching the full catalog for &ldquo;{search.trim()}&rdquo;.
+            </p>
+          ) : (
+            <span />
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={showOutOfStock}
+              onChange={handleToggleOutOfStock}
+              className="h-3.5 w-3.5 rounded border-musiva-border"
+            />
+            Show out-of-stock too
+          </label>
+        </div>
       </div>
 
       <div className="max-h-72 overflow-y-auto rounded-xl border border-[hsl(var(--border))]">
         {isSearching && filtered.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Searching…</p>
         ) : filtered.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">No products found.</p>
+          <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+            <p className="text-sm font-medium text-foreground">No matching sellable product found.</p>
+            <ul className="space-y-0.5 text-xs text-muted-foreground">
+              <li>Search checks product name, code, color, size, and category.</li>
+              <li>Website hidden products are included if active and in stock.</li>
+              <li>
+                If the product exists but has no stock, enable &ldquo;Show out-of-stock
+                too&rdquo; above.
+              </li>
+            </ul>
+            <div className="flex flex-wrap justify-center gap-2">
+              {search.trim() && (
+                <Button type="button" size="sm" variant="outline" onClick={handleClearSearch}>
+                  Clear search
+                </Button>
+              )}
+              <Button asChild size="sm" variant="outline">
+                <Link href="/admin/products" target="_blank" rel="noopener">
+                  Open Product Catalog
+                </Link>
+              </Button>
+              {canAddProduct && (
+                <Button asChild size="sm">
+                  <Link href="/admin/products/new" target="_blank" rel="noopener">
+                    Add new product
+                  </Link>
+                </Button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Still can&rsquo;t find it? Check Product Catalog or contact admin with the product
+              code.
+            </p>
+          </div>
         ) : (
           <div className="divide-y divide-[hsl(var(--border))]">
             {filtered.map((v) => {
               const inCart = cart.find((c) => c.variantId === v.id);
               const activePrice = v.regular_selling_price_bhd ?? v.selling_price ?? 0;
               const outOfStock = v.stock_quantity <= 0;
+              const skuDiffersFromCode = v.variant_sku && v.variant_sku !== v.product_sku;
               return (
                 <div
                   key={v.id}
@@ -454,8 +526,9 @@ function ItemsStep({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{v.product_name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {v.color} / {v.size} · SKU: {v.variant_sku}
+                    <p className="truncate text-xs text-muted-foreground">
+                      Code: {v.product_sku || "—"} · {v.color} / {v.size}
+                      {skuDiffersFromCode ? ` · SKU: ${v.variant_sku}` : ""}
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
@@ -495,6 +568,11 @@ function ItemsStep({
           </div>
         )}
       </div>
+      {isTruncated && (
+        <p className="text-xs text-muted-foreground">
+          Showing first {ORDERABLE_VARIANT_DISPLAY_LIMIT} results. Search more specifically to narrow down.
+        </p>
+      )}
     </div>
   );
 }
@@ -876,7 +954,7 @@ function ReviewStep({
 
 // ─── main wizard ──────────────────────────────────────────────────────────────
 
-export function SaleWizard({ variants }: SaleWizardProps) {
+export function SaleWizard({ variants, canAddProduct }: SaleWizardProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [step, setStep] = useState<WizardStep>(1);
@@ -1111,7 +1189,9 @@ export function SaleWizard({ variants }: SaleWizardProps) {
               setNewCustomerName={setNewCustomerName}
             />
           )}
-          {step === 2 && <ItemsStep variants={variants} cart={cart} setCart={setCart} />}
+          {step === 2 && (
+            <ItemsStep variants={variants} cart={cart} setCart={setCart} canAddProduct={canAddProduct} />
+          )}
           {step === 3 && (
             <PaymentStep
               state={payment}
