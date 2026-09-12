@@ -8,13 +8,18 @@ import { canManageProducts } from "@/lib/auth/permissions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { BackLink } from "@/components/layout/back-link";
+import { withProductReturnTo } from "@/lib/utils/product-catalog-return";
 
 type EditProductPageProps = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function EditProductPage({ params }: EditProductPageProps) {
-  const { id } = await params;
+export default async function EditProductPage({ params, searchParams }: EditProductPageProps) {
+  const [{ id }, resolvedSearchParams] = await Promise.all([params, searchParams]);
+  const rawReturnTo = resolvedSearchParams.returnTo;
+  const returnTo = Array.isArray(rawReturnTo) ? rawReturnTo[0] : rawReturnTo;
+
   const [categories, product, auth, exchangeRate] = await Promise.all([
     listCategories(),
     getProduct(id),
@@ -43,12 +48,15 @@ export default async function EditProductPage({ params }: EditProductPageProps) 
         <Breadcrumb
           segments={[
             { label: "Product Catalog", href: "/admin/products" },
-            { label: product.name, href: `/admin/products/${product.id}` },
+            { label: product.name, href: withProductReturnTo(`/admin/products/${product.id}`, returnTo) },
             { label: "Edit" },
           ]}
         />
         <div className="mt-2">
-          <BackLink href={`/admin/products/${product.id}`} label="Back to product" />
+          <BackLink
+            href={withProductReturnTo(`/admin/products/${product.id}`, returnTo)}
+            label="Back to product"
+          />
         </div>
         <h1 className="mt-2 text-3xl font-semibold text-musiva-plum">Edit product</h1>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -109,6 +117,7 @@ export default async function EditProductPage({ params }: EditProductPageProps) 
         product={product}
         userRole={userRole}
         currentExchangeRate={exchangeRate?.rate ?? null}
+        returnTo={returnTo}
       />
     </div>
   );

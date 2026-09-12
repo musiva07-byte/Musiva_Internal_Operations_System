@@ -25,20 +25,25 @@ describe("Product detail — breadcrumb + back link", () => {
     expect(source).toContain('{ label: "Product Catalog", href: "/admin/products" }');
     expect(source).toContain("{ label: product.name }");
   });
-  it('has a "Back to catalog" link', () => {
-    expect(source).toContain('<BackLink href="/admin/products" label="Back to catalog" />');
+  it('has a "Back to catalog" link that honors a preserved returnTo (Product Catalog return-context fix)', () => {
+    expect(source).toContain('<BackLink href={safeReturnTo} label="Back to catalog" />');
+    expect(source).toContain("getSafeProductCatalogReturnUrl(returnTo)");
   });
 });
 
 describe("Product edit — breadcrumb + back link", () => {
   const source = read("products", "[id]", "edit", "page.tsx");
-  it("renders a Product Catalog > {product name} > Edit breadcrumb", () => {
+  it("renders a Product Catalog > {product name} > Edit breadcrumb, preserving returnTo on the product-name link", () => {
     expect(source).toContain('{ label: "Product Catalog", href: "/admin/products" }');
-    expect(source).toMatch(/label: product\.name, href: `\/admin\/products\/\$\{product\.id\}`/);
+    expect(source).toMatch(
+      /label: product\.name, href: withProductReturnTo\(`\/admin\/products\/\$\{product\.id\}`, returnTo\)/,
+    );
     expect(source).toContain('{ label: "Edit" }');
   });
-  it('has a "Back to product" link', () => {
-    expect(source).toMatch(/<BackLink href=\{`\/admin\/products\/\$\{product\.id\}`\} label="Back to product" \/>/);
+  it('has a "Back to product" link that preserves returnTo (Product Catalog return-context fix)', () => {
+    expect(source).toMatch(
+      /<BackLink\s+href=\{withProductReturnTo\(`\/admin\/products\/\$\{product\.id\}`, returnTo\)\}\s+label="Back to product"\s*\/>/,
+    );
   });
 });
 

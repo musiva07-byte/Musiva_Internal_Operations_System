@@ -19,6 +19,7 @@ import { ProductDeleteDialog } from "@/components/products/product-delete-dialog
 import { ProductCostDialog } from "@/components/products/product-cost-dialog";
 import type { StaffRole } from "@/lib/constants";
 import { canArchiveProducts, canDeleteProducts } from "@/lib/auth/permissions";
+import { withProductReturnTo } from "@/lib/utils/product-catalog-return";
 
 type VariantQuick = { id: string; color: string; size: string; stock_quantity: number };
 
@@ -51,6 +52,9 @@ type Props = {
   categoryName: string | null;
   variantsQuick: VariantQuick[];
   userRole: StaffRole | null;
+  /** Current Product Catalog URL (page/search/filters), so View/Edit/Change image links can
+   *  bring staff back to the exact list position they came from instead of resetting to page 1. */
+  returnTo?: string;
   /** Only passed when the viewer's role is permitted (canViewBuyingCost) — omitted
    *  entirely otherwise so cost data never reaches the client for unauthorized roles. */
   costView?: {
@@ -70,6 +74,7 @@ export function ProductRowActions({
   categoryName,
   variantsQuick,
   userRole,
+  returnTo,
   costView,
 }: Props) {
   const router = useRouter();
@@ -99,10 +104,10 @@ export function ProductRowActions({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">
           <DropdownMenuItem asChild>
-            <Link href={`/admin/products/${productId}`}>View product</Link>
+            <Link href={withProductReturnTo(`/admin/products/${productId}`, returnTo)}>View product</Link>
           </DropdownMenuItem>
           <DropdownMenuItem asChild>
-            <Link href={`/admin/products/${productId}/edit`}>Edit product</Link>
+            <Link href={withProductReturnTo(`/admin/products/${productId}/edit`, returnTo)}>Edit product</Link>
           </DropdownMenuItem>
 
           <DropdownMenuSeparator />
@@ -120,7 +125,7 @@ export function ProductRowActions({
           </DropdownMenuItem>
 
           <DropdownMenuItem asChild>
-            <Link href={`/admin/products/${productId}`}>
+            <Link href={withProductReturnTo(`/admin/products/${productId}`, returnTo)}>
               <ImageIcon aria-hidden className="mr-2 h-4 w-4" />
               Change image
             </Link>

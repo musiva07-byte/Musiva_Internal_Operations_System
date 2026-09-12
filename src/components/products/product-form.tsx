@@ -24,6 +24,7 @@ import {
 } from "@/components/products/product-save-success-dialog";
 import { ReceiveStockModal } from "@/components/products/receive-stock-modal";
 import { CorrectQuantityModal } from "@/components/products/correct-quantity-modal";
+import { getSafeProductCatalogReturnUrl, withProductReturnTo } from "@/lib/utils/product-catalog-return";
 import { PRODUCT_STATUSES } from "@/lib/constants";
 import { productSchema, type ProductInput } from "@/lib/validations/product.schema";
 import {
@@ -54,6 +55,11 @@ type ProductFormProps = {
    *  no manager has set one yet — same source the New Product wizard uses, so both forms
    *  always agree on today's rate. */
   currentExchangeRate: number | null;
+  /** The Product Catalog URL (page/search/filters) staff arrived from, if any — carried
+   *  through Cancel and the save-success dialog so "Back to catalog" returns to that exact
+   *  list position instead of resetting to page 1. Validated again via getSafeProductCatalogReturnUrl
+   *  wherever it's actually used as a navigation target. */
+  returnTo?: string;
 };
 
 const emptyVariant = {
@@ -186,7 +192,7 @@ function mapProduct(product?: ProductWithRelations): ProductInput {
   };
 }
 
-export function ProductForm({ categories, product, userRole, currentExchangeRate }: ProductFormProps) {
+export function ProductForm({ categories, product, userRole, currentExchangeRate, returnTo }: ProductFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [formError, setFormError] = useState<string | null>(null);
@@ -798,7 +804,17 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
       {formError ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{formError}</p> : null}
 
       <StickyActionBar className="flex justify-end gap-3">
-        <Button type="button" variant="outline" onClick={() => router.back()}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            if (product) {
+              router.push(withProductReturnTo(`/admin/products/${product.id}`, returnTo));
+            } else {
+              router.back();
+            }
+          }}
+        >
           Cancel
         </Button>
         <Button disabled={isPending} type="submit">
@@ -837,11 +853,12 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
           open={Boolean(successInfo)}
           info={successInfo}
           isEditing={isEditing}
+          hasFilteredReturn={Boolean(returnTo)}
           onViewProduct={() => {
-            router.push(`/admin/products/${successInfo.productId}`);
+            router.push(withProductReturnTo(`/admin/products/${successInfo.productId}`, returnTo));
           }}
           onBackToCatalog={() => {
-            router.push("/admin/products");
+            router.push(getSafeProductCatalogReturnUrl(returnTo));
           }}
           onContinueEditing={() => {
             setSuccessInfo(null);

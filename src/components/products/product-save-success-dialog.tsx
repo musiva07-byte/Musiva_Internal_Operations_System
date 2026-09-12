@@ -41,6 +41,9 @@ type Props = {
   open: boolean;
   info: SaveSuccessInfo;
   isEditing: boolean;
+  /** True when staff arrived here from a specific Product Catalog page/search/filter position
+   *  — shows a small hint that "Back to catalog" returns there rather than resetting to page 1. */
+  hasFilteredReturn?: boolean;
   onViewProduct: () => void;
   onBackToCatalog: () => void;
   onContinueEditing: () => void;
@@ -50,6 +53,7 @@ export function ProductSaveSuccessDialog({
   open,
   info,
   isEditing,
+  hasFilteredReturn,
   onViewProduct,
   onBackToCatalog,
   onContinueEditing,
@@ -108,6 +112,10 @@ export function ProductSaveSuccessDialog({
             </div>
           ) : null}
         </div>
+
+        {hasFilteredReturn && (
+          <p className="text-xs text-muted-foreground">Returns to your previous catalog view.</p>
+        )}
 
         <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
           {isEditing ? (

@@ -21,13 +21,19 @@ import {
   getBuyingCostStatus,
 } from "@/lib/utils/cost-conversion";
 import { titleize } from "@/lib/formatters/labels";
+import { getSafeProductCatalogReturnUrl, withProductReturnTo } from "@/lib/utils/product-catalog-return";
 
 type ProductDetailPageProps = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function ProductDetailPage({ params }: ProductDetailPageProps) {
-  const { id } = await params;
+export default async function ProductDetailPage({ params, searchParams }: ProductDetailPageProps) {
+  const [{ id }, resolvedSearchParams] = await Promise.all([params, searchParams]);
+  const rawReturnTo = resolvedSearchParams.returnTo;
+  const returnTo = Array.isArray(rawReturnTo) ? rawReturnTo[0] : rawReturnTo;
+  const safeReturnTo = getSafeProductCatalogReturnUrl(returnTo);
+
   const [product, image, auth] = await Promise.all([
     getProduct(id),
     getProductImage(id),
@@ -86,12 +92,12 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
               segments={[{ label: "Product Catalog", href: "/admin/products" }, { label: product.name }]}
             />
             <div className="mt-2">
-              <BackLink href="/admin/products" label="Back to catalog" />
+              <BackLink href={safeReturnTo} label="Back to catalog" />
             </div>
             <PreviousNextNav
               previous={previousProduct ? { id: previousProduct.id, label: previousProduct.name } : null}
               next={nextProduct ? { id: nextProduct.id, label: nextProduct.name } : null}
-              hrefFor={(productId) => `/admin/products/${productId}`}
+              hrefFor={(productId) => withProductReturnTo(`/admin/products/${productId}`, returnTo)}
               previousLabel="Previous product"
               nextLabel="Next product"
             />
@@ -139,7 +145,7 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
             />
           )}
           <Button asChild>
-            <Link href={`/admin/products/${product.id}/edit`}>
+            <Link href={withProductReturnTo(`/admin/products/${product.id}/edit`, returnTo)}>
               <Edit aria-hidden className="mr-2 h-4 w-4" />
               Edit product
             </Link>
@@ -252,7 +258,7 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
                   </p>
                   <Link
                     className="text-sm font-medium text-musiva-plum hover:underline"
-                    href={`/admin/products/${product.id}/edit`}
+                    href={withProductReturnTo(`/admin/products/${product.id}/edit`, returnTo)}
                   >
                     Edit product cost
                   </Link>

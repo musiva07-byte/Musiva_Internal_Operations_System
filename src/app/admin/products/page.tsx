@@ -20,6 +20,7 @@ import { canPublishProducts, canViewBuyingCost, canViewCostData } from "@/lib/au
 import { formatBhd } from "@/lib/formatters/currency";
 import { getCostSummaryBadge } from "@/lib/utils/cost-conversion";
 import { titleize } from "@/lib/formatters/labels";
+import { withProductReturnTo } from "@/lib/utils/product-catalog-return";
 
 type ProductsPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -64,6 +65,20 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     next.set("page", String(nextPage));
     return `/admin/products?${next.toString()}`;
   };
+
+  // The exact URL staff are viewing right now (every incoming query param, verbatim) — carried
+  // forward as `returnTo` on every View/Edit product link so "Back to catalog" lands back on
+  // this same page/search/filter position instead of resetting to page 1. Built from the raw
+  // params rather than only the known filters above, so any future filter/sort param is
+  // preserved automatically without needing this file updated too.
+  const catalogReturnTo = (() => {
+    const current = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      const v = Array.isArray(value) ? value[0] : value;
+      if (v) current.set(key, v);
+    }
+    return `/admin/products${current.toString() ? `?${current.toString()}` : ""}`;
+  })();
 
   const showingArchived = status === "archived" || status === "all";
   const isUnfilteredEmptyState = !q && !status && categoryId === "all" && !website;
@@ -199,7 +214,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                       <TableCell className="overflow-hidden">
                         <Link
                           className="block truncate font-medium text-musiva-plum hover:underline"
-                          href={`/admin/products/${product.id}`}
+                          href={withProductReturnTo(`/admin/products/${product.id}`, catalogReturnTo)}
                         >
                           {product.name}
                         </Link>
@@ -293,6 +308,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                       <TableCell>
                         <ProductRowActions
                           productId={product.id}
+                          returnTo={catalogReturnTo}
                           productName={product.name}
                           productStatus={product.status}
                           categoryName={product.category_name}
@@ -335,7 +351,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                         <div className="min-w-0">
                           <Link
                             className="block truncate font-medium text-musiva-plum hover:underline"
-                            href={`/admin/products/${product.id}`}
+                            href={withProductReturnTo(`/admin/products/${product.id}`, catalogReturnTo)}
                           >
                             {product.name}
                           </Link>
@@ -345,6 +361,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                         </div>
                         <ProductRowActions
                           productId={product.id}
+                          returnTo={catalogReturnTo}
                           productName={product.name}
                           productStatus={product.status}
                           categoryName={product.category_name}
