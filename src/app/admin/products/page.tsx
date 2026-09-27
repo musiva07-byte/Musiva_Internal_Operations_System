@@ -462,7 +462,13 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
         </>
       )}
 
-      <Pagination href={hrefForPage} page={products.page} pageCount={products.pageCount} />
+      <Pagination
+        href={hrefForPage}
+        page={products.page}
+        pageCount={products.pageCount}
+        totalCount={products.count}
+        pageSize={products.pageSize}
+      />
     </div>
   );
 }

@@ -49,6 +49,10 @@ describe("Product Catalog list — builds and forwards returnTo", () => {
     expect(formMatch).not.toBeNull();
     expect(formMatch![0]).not.toContain('name="page"');
   });
+
+  it("passes totalCount/pageSize to Pagination so staff see \"Showing X–Y of Z\"", () => {
+    expect(source).toMatch(/<Pagination[\s\S]*totalCount=\{products\.count\}[\s\S]*pageSize=\{products\.pageSize\}[\s\S]*\/>/);
+  });
 });
 
 describe("ProductRowActions — View/Edit/Change image links carry returnTo", () => {
