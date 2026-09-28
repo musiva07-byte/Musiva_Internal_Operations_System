@@ -78,6 +78,7 @@ function makeNewVariant(overrides: Partial<ProductVariantInput> = {}): ProductVa
     status: "active",
     buyingPriceInr: 0,
     importCostBhd: 0,
+    sellingPriceTouched: true,
     ...overrides,
   };
 }

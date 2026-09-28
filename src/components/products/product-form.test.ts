@@ -32,7 +32,23 @@ describe("Edit Product — Price & Cost section", () => {
   });
 
   it("labels the price field exactly as required, not just 'Final price'", () => {
-    expect(formSource).toContain("Selling price / Final customer price (BHD)");
+    expect(formSource).toContain("Selling price / customer price (BHD)");
+  });
+
+  it("shows the selling price as its own always-visible, directly editable field for every role — never hidden behind profit/suggested price (fixes the silent price-overwrite incident)", () => {
+    expect(formSource).toMatch(/htmlFor=\{`selling-price-\$\{index\}`\}/);
+    expect(formSource).not.toMatch(/canViewProfit \? \(/);
+  });
+
+  it("shows the required staff-facing reassurance that cost changes never auto-change the customer price", () => {
+    expect(formSource).toContain(
+      "Cost changes do not automatically change customer selling price.",
+    );
+  });
+
+  it("offers a per-variant \"Use suggested price\" action that is not auto-applied", () => {
+    expect(formSource).toContain("Use suggested price");
+    expect(formSource).toContain("suggestionDiffersFromPrice &&");
   });
 
   it("shows the required staff-friendly field labels", () => {
@@ -70,8 +86,8 @@ describe("Edit Product — Price & Cost section", () => {
     expect(formSource).not.toMatch(/disabled=\{[^}]*belowCost/);
   });
 
-  it("gates profit input and suggested price behind canViewProfit (not just canEnterCost)", () => {
-    expect(formSource).toMatch(/canViewProfit \? \(/);
+  it("gates the profit input behind canViewProfit (not just canEnterCost)", () => {
+    expect(formSource).toMatch(/\{canViewProfit && \(/);
   });
 });
 

@@ -56,3 +56,38 @@ describe("PriceConfirmationDialog — cost breakdown fields (unchanged)", () => 
     expect(source).toContain("Selling price / Final customer price (BHD)");
   });
 });
+
+describe("PriceConfirmationDialog — root-cause fix: seeds from the CURRENT price, never the cost-derived suggestion", () => {
+  // Real incident: editing unrelated product details (e.g. website status) silently replaced
+  // the customer-facing selling price with a zero-profit cost figure, because this dialog
+  // defaulted every price field to the calculated suggested price instead of what the product
+  // was actually selling for. currentPriceBhd (seeded from the live form value — the real
+  // stored price for an untouched variant) must be the seed, with suggestedPriceBhd only used
+  // as a last-resort fallback for a brand-new variant that has no price yet.
+  it("requires currentPriceBhd on every row", () => {
+    expect(source).toContain("currentPriceBhd: number;");
+  });
+
+  it("seeds the editable price map from currentPriceBhd, not suggestedPriceBhd", () => {
+    expect(source).toMatch(
+      /row\.currentPriceBhd > 0 \? row\.currentPriceBhd : row\.suggestedPriceBhd/,
+    );
+  });
+
+  it("the row-render fallback for an uninitialized price is also currentPriceBhd, not suggestedPriceBhd", () => {
+    expect(source).toContain("prices[row.key] ?? row.currentPriceBhd");
+    expect(source).not.toContain("prices[row.key] ?? row.suggestedPriceBhd");
+  });
+
+  it('shows "Selling price unchanged" when the price was not touched, reassuring staff cost edits are safe', () => {
+    expect(source).toContain("Selling price unchanged at");
+    expect(source).toContain("cost changes never affect");
+    expect(source).toMatch(/!isNewVariant && !priceChanged &&/);
+  });
+
+  it('offers "Use suggested price" per row instead of auto-applying it', () => {
+    expect(source).toContain("Use suggested price");
+    expect(source).toContain("suggestionDiffersFromPrice");
+    expect(source).toContain("[row.key]: row.suggestedPriceBhd");
+  });
+});

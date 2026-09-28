@@ -17,9 +17,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { OrderItemVariantPicker } from "@/components/orders/order-item-variant-picker";
+import type { VariantPickerCurrentItem } from "@/components/orders/order-item-variant-picker";
 import { updateOrderItemsAction } from "@/app/admin/orders/actions";
 import { formatBhd } from "@/lib/formatters/currency";
 import { titleize } from "@/lib/formatters/labels";
+import { cn } from "@/lib/utils";
 import {
   diffOrderItems,
   computeStockDeltas,
@@ -38,6 +40,10 @@ type EditableItem = {
   /** order_items id, or null for a brand-new line. */
   id: string | null;
   productVariantId: string;
+  /** The variant's product — known for original lines from productIdByVariantId, and always
+   *  known for a freshly picked variant (OrderableVariantItem carries it). Drives which
+   *  "same product" variants the Change option picker prioritizes for this row. */
+  productId: string | null;
   productName: string;
   color: string;
   size: string;
@@ -47,11 +53,15 @@ type EditableItem = {
   discount: number;
 };
 
-function toEditableItems(order: { items: OrderItemRow[] }): EditableItem[] {
+function toEditableItems(
+  order: { items: OrderItemRow[] },
+  productIdByVariantId: Record<string, string>,
+): EditableItem[] {
   return order.items.map((item) => ({
     key: item.id,
     id: item.id,
     productVariantId: item.product_variant_id,
+    productId: productIdByVariantId[item.product_variant_id] ?? null,
     productName: item.product_name_snapshot,
     color: item.color_snapshot,
     size: item.size_snapshot,
@@ -85,6 +95,14 @@ function toExisting(items: EditableItem[]): ExistingOrderItemLite[] {
 type OrderItemsEditorProps = {
   order: OrderWithRelations;
   variants: OrderableVariantItem[];
+  /** Maps each of the order's ORIGINAL line items' product_variant_id to its product_id —
+   *  order_items only stores the variant id, so this is resolved once at page load (see
+   *  getProductIdsForVariants in order.service.ts) purely to prioritize same-product options in
+   *  the Change option picker. */
+  productIdByVariantId: Record<string, string>;
+  /** Every active variant (any stock level) of the products referenced above — the Change
+   *  option picker's "same product" section. */
+  sameProductVariants: OrderableVariantItem[];
   /** True when this order is completed, or its delivery already reached "delivered" — the
    *  stricter owner/manager-only editing case. */
   requiresElevatedPermission: boolean;
@@ -96,19 +114,25 @@ type OrderItemsEditorProps = {
 export function OrderItemsEditor({
   order,
   variants,
+  productIdByVariantId,
+  sameProductVariants,
   requiresElevatedPermission,
   canEditElevated,
 }: OrderItemsEditorProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [items, setItems] = useState<EditableItem[]>(() => toEditableItems(order));
+  const [items, setItems] = useState<EditableItem[]>(() => toEditableItems(order, productIdByVariantId));
   const [note, setNote] = useState("");
   const [pickerFor, setPickerFor] = useState<{ mode: "change" | "add"; key: string | null } | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ orderNumber: string } | null>(null);
 
-  const originalItems = useMemo(() => toEditableItems(order), [order]);
+  const originalItems = useMemo(
+    () => toEditableItems(order, productIdByVariantId),
+    [order, productIdByVariantId],
+  );
+  const originalByKey = useMemo(() => new Map(originalItems.map((item) => [item.key, item])), [originalItems]);
   const variantLabel = useMemo(() => {
     const map = new Map<string, { name: string; color: string; size: string }>();
     for (const item of originalItems) {
@@ -117,10 +141,26 @@ export function OrderItemsEditor({
     for (const v of variants) {
       map.set(v.id, { name: v.product_name, color: v.color, size: v.size });
     }
+    for (const v of sameProductVariants) {
+      map.set(v.id, { name: v.product_name, color: v.color, size: v.size });
+    }
     return map;
-  }, [originalItems, variants]);
+  }, [originalItems, variants, sameProductVariants]);
 
   const locked = requiresElevatedPermission && !canEditElevated;
+
+  /** All known active variants of the given product, deduped — combines the page-load
+   *  "same product" fetch with anything matching in the general browse list, so re-opening
+   *  Change option on a row that was already swapped this session (to a different product)
+   *  still prioritizes ITS siblings correctly without a second server round trip. */
+  function sameProductOptionsFor(productId: string | null): OrderableVariantItem[] {
+    if (!productId) return [];
+    const seen = new Map<string, OrderableVariantItem>();
+    for (const v of [...sameProductVariants, ...variants]) {
+      if (v.product_id === productId) seen.set(v.id, v);
+    }
+    return [...seen.values()];
+  }
 
   const { diff, stockDeltas, oldTotals, newTotals, hasChanges } = useMemo(() => {
     const d = diffOrderItems(toExisting(originalItems), toIncoming(items));
@@ -176,6 +216,7 @@ export function OrderItemsEditor({
             ? {
                 ...item,
                 productVariantId: variant.id,
+                productId: variant.product_id,
                 productName: variant.product_name,
                 color: variant.color,
                 size: variant.size,
@@ -192,6 +233,7 @@ export function OrderItemsEditor({
           key: `new-${variant.id}-${Date.now()}`,
           id: null,
           productVariantId: variant.id,
+          productId: variant.product_id,
           productName: variant.product_name,
           color: variant.color,
           size: variant.size,
@@ -205,10 +247,33 @@ export function OrderItemsEditor({
     setPickerFor(null);
   }
 
+  const pickerItem = pickerFor?.mode === "change" ? items.find((i) => i.key === pickerFor.key) : undefined;
+  const pickerCurrentItem: VariantPickerCurrentItem | null = pickerItem
+    ? {
+        productVariantId: pickerItem.productVariantId,
+        productName: pickerItem.productName,
+        color: pickerItem.color,
+        size: pickerItem.size,
+        variantSku: pickerItem.variantSku,
+        quantity: pickerItem.quantity,
+        unitPrice: pickerItem.unitPrice,
+      }
+    : null;
+  const pickerSameProductVariants = pickerItem ? sameProductOptionsFor(pickerItem.productId) : [];
+
+  const noteRequired = requiresElevatedPermission;
+  const noteMissing = noteRequired && !note.trim();
+
   function handleReviewChanges() {
     setError(null);
     if (items.length === 0) {
       setError("An order must have at least one item.");
+      return;
+    }
+    if (noteMissing) {
+      setError(
+        "Please add a note explaining this change before saving — required when editing a completed or delivered order.",
+      );
       return;
     }
     setConfirmOpen(true);
@@ -237,7 +302,14 @@ export function OrderItemsEditor({
 
       setConfirmOpen(false);
       setSuccess({ orderNumber: result.order.order_number });
-      setItems(toEditableItems(result.order));
+      // Carry forward what we already know about each (possibly just-changed) line's product,
+      // so re-opening Change option right after a save still prioritizes the right "same
+      // product" siblings without waiting for a full page reload.
+      const refreshedProductIds: Record<string, string> = { ...productIdByVariantId };
+      for (const item of items) {
+        if (item.productId) refreshedProductIds[item.productVariantId] = item.productId;
+      }
+      setItems(toEditableItems(result.order, refreshedProductIds));
       router.refresh();
     });
   }
@@ -274,48 +346,78 @@ export function OrderItemsEditor({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          {items.map((item) => (
-            <div
-              key={item.key}
-              className="flex flex-wrap items-center gap-3 rounded-lg border border-musiva-border p-3"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{item.productName}</p>
-                <p className="text-xs text-muted-foreground">
-                  {item.color} / {item.size} · SKU: {item.variantSku} · {formatBhd(item.unitPrice)} each
-                </p>
+          {items.map((item) => {
+            const original = originalByKey.get(item.key);
+            const variantChanged = Boolean(original && original.productVariantId !== item.productVariantId);
+            const oldLineTotal = original
+              ? Math.max(0, original.unitPrice * original.quantity - original.discount)
+              : 0;
+            const newLineTotal = Math.max(0, item.unitPrice * item.quantity - item.discount);
+            const lineDelta = newLineTotal - oldLineTotal;
+
+            return (
+              <div key={item.key} className="rounded-lg border border-musiva-border p-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{item.productName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {item.color} / {item.size} · SKU: {item.variantSku} · {formatBhd(item.unitPrice)} each
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor={`qty-${item.key}`} className="text-xs text-muted-foreground">
+                      Qty
+                    </Label>
+                    <Input
+                      id={`qty-${item.key}`}
+                      type="number"
+                      min={1}
+                      value={item.quantity}
+                      onChange={(e) => updateQuantity(item.key, Number(e.target.value) || 1)}
+                      className="h-8 w-16 px-2 text-sm"
+                    />
+                  </div>
+                  <p className="min-w-[70px] text-right text-sm font-semibold">{formatBhd(newLineTotal)}</p>
+                  <Button type="button" size="sm" variant="outline" onClick={() => openChangePicker(item.key)}>
+                    <Pencil aria-hidden className="mr-1.5 h-3.5 w-3.5" />
+                    Change option
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive"
+                    onClick={() => removeItem(item.key)}
+                  >
+                    <Trash2 aria-hidden className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+
+                {/* Local preview — nothing is saved yet, this just reflects the pending pick. */}
+                {variantChanged && original && (
+                  <div className="mt-2 rounded-md border border-musiva-plum/20 bg-musiva-blush/30 p-2 text-xs">
+                    <p className="font-medium text-musiva-plum">
+                      {original.color} / {original.size} → {item.color} / {item.size}
+                    </p>
+                    <p className="mt-0.5 text-muted-foreground">
+                      Stock: return {original.color} / {original.size} +{original.quantity} · deduct{" "}
+                      {item.color} / {item.size} -{item.quantity}
+                    </p>
+                    <p className="text-muted-foreground">
+                      Price: {formatBhd(oldLineTotal)} → {formatBhd(newLineTotal)}
+                      {lineDelta !== 0 && (
+                        <span className={lineDelta > 0 ? "text-musiva-warning" : "text-musiva-sage"}>
+                          {" "}
+                          ({lineDelta > 0 ? "+" : ""}
+                          {formatBhd(lineDelta)})
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-1.5">
-                <Label htmlFor={`qty-${item.key}`} className="text-xs text-muted-foreground">
-                  Qty
-                </Label>
-                <Input
-                  id={`qty-${item.key}`}
-                  type="number"
-                  min={1}
-                  value={item.quantity}
-                  onChange={(e) => updateQuantity(item.key, Number(e.target.value) || 1)}
-                  className="h-8 w-16 px-2 text-sm"
-                />
-              </div>
-              <p className="min-w-[70px] text-right text-sm font-semibold">
-                {formatBhd(Math.max(0, item.unitPrice * item.quantity - item.discount))}
-              </p>
-              <Button type="button" size="sm" variant="outline" onClick={() => openChangePicker(item.key)}>
-                <Pencil aria-hidden className="mr-1.5 h-3.5 w-3.5" />
-                Change option
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="text-destructive"
-                onClick={() => removeItem(item.key)}
-              >
-                <Trash2 aria-hidden className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          ))}
+            );
+          })}
           {items.length === 0 && (
             <p className="rounded-lg border border-dashed border-musiva-border p-4 text-center text-sm text-muted-foreground">
               No items. Add at least one item before saving.
@@ -329,14 +431,21 @@ export function OrderItemsEditor({
         </Button>
 
         <div className="space-y-2">
-          <Label htmlFor="order-item-edit-note">Note (optional)</Label>
+          <Label htmlFor="order-item-edit-note">
+            Note {noteRequired ? <span className="text-destructive">(required)</span> : "(optional)"}
+          </Label>
           <Textarea
             id="order-item-edit-note"
-            placeholder="e.g. Customer changed size from XL to XXL"
+            placeholder="e.g. Customer changed size from L to XXL"
             rows={2}
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
+          {noteRequired && (
+            <p className="text-xs text-muted-foreground">
+              Required because this order is already completed or delivered.
+            </p>
+          )}
         </div>
 
         {error ? (
@@ -355,8 +464,9 @@ export function OrderItemsEditor({
       <OrderItemVariantPicker
         open={pickerFor !== null}
         onOpenChange={(open) => !open && setPickerFor(null)}
-        title={pickerFor?.mode === "add" ? "Add item" : "Change option"}
-        description="Select the correct product, color, and size."
+        mode={pickerFor?.mode ?? "add"}
+        currentItem={pickerCurrentItem}
+        sameProductVariants={pickerSameProductVariants}
         variants={variants}
         onSelect={handleVariantSelected}
       />
@@ -372,29 +482,48 @@ export function OrderItemsEditor({
           </DialogHeader>
 
           <div className="max-h-64 space-y-3 overflow-y-auto text-sm">
-            {diff.changed.map((c, i) => (
-              <div key={`changed-${i}`} className="rounded-md border border-musiva-border p-2.5">
-                <p className="text-muted-foreground">
-                  Old: {labelFor(c.old.productVariantId)} — qty {c.old.quantity}
-                </p>
-                <p className="font-medium text-musiva-ink">
-                  New: {labelFor(c.new.productVariantId)} — qty {c.new.quantity}
-                </p>
-              </div>
-            ))}
+            {diff.changed.map((c, i) => {
+              const oldLabel = variantLabel.get(c.old.productVariantId);
+              const newLabel = variantLabel.get(c.new.productVariantId);
+              const sameProduct = oldLabel?.name === newLabel?.name;
+              const oldLineTotal = Math.max(0, c.old.unitPrice * c.old.quantity - c.old.discount);
+              const newLineTotal = Math.max(0, c.new.unitPrice * c.new.quantity - c.new.discount);
+              const lineDiff = newLineTotal - oldLineTotal;
+              return (
+                <div key={`changed-${i}`} className="rounded-md border border-musiva-border p-2.5">
+                  <p className="font-medium text-musiva-ink">Changed item: {oldLabel?.name ?? "Product"}</p>
+                  <p className="mt-0.5 text-musiva-plum">
+                    {oldLabel?.color} / {oldLabel?.size} → {newLabel?.color} / {newLabel?.size}
+                    {!sameProduct && newLabel ? ` (${newLabel.name})` : ""}
+                  </p>
+                  <p className="text-muted-foreground">Qty {c.new.quantity}</p>
+                  <div className="mt-1.5 space-y-0.5 border-t border-dashed border-musiva-border pt-1.5 text-xs text-muted-foreground">
+                    <p>Old line total: {formatBhd(oldLineTotal)}</p>
+                    <p>New line total: {formatBhd(newLineTotal)}</p>
+                    <p
+                      className={cn(
+                        "font-medium",
+                        lineDiff > 0 ? "text-musiva-warning" : lineDiff < 0 ? "text-musiva-sage" : "text-muted-foreground",
+                      )}
+                    >
+                      Difference: {lineDiff > 0 ? "+" : lineDiff < 0 ? "-" : ""}
+                      {formatBhd(Math.abs(lineDiff))}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
             {diff.removed.map((item, i) => (
               <div key={`removed-${i}`} className="rounded-md border border-musiva-border p-2.5">
                 <p className="text-muted-foreground">
-                  Old: {labelFor(item.productVariantId)} — qty {item.quantity}
+                  Removed item: {labelFor(item.productVariantId)} — qty {item.quantity}
                 </p>
-                <p className="font-medium text-destructive">New: removed</p>
               </div>
             ))}
             {diff.added.map((item, i) => (
               <div key={`added-${i}`} className="rounded-md border border-musiva-border p-2.5">
-                <p className="text-muted-foreground">Old: (none)</p>
                 <p className="font-medium text-musiva-ink">
-                  New: {labelFor(item.productVariantId)} — qty {item.quantity}
+                  Added item: {labelFor(item.productVariantId)} — qty {item.quantity}
                 </p>
               </div>
             ))}
@@ -453,7 +582,10 @@ export function OrderItemsEditor({
               <CheckCircle2 aria-hidden className="h-5 w-5 text-musiva-sage" />
               <DialogTitle>Order updated successfully</DialogTitle>
             </div>
-            <DialogDescription>Stock has been adjusted.</DialogDescription>
+            <DialogDescription>
+              Stock has been adjusted. Any receipt or package sheet printed before this change is
+              now outdated — reprint below for the correct item details.
+            </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2">
             <Button type="button" onClick={() => router.push(`/admin/orders/${order.id}`)}>
@@ -464,8 +596,17 @@ export function OrderItemsEditor({
               variant="outline"
               onClick={() => window.open(`/print/invoice/${order.id}`, "_blank", "noopener,noreferrer")}
             >
-              Print updated receipt
+              Reprint receipt
             </Button>
+            {order.fulfilment_method === "delivery" && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => window.open(`/print/combined/${order.id}`, "_blank", "noopener,noreferrer")}
+              >
+                Reprint package sheet
+              </Button>
+            )}
             <Button type="button" variant="outline" onClick={() => router.push("/admin/orders")}>
               Back to orders
             </Button>

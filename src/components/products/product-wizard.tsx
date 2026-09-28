@@ -599,6 +599,9 @@ export function ProductWizard({
           // converted BHD figure is ever saved, matching the existing
           // latest_additional_landed_cost_bhd column's contract.
           importCostBhd: deriveImportCostBhd(v.importCostInr, effectiveExchangeRate),
+          // Every variant here is brand new (product creation) — there is no existing price
+          // to protect, so the submitted price is always applied.
+          sellingPriceTouched: true,
         })),
         images: [],
       });
@@ -632,6 +635,7 @@ export function ProductWizard({
         importCostInr: v.importCostInr,
         finalCostBhd,
         suggestedPriceBhd,
+        currentPriceBhd: v.regularSellingPriceBhd,
       };
     });
   }

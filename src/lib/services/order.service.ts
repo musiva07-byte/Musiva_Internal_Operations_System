@@ -214,6 +214,77 @@ export async function listOrderableVariants(
   }));
 }
 
+function mapVariantRelationRows(rows: VariantRelationRow[] | null | undefined): OrderableVariantItem[] {
+  return ((rows ?? []) as unknown as VariantRelationRow[]).map((row) => ({
+    id: row.id,
+    product_id: row.product_id,
+    variant_sku: row.variant_sku,
+    color: row.color,
+    size: row.size,
+    selling_price: row.selling_price,
+    regular_selling_price_bhd: row.regular_selling_price_bhd,
+    discount_price_bhd: row.discount_price_bhd,
+    discount_start_at: row.discount_start_at,
+    discount_end_at: row.discount_end_at,
+    stock_quantity: row.stock_quantity,
+    status: row.status,
+    product_name: row.products?.name ?? "Unknown product",
+    product_sku: row.products?.sku ?? "",
+  }));
+}
+
+/**
+ * Order Edit "Change option" — resolves the product each of an order's current line items
+ * belongs to, so the picker can prioritize same-product variants over an unrelated browse list.
+ * `order_items` only stores `product_variant_id` (plus point-in-time snapshots), never
+ * `product_id` directly, so this is a small dedicated lookup rather than a schema change.
+ */
+export async function getProductIdsForVariants(
+  variantIds: string[],
+): Promise<Record<string, string>> {
+  if (variantIds.length === 0) return {};
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return {};
+
+  const { data } = await supabase
+    .from("product_variants")
+    .select("id, product_id")
+    .in("id", variantIds);
+
+  const map: Record<string, string> = {};
+  for (const row of data ?? []) {
+    map[row.id] = row.product_id;
+  }
+  return map;
+}
+
+/**
+ * Order Edit "Change option" — every active variant of the given products, INCLUDING
+ * out-of-stock ones (unlike listOrderableVariants' default browse list), so the picker can show
+ * the complete same-size/color lineup for the product being edited and let staff toggle
+ * out-of-stock visibility client-side without a second round trip. Not capped at
+ * ORDERABLE_VARIANT_LIMIT — a single product's variant count is always small. Sorted by color
+ * then size so the picker can present a predictable, scannable order.
+ */
+export async function listVariantsForProducts(productIds: string[]): Promise<OrderableVariantItem[]> {
+  if (productIds.length === 0) return [];
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return [];
+
+  const { data } = await supabase
+    .from("product_variants")
+    .select(
+      "id, product_id, variant_sku, color, size, selling_price, regular_selling_price_bhd, discount_price_bhd, discount_start_at, discount_end_at, stock_quantity, status, products!inner(name, sku, status)",
+    )
+    .in("product_id", productIds)
+    .eq("status", "active")
+    .eq("products.status", "active")
+    .order("color", { ascending: true })
+    .order("size", { ascending: true });
+
+  return mapVariantRelationRows(data as unknown as VariantRelationRow[]);
+}
+
 export async function listOrders(
   filters: OrderFilters = {},
 ): Promise<PaginatedResult<OrderListItem>> {
@@ -1102,6 +1173,16 @@ export async function updateOrderItems(
     );
   }
 
+  // Editing a completed/delivered order retroactively rewrites stock and sale history, so a
+  // note is required (unlike the routine, in-progress-order edit case, where it stays optional)
+  // — this gives future staff/audit review a reason without having to guess from the numbers
+  // alone.
+  if ((isCompletedOrder || deliveryDelivered) && !parsed.data.note?.trim()) {
+    return serviceError(
+      "Please add a note explaining this change before editing a completed or delivered order.",
+    );
+  }
+
   const { data: existingItemRows } = await supabase
     .from("order_items")
     .select("*")
@@ -1159,6 +1240,41 @@ export async function updateOrderItems(
   }
 
   // ── Apply stock movements: returns first, deductions second ────────────────────
+  // Not wrapped in a single DB transaction (each RPC call commits independently), so a failure
+  // partway through — e.g. the deduction leg losing a race to a concurrent sale right after the
+  // return leg already committed — is compensated for explicitly below rather than left as a
+  // silent stock/order desync.
+  const appliedReturns: Array<{ variantId: string; quantity: number }> = [];
+  const appliedDeductions: Array<{ variantId: string; quantity: number }> = [];
+
+  async function rollbackAppliedStockMovements() {
+    for (const { variantId, quantity } of appliedDeductions) {
+      const { error } = await supabase.rpc("add_variant_stock", {
+        p_variant_id: variantId,
+        p_quantity: quantity,
+        p_movement_type: "return_added",
+        p_reference_type: "order_item_correction_rollback",
+        p_reference_id: orderId,
+        p_note: `Rollback: order ${orderRow.order_number} correction could not complete.`,
+      });
+      if (error) {
+        console.error("[updateOrderItems] rollback (undo deduction) failed:", error);
+      }
+    }
+    for (const { variantId, quantity } of appliedReturns) {
+      const { error } = await supabase.rpc("deduct_variant_stock", {
+        p_variant_id: variantId,
+        p_quantity: quantity,
+        p_reference_type: "order_item_correction_rollback",
+        p_reference_id: orderId,
+        p_note: `Rollback: order ${orderRow.order_number} correction could not complete.`,
+      });
+      if (error) {
+        console.error("[updateOrderItems] rollback (undo return) failed:", error);
+      }
+    }
+  }
+
   for (const [variantId, delta] of stockDeltas) {
     if (delta <= 0) continue;
     const { error } = await supabase.rpc("add_variant_stock", {
@@ -1171,8 +1287,10 @@ export async function updateOrderItems(
     });
     if (error) {
       console.error("[updateOrderItems] add_variant_stock failed:", error);
+      await rollbackAppliedStockMovements();
       return serviceError("Could not update order. Please try again or contact the administrator.");
     }
+    appliedReturns.push({ variantId, quantity: delta });
   }
 
   for (const [variantId, delta] of stockDeltas) {
@@ -1186,8 +1304,10 @@ export async function updateOrderItems(
     });
     if (error) {
       console.error("[updateOrderItems] deduct_variant_stock failed:", error);
+      await rollbackAppliedStockMovements();
       return serviceError("Not enough stock available for this size/color.");
     }
+    appliedDeductions.push({ variantId, quantity: Math.abs(delta) });
   }
 
   // ── Write the order_items changes ───────────────────────────────────────────────
@@ -1202,14 +1322,19 @@ export async function updateOrderItems(
   }
 
   if (diff.removed.length > 0) {
-    await supabase
+    const { error } = await supabase
       .from("order_items")
       .delete()
       .in("id", diff.removed.map((item) => item.id));
+    if (error) {
+      console.error("[updateOrderItems] order_items delete failed:", error);
+      await rollbackAppliedStockMovements();
+      return serviceError("Could not update order. Please try again or contact the administrator.");
+    }
   }
 
   for (const { old, new: next } of diff.changed) {
-    await supabase
+    const { error } = await supabase
       .from("order_items")
       .update({
         product_variant_id: next.productVariantId,
@@ -1220,10 +1345,15 @@ export async function updateOrderItems(
         ...snapshotFor(next.productVariantId),
       })
       .eq("id", old.id);
+    if (error) {
+      console.error("[updateOrderItems] order_items update failed:", error);
+      await rollbackAppliedStockMovements();
+      return serviceError("Could not update order. Please try again or contact the administrator.");
+    }
   }
 
   if (diff.added.length > 0) {
-    await supabase.from("order_items").insert(
+    const { error } = await supabase.from("order_items").insert(
       diff.added.map((item) => ({
         order_id: orderId,
         product_variant_id: item.productVariantId,
@@ -1234,6 +1364,11 @@ export async function updateOrderItems(
         ...snapshotFor(item.productVariantId),
       })),
     );
+    if (error) {
+      console.error("[updateOrderItems] order_items insert failed:", error);
+      await rollbackAppliedStockMovements();
+      return serviceError("Could not update order. Please try again or contact the administrator.");
+    }
   }
 
   // ── Recalculate totals from the final item set ──────────────────────────────────
@@ -1261,6 +1396,31 @@ export async function updateOrderItems(
     );
   }
 
+  // Old identity (product name/SKU/color/size) comes from each order_items row's own snapshot —
+  // exactly what staff and any printed document already showed for that line — rather than a
+  // fresh variant lookup, so the audit trail reflects what was really on the order even if the
+  // old variant has since changed. New identity comes from the variant just selected.
+  const oldSnapshotById = new Map(
+    (existingItemRows ?? []).map((row) => [
+      row.id,
+      {
+        productName: row.product_name_snapshot,
+        variantSku: row.variant_sku_snapshot,
+        color: row.color_snapshot,
+        size: row.size_snapshot,
+      },
+    ]),
+  );
+  function newIdentityFor(variantId: string) {
+    const variant = variantById.get(variantId);
+    return {
+      productName: variant?.products?.name ?? "Product",
+      variantSku: variant?.variant_sku ?? "",
+      color: variant?.color ?? "",
+      size: variant?.size ?? "",
+    };
+  }
+
   await createAuditLog({
     action: "update_order_items",
     tableName: "orders",
@@ -1268,11 +1428,35 @@ export async function updateOrderItems(
     userId: auth.userId,
     metadata: {
       order_number: orderRow.order_number,
-      removed: diff.removed.map((item) => ({ variant_id: item.productVariantId, quantity: item.quantity })),
-      added: diff.added.map((item) => ({ variant_id: item.productVariantId, quantity: item.quantity })),
+      removed: diff.removed.map((item) => ({
+        variant_id: item.productVariantId,
+        ...oldSnapshotById.get(item.id),
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        line_total: Math.max(0, item.unitPrice * item.quantity - item.discount),
+      })),
+      added: diff.added.map((item) => ({
+        variant_id: item.productVariantId,
+        ...newIdentityFor(item.productVariantId),
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        line_total: Math.max(0, item.unitPrice * item.quantity - item.discount),
+      })),
       changed: diff.changed.map((c) => ({
-        old: { variant_id: c.old.productVariantId, quantity: c.old.quantity },
-        new: { variant_id: c.new.productVariantId, quantity: c.new.quantity },
+        old: {
+          variant_id: c.old.productVariantId,
+          ...oldSnapshotById.get(c.old.id),
+          quantity: c.old.quantity,
+          unit_price: c.old.unitPrice,
+          line_total: Math.max(0, c.old.unitPrice * c.old.quantity - c.old.discount),
+        },
+        new: {
+          variant_id: c.new.productVariantId,
+          ...newIdentityFor(c.new.productVariantId),
+          quantity: c.new.quantity,
+          unit_price: c.new.unitPrice,
+          line_total: Math.max(0, c.new.unitPrice * c.new.quantity - c.new.discount),
+        },
       })),
       stock_deltas: Object.fromEntries(stockDeltas),
       previous_grand_total: orderRow.grand_total,

@@ -79,6 +79,9 @@ const emptyVariant = {
   buyingPriceInr: 0,
   importCostBhd: 0,
   status: PRODUCT_STATUSES.active,
+  // A freshly-added variant (whether in the New Product wizard or "Add variant" during an
+  // edit) has no existing price to protect — its price is always intentional/required.
+  sellingPriceTouched: true,
 } as const;
 
 /** Per-variant fields that aren't part of the saved product schema — they only exist to
@@ -179,6 +182,10 @@ function mapProduct(product?: ProductWithRelations): ProductInput {
       status: (["active", "inactive", "archived", "draft"].includes(variant.status)
         ? variant.status
         : "active") as "active" | "inactive" | "archived" | "draft",
+      // Loaded from the database — untouched until the staff member explicitly edits the
+      // price, uses "Use suggested price", or checks "Also update selling price" in bulk
+      // apply. See doSubmit() for where this gets recomputed right before every save.
+      sellingPriceTouched: false,
     })),
     images: product.images.map((image) => ({
       id: image.id,
@@ -222,6 +229,11 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
   const [bulkImportCostInr, setBulkImportCostInr] = useState(0);
   const [bulkProfitInput, setBulkProfitInput] = useState(0);
   const [bulkMinStock, setBulkMinStock] = useState(0);
+  // Default unchecked — bulk-applying buying/import cost or a desired profit must only update
+  // cost/suggested-price data by default. Without this gate, applyBulkToAll used to silently
+  // overwrite every variant's real customer-facing selling price with a cost-derived
+  // suggestion the moment staff clicked Apply, even if they only meant to update cost.
+  const [bulkAlsoUpdateSellingPrice, setBulkAlsoUpdateSellingPrice] = useState(false);
   const bulkMarginError = profitType === "margin" ? validateMarginPercent(bulkProfitInput) : null;
 
   function appendVariant() {
@@ -253,7 +265,10 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
       }
       updateCostState(index, { importCostInr: nextImportCostInr, profitInput: nextProfitInput });
 
-      if (canViewProfit) {
+      // Cost/suggested-price data is always recalculated above. The actual customer-facing
+      // selling price is only touched when staff explicitly checked "Also update selling
+      // price" — otherwise every variant keeps exactly the price it already had.
+      if (canViewProfit && bulkAlsoUpdateSellingPrice) {
         const finalCost = deriveVariantFinalCost(nextBuyingPriceInr, currentExchangeRate, nextImportCostInr);
         const marginError = profitType === "margin" ? validateMarginPercent(nextProfitInput) : null;
         const suggested =
@@ -300,7 +315,9 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
       const marginError = profitType === "margin" ? validateMarginPercent(cost.profitInput) : null;
       const suggestedPriceBhd =
         marginError === null ? deriveSuggestedSellingPrice(finalCostBhd, profitType, cost.profitInput) : 0;
-      const existing = product?.variants[index];
+      // Matched by id, not array position — staff removing/reordering variants during this
+      // edit session must never cause this row to compare against the wrong variant's price.
+      const existing = variant.id ? product?.variants.find((v) => v.id === variant.id) : undefined;
       return {
         key: rowKeyFor(index, variant),
         optionLabel: `${variant.color} / ${variant.size}`,
@@ -308,13 +325,45 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
         importCostInr: cost.importCostInr,
         finalCostBhd,
         suggestedPriceBhd,
+        // The price already sitting in the form for this variant — for an untouched existing
+        // variant this is exactly the stored price; for one staff already edited directly, it's
+        // their edit. Never derived from cost/suggested price. This is what the confirmation
+        // dialog's price field is seeded from, NOT suggestedPriceBhd (see PriceConfirmationDialog's
+        // doc comment for the incident this fixes).
+        currentPriceBhd: Number(variant.regularSellingPriceBhd ?? variant.sellingPrice) || 0,
         oldPriceBhd: existing ? Number(existing.regular_selling_price_bhd ?? existing.selling_price) : undefined,
       };
     });
   }
 
-  function doSubmit(values: ProductInput) {
+  /** The single source of truth for sellingPriceTouched, computed fresh right before every
+   *  submit regardless of which path got us here (direct save, the price-confirmation dialog,
+   *  or brand-new product creation) — so no individual UI control (bulk apply, "Use suggested
+   *  price", a future new field) can accidentally forget to set it correctly. A variant's price
+   *  is "touched" when it has no existing record to compare against (new product, or a new
+   *  variant added during an edit) or when the submitted price genuinely differs from what's
+   *  currently stored. Untouched existing variants keep whatever is already in the form
+   *  (harmless either way, since the server ignores it when untouched) but are guaranteed to
+   *  never have their real price overwritten by a stray cost-derived value.
+   */
+  function withSellingPriceTouched(values: ProductInput): ProductInput {
+    return {
+      ...values,
+      variants: values.variants.map((variant) => {
+        const existing = variant.id ? product?.variants.find((v) => v.id === variant.id) : undefined;
+        if (!existing) {
+          return { ...variant, sellingPriceTouched: true };
+        }
+        const originalPrice = Number(existing.regular_selling_price_bhd ?? existing.selling_price);
+        const newPrice = Number(variant.regularSellingPriceBhd ?? variant.sellingPrice);
+        return { ...variant, sellingPriceTouched: newPrice !== originalPrice };
+      }),
+    };
+  }
+
+  function doSubmit(rawValues: ProductInput) {
     setFormError(null);
+    const values = withSellingPriceTouched(rawValues);
     startTransition(async () => {
       const result = product
         ? await updateProductAction(product.id, values)
@@ -696,6 +745,21 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
                 />
               </div>
             </div>
+            {canViewProfit && (
+              <label className="flex items-center gap-2 text-sm text-musiva-plum">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-musiva-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  checked={bulkAlsoUpdateSellingPrice}
+                  onChange={(e) => setBulkAlsoUpdateSellingPrice(e.target.checked)}
+                />
+                Also update selling price
+                <span className="text-xs font-normal text-muted-foreground">
+                  (unchecked: only cost and suggested price are updated — customer price stays
+                  the same)
+                </span>
+              </label>
+            )}
             <Button type="button" variant="outline" onClick={applyBulkToAll}>
               Apply to all variants
             </Button>
@@ -920,31 +984,18 @@ function VariantPriceCost({
   const buyingPriceInr = Number(form.watch(`variants.${index}.buyingPriceInr`)) || 0;
   const currentPriceBhd = Number(form.watch(`variants.${index}.regularSellingPriceBhd`)) || 0;
 
-  if (!canEnterCost) {
-    return (
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label>Selling price / Final customer price (BHD)</Label>
-          <Input
-            min={0}
-            step="0.001"
-            type="number"
-            {...form.register(`variants.${index}.regularSellingPriceBhd`)}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-              const value = Number(e.target.value) || 0;
-              form.setValue(`variants.${index}.regularSellingPriceBhd`, value);
-              form.setValue(`variants.${index}.sellingPrice`, value);
-            }}
-          />
-        </div>
-      </div>
-    );
+  function setSellingPrice(value: number) {
+    form.setValue(`variants.${index}.regularSellingPriceBhd`, value, { shouldDirty: true });
+    form.setValue(`variants.${index}.sellingPrice`, value, { shouldDirty: true });
   }
 
-  const finalCostBhd = deriveVariantFinalCost(buyingPriceInr, exchangeRate, cost.importCostInr);
-  const marginError = profitType === "margin" ? validateMarginPercent(cost.profitInput) : null;
+  const finalCostBhd = canEnterCost ? deriveVariantFinalCost(buyingPriceInr, exchangeRate, cost.importCostInr) : 0;
+  const marginError =
+    canViewProfit && profitType === "margin" ? validateMarginPercent(cost.profitInput) : null;
   const suggestedPriceBhd =
-    marginError === null ? deriveSuggestedSellingPrice(finalCostBhd, profitType, cost.profitInput) : 0;
+    canViewProfit && marginError === null
+      ? deriveSuggestedSellingPrice(finalCostBhd, profitType, cost.profitInput)
+      : 0;
   const profit =
     canViewProfit && finalCostBhd > 0 && currentPriceBhd > 0
       ? calcEstimatedProfit(currentPriceBhd, finalCostBhd)
@@ -954,85 +1005,105 @@ function VariantPriceCost({
       ? calcEstimatedMargin(currentPriceBhd, finalCostBhd)
       : null;
   const belowCost = finalCostBhd > 0 && currentPriceBhd > 0 && currentPriceBhd < finalCostBhd;
+  const suggestionDiffersFromPrice = suggestedPriceBhd > 0 && suggestedPriceBhd !== currentPriceBhd;
 
   return (
-    <div className="space-y-2 border-t border-dashed border-musiva-border pt-3">
+    <div className="space-y-3 border-t border-dashed border-musiva-border pt-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-musiva-gold">Price &amp; Cost</p>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="space-y-2">
-          <Label className="text-[11px]">Buy India (INR)</Label>
-          <Input
-            min={0}
-            step="0.01"
-            type="number"
-            {...form.register(`variants.${index}.buyingPriceInr`)}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label className="text-[11px]">Import India (INR)</Label>
-          <Input
-            min={0}
-            step="0.01"
-            type="number"
-            value={cost.importCostInr || ""}
-            onChange={(e) => onCostChange({ importCostInr: Number(e.target.value) || 0 })}
-          />
-        </div>
-        {canViewProfit ? (
-          <div className="space-y-2">
-            <Label className="text-[11px]">
-              {profitType === "amount" ? "Profit (BHD)" : "Margin (%)"}
-            </Label>
-            <Input
-              min={0}
-              step={profitType === "amount" ? "0.001" : "0.1"}
-              type="number"
-              value={cost.profitInput || ""}
-              onChange={(e) => onCostChange({ profitInput: Number(e.target.value) || 0 })}
-            />
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Label className="text-[11px]">Selling price / Final customer price (BHD)</Label>
-            <Input
-              min={0}
-              step="0.001"
-              type="number"
-              {...form.register(`variants.${index}.regularSellingPriceBhd`)}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                const value = Number(e.target.value) || 0;
-                form.setValue(`variants.${index}.regularSellingPriceBhd`, value);
-                form.setValue(`variants.${index}.sellingPrice`, value);
-              }}
-            />
-          </div>
-        )}
-        <div className="space-y-2">
-          <Label className="text-[11px]">Final Bahrain cost (BHD)</Label>
-          <div className="flex h-10 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
-            {finalCostBhd > 0 ? formatBhd(finalCostBhd) : "Not recorded"}
-          </div>
-        </div>
-      </div>
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-        <span>
-          Current price:{" "}
-          <span className="font-medium text-foreground">{formatBhd(currentPriceBhd)}</span>
-        </span>
-        {canViewProfit && suggestedPriceBhd > 0 && (
-          <span>
-            Suggested price:{" "}
-            <span className="font-medium text-foreground">{formatBhd(suggestedPriceBhd)}</span>
-          </span>
+      {canEnterCost && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="space-y-2">
+              <Label className="text-[11px]">Buy India (INR)</Label>
+              <Input
+                min={0}
+                step="0.01"
+                type="number"
+                {...form.register(`variants.${index}.buyingPriceInr`)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[11px]">Import India (INR)</Label>
+              <Input
+                min={0}
+                step="0.01"
+                type="number"
+                value={cost.importCostInr || ""}
+                onChange={(e) => onCostChange({ importCostInr: Number(e.target.value) || 0 })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[11px]">Final Bahrain cost (BHD)</Label>
+              <div className="flex h-10 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
+                {finalCostBhd > 0 ? formatBhd(finalCostBhd) : "Not recorded"}
+              </div>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Cost changes do not automatically change customer selling price. To change selling
+            price, edit it directly below or choose &ldquo;Use suggested price&rdquo;.
+          </p>
+        </>
+      )}
+
+      {canViewProfit && (
+        <div className="max-w-[220px] space-y-2">
+          <Label className="text-[11px]">{profitType === "amount" ? "Profit (BHD)" : "Margin (%)"}</Label>
+          <Input
+            min={0}
+            step={profitType === "amount" ? "0.001" : "0.1"}
+            type="number"
+            value={cost.profitInput || ""}
+            onChange={(e) => onCostChange({ profitInput: Number(e.target.value) || 0 })}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Used only to calculate a suggested price below — never applied automatically.
+          </p>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-end gap-3 rounded-md border border-musiva-border bg-white p-3">
+        <div className="space-y-2">
+          <Label className="text-[11px]" htmlFor={`selling-price-${index}`}>
+            Selling price / customer price (BHD)
+          </Label>
+          <Input
+            id={`selling-price-${index}`}
+            className="w-36"
+            min={0}
+            step="0.001"
+            type="number"
+            {...form.register(`variants.${index}.regularSellingPriceBhd`)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSellingPrice(Number(e.target.value) || 0)}
+          />
+        </div>
+        {suggestedPriceBhd > 0 && (
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-muted-foreground">
+              Suggested:{" "}
+              <span className="font-medium text-foreground">{formatBhd(suggestedPriceBhd)}</span>
+            </p>
+            {suggestionDiffersFromPrice && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => setSellingPrice(suggestedPriceBhd)}
+              >
+                Use suggested price
+              </Button>
+            )}
+          </div>
         )}
         {profit !== null && margin !== null && (
-          <span>
+          <p className="text-xs text-muted-foreground">
             Profit: <span className="font-medium text-foreground">{formatBhd(profit)}</span>
             {margin !== null ? ` · Margin ${margin.toFixed(1)}%` : ""}
-          </span>
+          </p>
         )}
-        {marginError && <span className="text-destructive">{marginError}</span>}
+        {marginError && <p className="text-xs text-destructive">{marginError}</p>}
       </div>
 
       {belowCost && (

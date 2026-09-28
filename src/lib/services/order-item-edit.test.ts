@@ -173,9 +173,23 @@ describe("updateOrderItems — permissions", () => {
 
     const result = await updateOrderItems("order-1", {
       items: [{ id: ITEM_A_ID, productVariantId: WHITE_XL, quantity: 2, unitPrice: 12, discount: 0 }],
+      note: "Owner correcting size after completion.",
     });
 
     expect(result.error).toBeNull();
+  });
+
+  it("requires a note when editing an already-completed order, even for an owner", async () => {
+    mockAuth("owner");
+    mockFrom.mockReturnValueOnce(chainResolveAll({ data: { ...baseOrder, order_status: "completed" }, error: null }));
+
+    const result = await updateOrderItems("order-1", {
+      items: [{ id: ITEM_A_ID, productVariantId: WHITE_XL, quantity: 2, unitPrice: 12, discount: 0 }],
+    });
+
+    expect(result.error).toBe(
+      "Please add a note explaining this change before editing a completed or delivered order.",
+    );
   });
 });
 
@@ -407,6 +421,111 @@ describe("updateOrderItems — audit log", () => {
           note: "Customer changed size",
         }),
       }),
+    );
+  });
+
+  it("captures old/new product identity (name, SKU, color, size) and old/new line totals for a variant swap, not just variant ids and quantity", async () => {
+    mockAuth("owner");
+    const itemWithSnapshot = {
+      ...itemA,
+      product_name_snapshot: "A Line 3 Pease Set",
+      variant_sku_snapshot: "ALINE-OW-L",
+      color_snapshot: "Off White",
+      size_snapshot: "L",
+    };
+    mockFrom
+      .mockReturnValueOnce(chainResolveAll({ data: baseOrder, error: null }))
+      .mockReturnValueOnce(chainResolveAll({ data: [itemWithSnapshot], error: null }))
+      .mockReturnValueOnce(
+        chainResolveAll({
+          data: [
+            variantRow({ stock_quantity: 5 }),
+            variantRow({
+              id: WHITE_XXL,
+              color: "Off White",
+              size: "XXL",
+              variant_sku: "ALINE-OW-XXL",
+              products: { name: "A Line 3 Pease Set", sku: "MSV-10001" },
+              stock_quantity: 5,
+            }),
+          ],
+          error: null,
+        }),
+      )
+      .mockReturnValueOnce(chainResolveAll({ data: null, error: null }))
+      .mockReturnValueOnce(chainResolveAll({ data: baseOrder, error: null }))
+      .mockReturnValueOnce(chainResolveAll({ data: [{ ...itemWithSnapshot, product_variant_id: WHITE_XXL }], error: null }));
+    mockRpc
+      .mockReturnValueOnce(chainResolveAll({ data: { id: "movement-1" }, error: null }))
+      .mockReturnValueOnce(chainResolveAll({ data: { id: "movement-2" }, error: null }));
+
+    await updateOrderItems("order-1", {
+      items: [{ id: ITEM_A_ID, productVariantId: WHITE_XXL, quantity: 1, unitPrice: 12, discount: 0 }],
+      note: "Customer changed size from L to XXL",
+    });
+
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          changed: [
+            expect.objectContaining({
+              old: expect.objectContaining({
+                variant_id: WHITE_XL,
+                productName: "A Line 3 Pease Set",
+                variantSku: "ALINE-OW-L",
+                color: "Off White",
+                size: "L",
+                quantity: 1,
+                unit_price: 12,
+                line_total: 12,
+              }),
+              new: expect.objectContaining({
+                variant_id: WHITE_XXL,
+                productName: "A Line 3 Pease Set",
+                variantSku: "ALINE-OW-XXL",
+                color: "Off White",
+                size: "XXL",
+                quantity: 1,
+                unit_price: 12,
+                line_total: 12,
+              }),
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+});
+
+describe("updateOrderItems — stock movement rollback on partial failure", () => {
+  it("rolls back the already-applied return when the paired deduction fails (a concurrent sale wins the race)", async () => {
+    mockAuth("owner");
+    mockFrom
+      .mockReturnValueOnce(chainResolveAll({ data: baseOrder, error: null }))
+      .mockReturnValueOnce(chainResolveAll({ data: [itemA], error: null }))
+      .mockReturnValueOnce(
+        chainResolveAll({
+          data: [variantRow({ stock_quantity: 5 }), variantRow({ id: WHITE_XXL, color: "White", size: "XXL", stock_quantity: 5 })],
+          error: null,
+        }),
+      );
+    mockRpc
+      .mockReturnValueOnce(chainResolveAll({ data: { id: "movement-1" }, error: null })) // return succeeds
+      .mockReturnValueOnce(chainResolveAll({ data: null, error: { message: "Not enough stock available." } })) // deduct fails
+      .mockReturnValueOnce(chainResolveAll({ data: { id: "movement-rollback" }, error: null })); // compensating rollback
+
+    const result = await updateOrderItems("order-1", {
+      items: [{ id: ITEM_A_ID, productVariantId: WHITE_XXL, quantity: 1, unitPrice: 12, discount: 0 }],
+    });
+
+    expect(result.error).toBe("Not enough stock available for this size/color.");
+    // 1) the original return, 2) the failed deduction, 3) the compensating rollback that undoes
+    // the return so the old variant's stock isn't left overstated.
+    expect(mockRpc).toHaveBeenCalledTimes(3);
+    expect(mockRpc).toHaveBeenNthCalledWith(
+      3,
+      "deduct_variant_stock",
+      expect.objectContaining({ p_variant_id: WHITE_XL, p_quantity: 1, p_reference_type: "order_item_correction_rollback" }),
     );
   });
 });

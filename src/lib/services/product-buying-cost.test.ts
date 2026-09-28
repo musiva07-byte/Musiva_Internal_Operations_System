@@ -87,6 +87,7 @@ function baseInput(overrides: Partial<ProductInput> = {}): ProductInput {
         status: "active",
         buyingPriceInr: 1500,
         importCostBhd: 0,
+        sellingPriceTouched: true,
       },
     ],
     ...overrides,
@@ -219,6 +220,7 @@ describe("createProduct — buying cost", () => {
           status: "active",
           buyingPriceInr: 1500,
           importCostBhd: 0.5,
+          sellingPriceTouched: true,
         },
       ],
     });
@@ -374,6 +376,7 @@ describe("createProduct — buying cost", () => {
           status: "active",
           buyingPriceInr: 0,
           importCostBhd: 0,
+          sellingPriceTouched: true,
         },
       ],
     });

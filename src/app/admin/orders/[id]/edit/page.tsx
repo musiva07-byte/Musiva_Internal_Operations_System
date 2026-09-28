@@ -3,7 +3,12 @@ import { OrderEditForm } from "@/components/orders/order-edit-form";
 import { OrderItemsEditor } from "@/components/orders/order-items-editor";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { BackLink } from "@/components/layout/back-link";
-import { getOrder, listOrderableVariants } from "@/lib/services/order.service";
+import {
+  getOrder,
+  listOrderableVariants,
+  getProductIdsForVariants,
+  listVariantsForProducts,
+} from "@/lib/services/order.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { canManageOrders, canEditCompletedOrderItems } from "@/lib/auth/permissions";
 import { ORDER_COMPLETED_STATUSES, ORDER_STATUSES } from "@/lib/constants";
@@ -25,6 +30,16 @@ export default async function EditOrderPage({ params }: EditOrderPageProps) {
   }
 
   const role = profile?.role ?? null;
+
+  // "Change option" prioritizes same-product variants over the general browse list above — see
+  // OrderItemVariantPicker. This is a small, order-scoped lookup (a handful of line items), not
+  // the same 50-cap browse query.
+  const productIdByVariantId = await getProductIdsForVariants(
+    order.items.map((item) => item.product_variant_id),
+  );
+  const sameProductVariants = await listVariantsForProducts([
+    ...new Set(Object.values(productIdByVariantId)),
+  ]);
 
   if (!canManageOrders(role)) {
     return (
@@ -76,6 +91,8 @@ export default async function EditOrderPage({ params }: EditOrderPageProps) {
         <OrderItemsEditor
           order={order}
           variants={variants}
+          productIdByVariantId={productIdByVariantId}
+          sameProductVariants={sameProductVariants}
           requiresElevatedPermission={Boolean(requiresElevatedPermission)}
           canEditElevated={canEditCompletedOrderItems(role)}
         />

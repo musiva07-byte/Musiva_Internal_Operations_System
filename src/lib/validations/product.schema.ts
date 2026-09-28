@@ -110,6 +110,17 @@ export const productVariantSchema = z
     /** Import cost per piece (BHD) — cargo, customs, packing, transfer, or delivery from
      *  India to Bahrain. Optional, defaults to 0. Never required. */
     importCostBhd: z.coerce.number().min(0).optional().default(0),
+    /** Set by the client right before submit — true when the staff member intentionally
+     *  changed this variant's selling price (or it's a brand-new variant), false when the
+     *  price is untouched from what's already stored. updateProduct() uses this to decide
+     *  whether to write selling_price/regular_selling_price_bhd at all for an existing
+     *  variant — when false, those columns are omitted from the UPDATE entirely so the
+     *  database price is left completely untouched, regardless of whatever numeric value
+     *  happens to be sitting in this payload (e.g. a stale cost-derived suggestion). This is
+     *  the fix for a real incident where editing unrelated product details silently
+     *  overwrote the customer-facing selling price with a cost-only suggested price. Ignored
+     *  for product creation, where a real price is always required. */
+    sellingPriceTouched: z.boolean().optional().default(false),
   })
   .refine(
     (v) =>

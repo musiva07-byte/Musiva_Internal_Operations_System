@@ -1086,14 +1086,25 @@ export async function updateProduct(productId: string, input: ProductInput): Pro
           color: variant.color,
           size: variant.size,
           cost_price: variant.costPrice,
-          selling_price: variant.sellingPrice,
           discount_price: variant.discountPrice ?? null,
-          regular_selling_price_bhd: variant.regularSellingPriceBhd ?? variant.sellingPrice,
           discount_price_bhd: variant.discountPriceBhd ?? null,
           discount_start_at: variant.discountStartAt ?? null,
           discount_end_at: variant.discountEndAt ?? null,
           minimum_stock: variant.minimumStock,
           status: variant.status,
+          // CRITICAL: selling_price / regular_selling_price_bhd are only ever written when the
+          // client explicitly marked this variant's price as intentionally changed. Editing
+          // unrelated product/website/cost fields must never touch the customer-facing price —
+          // see productVariantSchema's sellingPriceTouched doc comment for the full incident
+          // this guards against. Omitting the keys entirely (rather than writing the existing
+          // value back) means Postgres leaves the stored price completely untouched no matter
+          // what numeric value happens to be sitting in the submitted payload.
+          ...(variant.sellingPriceTouched
+            ? {
+                selling_price: variant.sellingPrice,
+                regular_selling_price_bhd: variant.regularSellingPriceBhd ?? variant.sellingPrice,
+              }
+            : {}),
           ...(finalUnitCostBhd != null
             ? {
                 latest_landed_cost_bhd: finalUnitCostBhd,

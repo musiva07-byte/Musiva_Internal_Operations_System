@@ -25,8 +25,17 @@ export type PriceConfirmationRow = {
   importCostInr: number;
   finalCostBhd: number;
   suggestedPriceBhd: number;
-  /** Present only in the edit-product flow — the price before this save, shown alongside
-   *  the new one so staff can see exactly what's changing. */
+  /** The price already sitting in the form for this variant — for an untouched existing
+   *  variant this is exactly the stored price. This dialog's editable field is seeded from
+   *  THIS, never from suggestedPriceBhd — seeding from the cost-derived suggestion instead of
+   *  the real current price was a real incident: staff editing unrelated product details (e.g.
+   *  website status) had their customer-facing selling price silently replaced by a
+   *  zero-profit cost figure the moment they saved, because this dialog defaulted every price
+   *  field to "cost + whatever profit happened to be typed" (usually 0) instead of what the
+   *  product was actually selling for. */
+  currentPriceBhd: number;
+  /** Present only in the edit-product flow — the true price before this save (from the
+   *  database), shown alongside the new one so staff can see exactly what's changing. */
   oldPriceBhd?: number;
 };
 
@@ -55,11 +64,15 @@ type PriceConfirmationDialogProps = {
   websiteStatusChange?: WebsiteStatusChange | null;
 };
 
-/** Seeds the editable-price map from each row's suggested price — falls back to the final
- *  cost when nothing was suggested (no valid cost yet), so the field is never left at 0 by
- *  surprise. */
+/** Seeds the editable-price map from each row's CURRENT price (what's already in the form —
+ *  the real stored price for an untouched variant) — never from the cost-derived suggested
+ *  price. A brand-new variant (no current price yet) falls back to the suggested price so the
+ *  field isn't left at 0 by surprise; an existing variant always starts at its real price. See
+ *  PriceConfirmationRow.currentPriceBhd for the incident this fixes. */
 function initialPrices(rows: PriceConfirmationRow[]): Record<string, number> {
-  return Object.fromEntries(rows.map((row) => [row.key, row.suggestedPriceBhd]));
+  return Object.fromEntries(
+    rows.map((row) => [row.key, row.currentPriceBhd > 0 ? row.currentPriceBhd : row.suggestedPriceBhd]),
+  );
 }
 
 export function PriceConfirmationDialog({
@@ -120,13 +133,14 @@ export function PriceConfirmationDialog({
 
         <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
           {rows.map((row) => {
-            const price = prices[row.key] ?? row.suggestedPriceBhd;
+            const price = prices[row.key] ?? row.currentPriceBhd;
             const profit = calcEstimatedProfit(price, row.finalCostBhd);
             const margin = calcEstimatedMargin(price, row.finalCostBhd);
             const belowCost = row.finalCostBhd > 0 && price > 0 && price < row.finalCostBhd;
             const totalIndiaCostInr = row.buyingPriceInr + row.importCostInr;
             const isNewVariant = row.oldPriceBhd === undefined;
             const priceChanged = row.oldPriceBhd !== undefined && row.oldPriceBhd !== price;
+            const suggestionDiffersFromPrice = row.suggestedPriceBhd > 0 && row.suggestedPriceBhd !== price;
 
             return (
               <div key={row.key} className="rounded-md border border-musiva-border bg-white p-3">
@@ -172,6 +186,13 @@ export function PriceConfirmationDialog({
                   </p>
                 )}
 
+                {!isNewVariant && !priceChanged && (
+                  <p className="mt-1 flex items-center gap-1 text-xs font-medium text-musiva-sage">
+                    Selling price unchanged at {formatBhd(price)} — cost changes never affect
+                    customer price automatically.
+                  </p>
+                )}
+
                 <div className="mt-3 flex flex-wrap items-end gap-3">
                   <div className="space-y-1">
                     <Label className="text-[11px]" htmlFor={`price-${row.key}`}>
@@ -190,9 +211,24 @@ export function PriceConfirmationDialog({
                     />
                   </div>
                   {row.suggestedPriceBhd > 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      Suggested: <span className="font-medium text-foreground">{formatBhd(row.suggestedPriceBhd)}</span>
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-muted-foreground">
+                        Suggested: <span className="font-medium text-foreground">{formatBhd(row.suggestedPriceBhd)}</span>
+                      </p>
+                      {suggestionDiffersFromPrice && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() =>
+                            setPrices((prev) => ({ ...prev, [row.key]: row.suggestedPriceBhd }))
+                          }
+                        >
+                          Use suggested price
+                        </Button>
+                      )}
+                    </div>
                   )}
                   {row.finalCostBhd > 0 && price > 0 && (
                     <p className="text-xs text-muted-foreground">
