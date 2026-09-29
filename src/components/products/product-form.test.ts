@@ -27,12 +27,12 @@ describe("Edit Product — Price & Cost section", () => {
   it("uses the same shared calculation functions as the New Product wizard", () => {
     expect(formSource).toMatch(/from "@\/lib\/utils\/cost-conversion"/);
     expect(formSource).toContain("deriveVariantFinalCost");
-    expect(formSource).toContain("deriveSuggestedSellingPrice");
+    expect(formSource).toContain("computeSuggestedSellingPrice");
     expect(formSource).toContain("validateMarginPercent");
   });
 
   it("labels the price field exactly as required, not just 'Final price'", () => {
-    expect(formSource).toContain("Selling price / customer price (BHD)");
+    expect(formSource).toContain("Customer selling price (BHD)");
   });
 
   it("shows the selling price as its own always-visible, directly editable field for every role — never hidden behind profit/suggested price (fixes the silent price-overwrite incident)", () => {
@@ -42,17 +42,27 @@ describe("Edit Product — Price & Cost section", () => {
 
   it("shows the required staff-facing reassurance that cost changes never auto-change the customer price", () => {
     expect(formSource).toContain(
-      "Cost changes do not automatically change customer selling price.",
+      "Cost changes do not automatically change the customer selling price.",
     );
   });
 
-  it("offers a per-variant \"Use suggested price\" action that is not auto-applied", () => {
-    expect(formSource).toContain("Use suggested price");
+  it("offers a per-variant \"Use suggested selling price\" action that is not auto-applied", () => {
+    expect(formSource).toContain("Use suggested selling price");
     expect(formSource).toContain("suggestionDiffersFromPrice &&");
   });
 
+  it("never suggests the landed cost alone as the selling price when desired profit is empty", () => {
+    expect(formSource).toContain("Not calculated");
+    expect(formSource).toContain("Enter desired profit to calculate a suggested customer price.");
+  });
+
   it("shows the required staff-friendly field labels", () => {
-    for (const label of ["Buy India (INR)", "Import India (INR)", "Final Bahrain cost (BHD)"]) {
+    for (const label of [
+      "Buy India (INR)",
+      "Import India (INR)",
+      "Total India cost (INR)",
+      "Landed cost Bahrain (BHD)",
+    ]) {
       expect(formSource).toContain(label);
     }
   });
@@ -81,28 +91,80 @@ describe("Edit Product — Price & Cost section", () => {
     expect(formSource).toContain("Stock quantity is managed from Inventory / Receive Stock.");
   });
 
-  it("shows a below-final-cost warning without blocking save", () => {
-    expect(formSource).toContain("Selling price is below final cost.");
+  it("shows a below-landed-cost warning without blocking save", () => {
+    expect(formSource).toContain("Customer selling price is below landed cost.");
     expect(formSource).not.toMatch(/disabled=\{[^}]*belowCost/);
   });
 
   it("gates the profit input behind canViewProfit (not just canEnterCost)", () => {
     expect(formSource).toMatch(/\{canViewProfit && \(/);
   });
+
+  it("shows current profit/margin directly under the customer price field, ahead of the cost section", () => {
+    const priceIdx = formSource.indexOf("Customer selling price (BHD)");
+    const profitIdx = formSource.indexOf("Current profit:");
+    const buyIdx = formSource.indexOf("Buy India (INR)", profitIdx); // the VariantPriceCost one, not the bulk-apply section
+    expect(priceIdx).toBeGreaterThan(-1);
+    expect(profitIdx).toBeGreaterThan(priceIdx);
+    expect(buyIdx).toBeGreaterThan(profitIdx);
+  });
+
+  it("desired profit is its own optional calculator, separate from the actual customer price", () => {
+    expect(formSource).toContain("Desired profit");
+    expect(formSource).toContain("Suggested selling price:");
+    expect(formSource).toMatch(/profitInput: number \| null/);
+  });
 });
 
 describe("Edit Product — bulk apply", () => {
   it("has an 'Apply to all variants' bulk section with the required fields", () => {
     expect(formSource).toContain("Apply to all variants");
-    expect(formSource).toContain("Buying price India (INR)");
-    expect(formSource).toContain("Import cost India (INR)");
+    expect(formSource).toContain("Buy India (INR)");
+    expect(formSource).toContain("Import India (INR)");
     expect(formSource).toContain("Desired profit");
     expect(formSource).toContain("Profit type");
     expect(formSource).toContain("Minimum stock");
   });
 
+  it("gates bulk selling-price overwrite behind an explicit, default-unchecked checkbox", () => {
+    expect(formSource).toContain("Also update customer selling price using suggested price");
+    expect(formSource).toMatch(/\[bulkAlsoUpdateSellingPrice, setBulkAlsoUpdateSellingPrice\] = useState\(false\)/);
+  });
+
   it("only applies non-zero bulk fields (documented convention, matches the wizard)", () => {
     expect(formSource).toMatch(/only non-zero fields are applied/i);
+  });
+
+  it("A: Buy India/Import India alone never touch customer selling price", () => {
+    // The price-writing block is gated behind bulkAlsoUpdateSellingPrice — Buy/Import cost
+    // fields are set unconditionally above it, selling price only inside this gate.
+    expect(formSource).toMatch(
+      /if \(canViewProfit && bulkAlsoUpdateSellingPrice\) \{[\s\S]*?regularSellingPriceBhd/,
+    );
+  });
+
+  it("B: a suggested price is still just for display when the checkbox is unchecked — never auto-applied", () => {
+    expect(formSource).toContain("suggested !== null");
+  });
+
+  it("C: checking the box and applying updates every variant's price when a suggestion is valid", () => {
+    expect(formSource).toMatch(
+      /setValue\(`variants\.\$\{index\}\.regularSellingPriceBhd`, suggested/,
+    );
+  });
+
+  it("D: checked box with a blank bulk desired profit is refused with the exact friendly message, and nothing is applied", () => {
+    expect(formSource).toContain(
+      "Enter desired profit before updating customer selling prices.",
+    );
+    expect(formSource).toMatch(
+      /if \(bulkAlsoUpdateSellingPrice && bulkProfitInput === null\) \{\s*setFormError\(\s*"Enter desired profit before updating customer selling prices\."\s*\);\s*return;/,
+    );
+  });
+
+  it("shows the clarified helper text under the checkbox", () => {
+    expect(formSource).toContain("Leave unchecked to update costs only.");
+    expect(formSource).toContain("Tick this only when you want to change");
   });
 });
 
@@ -122,7 +184,7 @@ describe("Edit Product — price confirmation popup", () => {
   });
 
   it("blocks opening the popup on an invalid margin before showing prices", () => {
-    expect(formSource).toMatch(/validateMarginPercent\(costState\[invalidIndex\]\.profitInput\)/);
+    expect(formSource).toMatch(/validateMarginPercent\(invalidProfit\)/);
   });
 });
 

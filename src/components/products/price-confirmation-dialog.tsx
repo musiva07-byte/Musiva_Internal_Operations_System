@@ -23,8 +23,13 @@ export type PriceConfirmationRow = {
   optionLabel: string;
   buyingPriceInr: number;
   importCostInr: number;
+  /** Landed cost Bahrain — Total India Cost × exchange rate. A COST figure, never a price. */
   finalCostBhd: number;
-  suggestedPriceBhd: number;
+  /** Landed cost + desired profit — null when staff hasn't entered a desired profit yet ("Not
+   *  calculated"), never silently equal to the landed cost alone. See
+   *  computeSuggestedSellingPrice's doc comment (cost-conversion.ts) for the incident this
+   *  guards against: BHD 7.605 (pure landed cost) was once shown as "Suggested: BHD 7.605". */
+  suggestedPriceBhd: number | null;
   /** The price already sitting in the form for this variant — for an untouched existing
    *  variant this is exactly the stored price. This dialog's editable field is seeded from
    *  THIS, never from suggestedPriceBhd — seeding from the cost-derived suggestion instead of
@@ -37,6 +42,9 @@ export type PriceConfirmationRow = {
   /** Present only in the edit-product flow — the true price before this save (from the
    *  database), shown alongside the new one so staff can see exactly what's changing. */
   oldPriceBhd?: number;
+  /** Present only in the edit-product flow — the landed cost before this save, so the dialog
+   *  can tell "cost changed but price didn't" apart from "nothing changed at all". */
+  oldFinalCostBhd?: number;
 };
 
 /** Present only in the edit-product flow, and only when the website status actually
@@ -71,7 +79,7 @@ type PriceConfirmationDialogProps = {
  *  PriceConfirmationRow.currentPriceBhd for the incident this fixes. */
 function initialPrices(rows: PriceConfirmationRow[]): Record<string, number> {
   return Object.fromEntries(
-    rows.map((row) => [row.key, row.currentPriceBhd > 0 ? row.currentPriceBhd : row.suggestedPriceBhd]),
+    rows.map((row) => [row.key, row.currentPriceBhd > 0 ? row.currentPriceBhd : row.suggestedPriceBhd ?? 0]),
   );
 }
 
@@ -99,6 +107,20 @@ export function PriceConfirmationDialog({
       setPrices(initialPrices(rows));
     }
   }
+
+  // Aggregate summary — lets staff see at a glance whether this save (often triggered by "Apply
+  // to all variants") is about to change real customer prices, or only cost/profit data, before
+  // they scan every row individually.
+  const existingRows = rows.filter((row) => row.oldPriceBhd !== undefined);
+  const priceChangedCount = existingRows.filter(
+    (row) => row.oldPriceBhd !== (prices[row.key] ?? row.currentPriceBhd),
+  ).length;
+  const costOnlyChangedCount = existingRows.filter(
+    (row) =>
+      row.oldPriceBhd === (prices[row.key] ?? row.currentPriceBhd) &&
+      row.oldFinalCostBhd !== undefined &&
+      row.oldFinalCostBhd !== row.finalCostBhd,
+  ).length;
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onBack()}>
@@ -131,16 +153,37 @@ export function PriceConfirmationDialog({
           </div>
         ) : null}
 
+        {priceChangedCount > 0 && (
+          <div className="flex items-center gap-2 rounded-md border border-musiva-warning/30 bg-musiva-warning/10 px-3 py-2 text-xs font-semibold text-musiva-warning-foreground">
+            Customer selling price will change for {priceChangedCount}{" "}
+            variant{priceChangedCount === 1 ? "" : "s"}.
+          </div>
+        )}
+        {priceChangedCount === 0 && costOnlyChangedCount > 0 && (
+          <div className="flex items-center gap-2 rounded-md border border-musiva-border bg-musiva-ivory px-3 py-2 text-xs font-medium text-musiva-sage">
+            Cost will update. Customer selling prices will remain unchanged.
+          </div>
+        )}
+
         <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
           {rows.map((row) => {
             const price = prices[row.key] ?? row.currentPriceBhd;
             const profit = calcEstimatedProfit(price, row.finalCostBhd);
             const margin = calcEstimatedMargin(price, row.finalCostBhd);
+            const oldProfit =
+              row.oldPriceBhd !== undefined && row.oldFinalCostBhd !== undefined
+                ? calcEstimatedProfit(row.oldPriceBhd, row.oldFinalCostBhd)
+                : null;
+            const oldMargin =
+              row.oldPriceBhd !== undefined && row.oldFinalCostBhd !== undefined
+                ? calcEstimatedMargin(row.oldPriceBhd, row.oldFinalCostBhd)
+                : null;
             const belowCost = row.finalCostBhd > 0 && price > 0 && price < row.finalCostBhd;
             const totalIndiaCostInr = row.buyingPriceInr + row.importCostInr;
             const isNewVariant = row.oldPriceBhd === undefined;
             const priceChanged = row.oldPriceBhd !== undefined && row.oldPriceBhd !== price;
-            const suggestionDiffersFromPrice = row.suggestedPriceBhd > 0 && row.suggestedPriceBhd !== price;
+            const costChanged = row.oldFinalCostBhd !== undefined && row.oldFinalCostBhd !== row.finalCostBhd;
+            const suggestionDiffersFromPrice = row.suggestedPriceBhd !== null && row.suggestedPriceBhd !== price;
 
             return (
               <div key={row.key} className="rounded-md border border-musiva-border bg-white p-3">
@@ -154,7 +197,7 @@ export function PriceConfirmationDialog({
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
                   <div className="flex justify-between gap-2 sm:block">
-                    <span>Buying India</span>
+                    <span>Buy India</span>
                     <span className="font-medium text-foreground sm:block">
                       {formatInr(row.buyingPriceInr)}
                     </span>
@@ -172,7 +215,7 @@ export function PriceConfirmationDialog({
                     </span>
                   </div>
                   <div className="flex justify-between gap-2 sm:block">
-                    <span>Final cost Bahrain</span>
+                    <span>Landed cost Bahrain</span>
                     <span className="font-medium text-foreground sm:block">
                       {row.finalCostBhd > 0 ? formatBhd(row.finalCostBhd) : "Not recorded"}
                     </span>
@@ -181,22 +224,39 @@ export function PriceConfirmationDialog({
 
                 {row.oldPriceBhd !== undefined && (
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Old selling price:{" "}
+                    Old customer price:{" "}
                     <span className="font-medium text-foreground">{formatBhd(row.oldPriceBhd)}</span>
+                    {oldProfit !== null && oldMargin !== null && (
+                      <>
+                        {" · Old profit: "}
+                        <span className="font-medium text-foreground">{formatBhd(oldProfit)}</span>
+                        {` · Old margin: ${oldMargin.toFixed(1)}%`}
+                      </>
+                    )}
                   </p>
                 )}
 
-                {!isNewVariant && !priceChanged && (
+                {!isNewVariant && priceChanged && (
+                  <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-musiva-warning">
+                    Customer selling price will change from {formatBhd(row.oldPriceBhd!)} to{" "}
+                    {formatBhd(price)}.
+                  </p>
+                )}
+                {!isNewVariant && !priceChanged && costChanged && (
                   <p className="mt-1 flex items-center gap-1 text-xs font-medium text-musiva-sage">
-                    Selling price unchanged at {formatBhd(price)} — cost changes never affect
-                    customer price automatically.
+                    Cost changed. Customer selling price remains unchanged at {formatBhd(price)}.
+                  </p>
+                )}
+                {!isNewVariant && !priceChanged && !costChanged && (
+                  <p className="mt-1 flex items-center gap-1 text-xs font-medium text-musiva-sage">
+                    Customer selling price unchanged at {formatBhd(price)}.
                   </p>
                 )}
 
                 <div className="mt-3 flex flex-wrap items-end gap-3">
                   <div className="space-y-1">
                     <Label className="text-[11px]" htmlFor={`price-${row.key}`}>
-                      Selling price / Final customer price (BHD)
+                      Customer selling price (BHD)
                     </Label>
                     <Input
                       className="h-9 w-32"
@@ -210,26 +270,27 @@ export function PriceConfirmationDialog({
                       }
                     />
                   </div>
-                  {row.suggestedPriceBhd > 0 && (
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-muted-foreground">
-                        Suggested: <span className="font-medium text-foreground">{formatBhd(row.suggestedPriceBhd)}</span>
-                      </p>
-                      {suggestionDiffersFromPrice && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs"
-                          onClick={() =>
-                            setPrices((prev) => ({ ...prev, [row.key]: row.suggestedPriceBhd }))
-                          }
-                        >
-                          Use suggested price
-                        </Button>
-                      )}
-                    </div>
-                  )}
+                  <div className="space-y-0.5">
+                    <p className="text-xs text-muted-foreground">
+                      Suggested selling price:{" "}
+                      <span className="font-medium text-foreground">
+                        {row.suggestedPriceBhd !== null ? formatBhd(row.suggestedPriceBhd) : "Not calculated"}
+                      </span>
+                    </p>
+                    {suggestionDiffersFromPrice && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        onClick={() =>
+                          setPrices((prev) => ({ ...prev, [row.key]: row.suggestedPriceBhd! }))
+                        }
+                      >
+                        Use suggested selling price
+                      </Button>
+                    )}
+                  </div>
                   {row.finalCostBhd > 0 && price > 0 && (
                     <p className="text-xs text-muted-foreground">
                       Profit: <span className="font-medium text-foreground">{formatBhd(profit)}</span>
@@ -240,7 +301,7 @@ export function PriceConfirmationDialog({
 
                 {belowCost && (
                   <p className="mt-2 rounded border border-musiva-warning/30 bg-musiva-warning/10 px-2 py-1 text-xs text-musiva-warning-foreground">
-                    Selling price is below final cost.
+                    Customer selling price is below landed cost.
                   </p>
                 )}
               </div>

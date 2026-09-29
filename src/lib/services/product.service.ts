@@ -256,7 +256,11 @@ function buildProductListItem(
   variantRows: ProductVariantRow[],
   primaryImageUrl: string | null,
 ): ProductListItem {
+  // Only ACTIVE variants set the Catalog price range — an inactive/archived/draft variant's
+  // price (possibly stale or a placeholder) must never pull "From BHD X" down or up for a
+  // product staff can still actually sell.
   const activePrices = variantRows
+    .filter((variant) => variant.status === "active")
     .map((variant) => Number(variant.regular_selling_price_bhd ?? variant.selling_price))
     .filter((price) => price >= 0);
   const lowStockCount = variantRows.filter(

@@ -46,14 +46,14 @@ describe("PriceConfirmationDialog — changed/new variant indicator", () => {
 });
 
 describe("PriceConfirmationDialog — cost breakdown fields (unchanged)", () => {
-  it("still shows buying price, import cost, and final Bahrain cost per row", () => {
-    for (const label of ["Buying India", "Import India", "Final cost Bahrain"]) {
+  it("still shows buying price, import cost, and landed cost Bahrain per row", () => {
+    for (const label of ["Buy India", "Import India", "Landed cost Bahrain"]) {
       expect(source).toContain(label);
     }
   });
 
-  it("still lets staff correct the final selling price per row", () => {
-    expect(source).toContain("Selling price / Final customer price (BHD)");
+  it("still lets staff correct the customer selling price per row", () => {
+    expect(source).toContain("Customer selling price (BHD)");
   });
 });
 
@@ -79,15 +79,52 @@ describe("PriceConfirmationDialog — root-cause fix: seeds from the CURRENT pri
     expect(source).not.toContain("prices[row.key] ?? row.suggestedPriceBhd");
   });
 
-  it('shows "Selling price unchanged" when the price was not touched, reassuring staff cost edits are safe', () => {
-    expect(source).toContain("Selling price unchanged at");
-    expect(source).toContain("cost changes never affect");
-    expect(source).toMatch(/!isNewVariant && !priceChanged &&/);
+  it('shows "Customer selling price unchanged" when the price was not touched', () => {
+    expect(source).toContain("Customer selling price unchanged at");
+    expect(source).toMatch(/!isNewVariant && !priceChanged && !costChanged &&/);
   });
 
-  it('offers "Use suggested price" per row instead of auto-applying it', () => {
-    expect(source).toContain("Use suggested price");
+  it('shows "Cost changed. Customer selling price remains unchanged" when only cost changed', () => {
+    expect(source).toContain("Cost changed. Customer selling price remains unchanged at");
+    expect(source).toMatch(/!isNewVariant && !priceChanged && costChanged &&/);
+  });
+
+  it('highlights "Customer selling price will change from X to Y" when the price did change', () => {
+    expect(source).toContain("Customer selling price will change from");
+    expect(source).toMatch(/!isNewVariant && priceChanged &&/);
+  });
+
+  it('offers "Use suggested selling price" per row instead of auto-applying it, and shows "Not calculated" when there is no suggestion yet', () => {
+    expect(source).toContain("Use suggested selling price");
     expect(source).toContain("suggestionDiffersFromPrice");
     expect(source).toContain("[row.key]: row.suggestedPriceBhd");
+    expect(source).toContain("Not calculated");
+  });
+
+  it("suggestedPriceBhd is nullable — never a landed-cost number mislabeled as a suggestion", () => {
+    expect(source).toContain("suggestedPriceBhd: number | null;");
+  });
+
+  it("shows old profit/margin alongside the old price, using the old landed cost, not the new one", () => {
+    expect(source).toContain("oldFinalCostBhd?: number;");
+    expect(source).toMatch(/calcEstimatedProfit\(row\.oldPriceBhd, row\.oldFinalCostBhd\)/);
+    expect(source).toMatch(/calcEstimatedMargin\(row\.oldPriceBhd, row\.oldFinalCostBhd\)/);
+  });
+});
+
+describe("PriceConfirmationDialog — aggregate summary (bulk-apply visibility)", () => {
+  it('shows "Customer selling price will change for X variants." when any row\'s price changed', () => {
+    expect(source).toContain("Customer selling price will change for");
+    expect(source).toMatch(/variant\{priceChangedCount === 1 \? "" : "s"\}/);
+    expect(source).toContain("priceChangedCount > 0");
+  });
+
+  it('shows "Cost will update. Customer selling prices will remain unchanged." when only cost changed, and never both banners at once', () => {
+    expect(source).toContain("Cost will update. Customer selling prices will remain unchanged.");
+    expect(source).toContain("priceChangedCount === 0 && costOnlyChangedCount > 0");
+  });
+
+  it("the summary counts are derived live from the current (possibly staff-edited) prices state, not just the initial rows", () => {
+    expect(source).toMatch(/row\.oldPriceBhd !== \(prices\[row\.key\] \?\? row\.currentPriceBhd\)/);
   });
 });

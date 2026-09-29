@@ -185,12 +185,12 @@ describe("Price confirmation popup — content and behavior", () => {
 
   it("shows every required column", () => {
     for (const label of [
-      "Buying India",
+      "Buy India",
       "Import India",
       "Total India cost",
-      "Final cost Bahrain",
-      "Selling price / Final customer price (BHD)",
-      "Suggested:",
+      "Landed cost Bahrain",
+      "Customer selling price (BHD)",
+      "Suggested selling price:",
       "Profit:",
     ]) {
       expect(popupSource).toContain(label);
@@ -206,8 +206,8 @@ describe("Price confirmation popup — content and behavior", () => {
     expect(popupSource).toMatch(/calcEstimatedMargin\(price, row\.finalCostBhd\)/);
   });
 
-  it("shows the exact required warning when price is below final cost, without blocking", () => {
-    expect(popupSource).toContain("Selling price is below final cost.");
+  it("shows the exact required warning when price is below landed cost, without blocking", () => {
+    expect(popupSource).toContain("Customer selling price is below landed cost.");
     expect(popupSource).not.toMatch(/disabled=\{.*belowCost/);
   });
 });

@@ -227,6 +227,53 @@ describe("listProducts — cost_summary", () => {
     expect(product.max_selling_price).toBe(13);
   });
 
+  it("excludes an inactive/archived variant's price from the Catalog price range — only active variants set min/max", async () => {
+    mockCatalog([
+      {
+        id: "v1",
+        product_id: "product-1",
+        color: "Black",
+        size: "S",
+        stock_quantity: 5,
+        minimum_stock: 1,
+        selling_price: 13,
+        regular_selling_price_bhd: 13,
+        discount_price: null,
+        discount_price_bhd: null,
+        discount_start_at: null,
+        discount_end_at: null,
+        status: "active",
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+      },
+      {
+        // An archived/discontinued variant with a stale/placeholder price — must never pull
+        // the Catalog's displayed price range down (or up) for a product staff can still sell.
+        id: "v2",
+        product_id: "product-1",
+        color: "Black",
+        size: "XS",
+        stock_quantity: 0,
+        minimum_stock: 1,
+        selling_price: 1,
+        regular_selling_price_bhd: 1,
+        discount_price: null,
+        discount_price_bhd: null,
+        discount_start_at: null,
+        discount_end_at: null,
+        status: "archived",
+        latest_supplier_unit_cost_inr: null,
+        latest_exchange_rate_to_bhd: null,
+      },
+    ]);
+
+    const result = await listProducts({});
+    const product = result.data[0];
+
+    expect(product.min_selling_price).toBe(13);
+    expect(product.max_selling_price).toBe(13);
+  });
+
   it("computes totals from valid-cost variants only when a product has both valid and missing options", async () => {
     mockCatalog([
       {

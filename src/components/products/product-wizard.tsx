@@ -39,7 +39,7 @@ import {
   deriveImportCostBhd,
   deriveVariantFinalCost,
   validateMarginPercent,
-  deriveSuggestedSellingPrice,
+  computeSuggestedSellingPrice,
   type ProfitType,
 } from "@/lib/utils/cost-conversion";
 import { cn } from "@/lib/utils";
@@ -115,7 +115,11 @@ export function isDuplicateChip(existing: string[], candidate: string): boolean 
 type WizardVariant = GeneratedVariant & {
   buyingPriceInr: number;
   importCostInr: number;
-  profitInput: number;
+  /** null = staff hasn't entered a desired profit yet — distinct from a deliberate 0. Only a
+   *  real number here ever produces a suggested selling price (see
+   *  computeSuggestedSellingPrice); landed cost alone must never be shown/applied as though it
+   *  were a suggested customer price. */
+  profitInput: number | null;
 };
 
 type Step3Data = {
@@ -314,7 +318,7 @@ export function ProductWizard({
   const [bulkPrice, setBulkPrice] = useState<number>(0);
   const [bulkBuyingPriceInr, setBulkBuyingPriceInr] = useState<number>(0);
   const [bulkImportCostInr, setBulkImportCostInr] = useState<number>(0);
-  const [bulkProfitInput, setBulkProfitInput] = useState<number>(0);
+  const [bulkProfitInput, setBulkProfitInput] = useState<number | null>(null);
   const [profitType, setProfitType] = useState<ProfitType>("amount");
   const [bulkMinStock, setBulkMinStock] = useState<number>(1);
   const [bulkStartingQty, setBulkStartingQty] = useState<number>(0);
@@ -334,11 +338,9 @@ export function ProductWizard({
     bulkImportCostInr,
   );
   const bulkImportCostBhd = deriveImportCostBhd(bulkImportCostInr, effectiveExchangeRate);
-  const bulkMarginError = profitType === "margin" ? validateMarginPercent(bulkProfitInput) : null;
-  const bulkSuggestedPrice =
-    bulkMarginError === null
-      ? deriveSuggestedSellingPrice(bulkFinalCost, profitType, bulkProfitInput)
-      : 0;
+  const bulkMarginError =
+    profitType === "margin" && bulkProfitInput !== null ? validateMarginPercent(bulkProfitInput) : null;
+  const bulkSuggestedPrice = computeSuggestedSellingPrice(bulkFinalCost, profitType, bulkProfitInput, bulkMarginError);
   const showBulkPreview = canEnterCost && bulkConvertedCost > 0;
 
   // ── step 1 ───────────────────────────────────────────────────────────────────
@@ -408,7 +410,7 @@ export function ProductWizard({
         ...v,
         buyingPriceInr: 0,
         importCostInr: 0,
-        profitInput: 0,
+        profitInput: null,
       })),
     });
     setStep(3);
@@ -457,7 +459,7 @@ export function ProductWizard({
     }));
   }
 
-  function updateVariantProfitInput(color: string, size: string, value: number) {
+  function updateVariantProfitInput(color: string, size: string, value: number | null) {
     setStep3((prev) => ({
       variants: prev.variants.map((v) =>
         v.color === color && v.size === size ? { ...v, profitInput: value } : v,
@@ -476,7 +478,7 @@ export function ProductWizard({
       variants: prev.variants.map((v) => {
         const nextBuyingPriceInr = bulkBuyingPriceInr > 0 ? bulkBuyingPriceInr : v.buyingPriceInr;
         const nextImportCostInr = bulkImportCostInr > 0 ? bulkImportCostInr : v.importCostInr;
-        const nextProfitInput = bulkProfitInput > 0 ? bulkProfitInput : v.profitInput;
+        const nextProfitInput = bulkProfitInput !== null ? bulkProfitInput : v.profitInput;
 
         const next: WizardVariant = {
           ...v,
@@ -494,12 +496,11 @@ export function ProductWizard({
             nextImportCostInr,
           );
           const marginError =
-            profitType === "margin" ? validateMarginPercent(nextProfitInput) : null;
-          const suggested =
-            marginError === null
-              ? deriveSuggestedSellingPrice(finalCost, profitType, nextProfitInput)
-              : 0;
-          if (suggested > 0) {
+            profitType === "margin" && nextProfitInput !== null
+              ? validateMarginPercent(nextProfitInput)
+              : null;
+          const suggested = computeSuggestedSellingPrice(finalCost, profitType, nextProfitInput, marginError);
+          if (suggested !== null) {
             next.regularSellingPriceBhd = suggested;
             next.sellingPrice = suggested;
           }
@@ -623,11 +624,9 @@ export function ProductWizard({
         effectiveExchangeRate,
         v.importCostInr,
       );
-      const marginError = profitType === "margin" ? validateMarginPercent(v.profitInput) : null;
-      const suggestedPriceBhd =
-        marginError === null
-          ? deriveSuggestedSellingPrice(finalCostBhd, profitType, v.profitInput)
-          : 0;
+      const marginError =
+        profitType === "margin" && v.profitInput !== null ? validateMarginPercent(v.profitInput) : null;
+      const suggestedPriceBhd = computeSuggestedSellingPrice(finalCostBhd, profitType, v.profitInput, marginError);
       return {
         key: `${v.color}__${v.size}`,
         optionLabel: `${v.color} / ${v.size}`,
@@ -662,9 +661,9 @@ export function ProductWizard({
           effectiveExchangeRate,
           v.importCostInr,
         );
-        return finalCost > 0 && validateMarginPercent(v.profitInput) !== null;
+        return finalCost > 0 && v.profitInput !== null && validateMarginPercent(v.profitInput) !== null;
       });
-      if (invalid) {
+      if (invalid && invalid.profitInput !== null) {
         setFormError(validateMarginPercent(invalid.profitInput));
         return;
       }
@@ -1032,7 +1031,7 @@ export function ProductWizard({
                     <>
                       <div className="space-y-2">
                         <Label htmlFor="bulk-profit">
-                          Desired profit {profitType === "amount" ? "(BHD)" : "(%)"}
+                          Desired profit {profitType === "amount" ? "(BHD)" : "(margin %)"}
                         </Label>
                         <Input
                           id="bulk-profit"
@@ -1040,8 +1039,10 @@ export function ProductWizard({
                           placeholder={profitType === "amount" ? "0.000" : "0"}
                           step={profitType === "amount" ? "0.001" : "0.1"}
                           type="number"
-                          value={bulkProfitInput || ""}
-                          onChange={(e) => setBulkProfitInput(Number(e.target.value) || 0)}
+                          value={bulkProfitInput ?? ""}
+                          onChange={(e) =>
+                            setBulkProfitInput(e.target.value === "" ? null : Number(e.target.value))
+                          }
                         />
                         {bulkMarginError && (
                           <p className="text-xs text-destructive">{bulkMarginError}</p>
@@ -1061,9 +1062,7 @@ export function ProductWizard({
                     </>
                   ) : (
                     <div className="space-y-2">
-                      <Label htmlFor="bulk-price">
-                        Selling price / Final customer price for all options (BHD)
-                      </Label>
+                      <Label htmlFor="bulk-price">Customer selling price for all options (BHD)</Label>
                       <Input
                         id="bulk-price"
                         min={0}
@@ -1184,7 +1183,7 @@ export function ProductWizard({
                         </span>
                       </div>
                       <div className="col-span-full flex justify-between gap-4 border-t border-musiva-border pt-2">
-                        <span className="font-semibold text-musiva-plum">Final cost in Bahrain (BHD)</span>
+                        <span className="font-semibold text-musiva-plum">Landed cost Bahrain (BHD)</span>
                         <span className="font-semibold text-musiva-plum">
                           {formatBhd(bulkFinalCost)}
                         </span>
@@ -1200,15 +1199,18 @@ export function ProductWizard({
                   )}
                   {canViewProfit ? (
                     <>
-                      {bulkSuggestedPrice > 0 && (
-                        <div className="flex justify-between gap-4 text-muted-foreground">
-                          <span>Suggested selling price (BHD)</span>
-                          <span className="font-medium text-foreground">
-                            {formatBhd(bulkSuggestedPrice)}
-                          </span>
-                        </div>
+                      <div className="flex justify-between gap-4 text-muted-foreground">
+                        <span>Suggested selling price (BHD)</span>
+                        <span className="font-medium text-foreground">
+                          {bulkSuggestedPrice !== null ? formatBhd(bulkSuggestedPrice) : "Not calculated"}
+                        </span>
+                      </div>
+                      {bulkSuggestedPrice === null && (
+                        <p className="col-span-full text-[11px] text-muted-foreground">
+                          Enter desired profit to calculate a suggested customer price.
+                        </p>
                       )}
-                      {bulkSuggestedPrice > 0 && bulkFinalCost > 0 && (
+                      {bulkSuggestedPrice !== null && bulkFinalCost > 0 && (
                         <div className="col-span-full flex items-center gap-2 pt-1">
                           <span className="text-xs text-muted-foreground">Est. profit:</span>
                           <ProfitBadge
@@ -1244,11 +1246,10 @@ export function ProductWizard({
                     v.importCostInr,
                   );
                   const vMarginError =
-                    profitType === "margin" ? validateMarginPercent(v.profitInput) : null;
-                  const vSuggested =
-                    vMarginError === null
-                      ? deriveSuggestedSellingPrice(vFinal, profitType, v.profitInput)
-                      : 0;
+                    profitType === "margin" && v.profitInput !== null
+                      ? validateMarginPercent(v.profitInput)
+                      : null;
+                  const vSuggested = computeSuggestedSellingPrice(vFinal, profitType, v.profitInput, vMarginError);
                   const profit =
                     canViewProfit && vFinal > 0 && v.regularSellingPriceBhd > 0
                       ? calcEstimatedProfit(v.regularSellingPriceBhd, vFinal)
@@ -1318,12 +1319,12 @@ export function ProductWizard({
                               min={0}
                               step={profitType === "amount" ? "0.001" : "0.1"}
                               type="number"
-                              value={v.profitInput || ""}
+                              value={v.profitInput ?? ""}
                               onChange={(e) =>
                                 updateVariantProfitInput(
                                   v.color,
                                   v.size,
-                                  Number(e.target.value) || 0,
+                                  e.target.value === "" ? null : Number(e.target.value),
                                 )
                               }
                             />
@@ -1546,16 +1547,16 @@ export function ProductWizard({
                       {canEnterCost && (vFinal > 0 || v.importCostInr > 0) && (
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-dashed border-musiva-border bg-musiva-ivory/60 px-3 py-1.5 text-[11px] text-muted-foreground">
                           <span>
-                            Cost Bahrain:{" "}
+                            Landed cost Bahrain:{" "}
                             <span className="font-medium text-foreground">
                               {vFinal > 0 ? formatBhd(vFinal) : "Not recorded"}
                             </span>
                           </span>
-                          {canViewProfit && vSuggested > 0 && (
+                          {canViewProfit && (
                             <span>
                               Suggested price:{" "}
                               <span className="font-medium text-foreground">
-                                {formatBhd(vSuggested)}
+                                {vSuggested !== null ? formatBhd(vSuggested) : "Not calculated"}
                               </span>
                             </span>
                           )}
@@ -1572,7 +1573,7 @@ export function ProductWizard({
 
                       {belowCost && (
                         <p className="border-t border-dashed border-musiva-warning/30 bg-musiva-warning/10 px-3 py-1.5 text-xs text-musiva-warning-foreground">
-                          Selling price is below final cost.
+                          Customer selling price is below landed cost.
                         </p>
                       )}
                     </div>

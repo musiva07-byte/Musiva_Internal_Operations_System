@@ -37,9 +37,10 @@ import {
   deriveImportCostBhd,
   deriveVariantFinalCost,
   validateMarginPercent,
-  deriveSuggestedSellingPrice,
+  computeSuggestedSellingPrice,
   calcEstimatedProfit,
   calcEstimatedMargin,
+  getValidBuyingCost,
   type ProfitType,
 } from "@/lib/utils/cost-conversion";
 import { formatBhd } from "@/lib/formatters/currency";
@@ -91,7 +92,11 @@ const emptyVariant = {
  *  same way, since RHF's own field.id isn't known until the hook runs. */
 type VariantCostState = {
   importCostInr: number;
-  profitInput: number;
+  /** Desired profit staff wants on top of landed cost — null means "not entered yet" and is
+   *  distinct from a deliberate 0. Only when this is a real number does a suggested selling
+   *  price get calculated at all (see computeSuggestedSellingPrice); leaving it null must never
+   *  cause the landed cost to be shown as a "suggested" customer price. */
+  profitInput: number | null;
 };
 
 
@@ -108,11 +113,11 @@ function reverseImportCostInr(variant: ProductWithRelations["variants"][number])
 
 function initialCostState(product?: ProductWithRelations): VariantCostState[] {
   if (!product || product.variants.length === 0) {
-    return [{ importCostInr: 0, profitInput: 0 }];
+    return [{ importCostInr: 0, profitInput: null }];
   }
   return product.variants.map((v) => ({
     importCostInr: reverseImportCostInr(v),
-    profitInput: 0,
+    profitInput: null,
   }));
 }
 
@@ -227,18 +232,21 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
   // ── bulk apply (Price & Cost) ─────────────────────────────────────────────────
   const [bulkBuyingPriceInr, setBulkBuyingPriceInr] = useState(0);
   const [bulkImportCostInr, setBulkImportCostInr] = useState(0);
-  const [bulkProfitInput, setBulkProfitInput] = useState(0);
+  // null = staff hasn't typed a bulk desired-profit value — leave every row's own profit input
+  // (and therefore its suggested price) exactly as-is rather than treating a blank field as "0".
+  const [bulkProfitInput, setBulkProfitInput] = useState<number | null>(null);
   const [bulkMinStock, setBulkMinStock] = useState(0);
   // Default unchecked — bulk-applying buying/import cost or a desired profit must only update
   // cost/suggested-price data by default. Without this gate, applyBulkToAll used to silently
   // overwrite every variant's real customer-facing selling price with a cost-derived
   // suggestion the moment staff clicked Apply, even if they only meant to update cost.
   const [bulkAlsoUpdateSellingPrice, setBulkAlsoUpdateSellingPrice] = useState(false);
-  const bulkMarginError = profitType === "margin" ? validateMarginPercent(bulkProfitInput) : null;
+  const bulkMarginError =
+    profitType === "margin" && bulkProfitInput !== null ? validateMarginPercent(bulkProfitInput) : null;
 
   function appendVariant() {
     append({ ...emptyVariant });
-    setCostState((prev) => [...prev, { importCostInr: 0, profitInput: 0 }]);
+    setCostState((prev) => [...prev, { importCostInr: 0, profitInput: null }]);
   }
 
   function removeVariantAt(index: number) {
@@ -250,14 +258,22 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
     setCostState((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
   }
 
-  /** Only non-zero bulk fields apply — same convention as the New Product wizard, so a
+  /** Only non-zero/non-null bulk fields apply — same convention as the New Product wizard, so a
    *  blank bulk field never silently overwrites a value staff already customized per row. */
   function applyBulkToAll() {
+    setFormError(null);
+    // Staff explicitly asked to update customer selling prices but gave nothing to calculate
+    // them from — refuse the whole apply (including the cost fields) rather than silently
+    // updating cost while leaving staff to wonder why the price they asked for never changed.
+    if (bulkAlsoUpdateSellingPrice && bulkProfitInput === null) {
+      setFormError("Enter desired profit before updating customer selling prices.");
+      return;
+    }
     fields.forEach((_, index) => {
       const nextBuyingPriceInr =
         bulkBuyingPriceInr > 0 ? bulkBuyingPriceInr : form.getValues(`variants.${index}.buyingPriceInr`) || 0;
       const nextImportCostInr = bulkImportCostInr > 0 ? bulkImportCostInr : costState[index]?.importCostInr ?? 0;
-      const nextProfitInput = bulkProfitInput > 0 ? bulkProfitInput : costState[index]?.profitInput ?? 0;
+      const nextProfitInput = bulkProfitInput !== null ? bulkProfitInput : costState[index]?.profitInput ?? null;
 
       form.setValue(`variants.${index}.buyingPriceInr`, nextBuyingPriceInr, { shouldDirty: true });
       if (bulkMinStock > 0) {
@@ -267,13 +283,14 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
 
       // Cost/suggested-price data is always recalculated above. The actual customer-facing
       // selling price is only touched when staff explicitly checked "Also update selling
-      // price" — otherwise every variant keeps exactly the price it already had.
+      // price" — otherwise every variant keeps exactly the price it already had. And even then,
+      // only when a real desired profit was entered — never from cost alone.
       if (canViewProfit && bulkAlsoUpdateSellingPrice) {
         const finalCost = deriveVariantFinalCost(nextBuyingPriceInr, currentExchangeRate, nextImportCostInr);
-        const marginError = profitType === "margin" ? validateMarginPercent(nextProfitInput) : null;
-        const suggested =
-          marginError === null ? deriveSuggestedSellingPrice(finalCost, profitType, nextProfitInput) : 0;
-        if (suggested > 0) {
+        const marginError =
+          profitType === "margin" && nextProfitInput !== null ? validateMarginPercent(nextProfitInput) : null;
+        const suggested = computeSuggestedSellingPrice(finalCost, profitType, nextProfitInput, marginError);
+        if (suggested !== null) {
           form.setValue(`variants.${index}.regularSellingPriceBhd`, suggested, { shouldDirty: true });
           form.setValue(`variants.${index}.sellingPrice`, suggested, { shouldDirty: true });
         }
@@ -306,18 +323,19 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
 
   function buildConfirmationRows(values: ProductInput): PriceConfirmationRow[] {
     return values.variants.map((variant, index) => {
-      const cost = costState[index] ?? { importCostInr: 0, profitInput: 0 };
+      const cost = costState[index] ?? { importCostInr: 0, profitInput: null };
       const finalCostBhd = deriveVariantFinalCost(
         variant.buyingPriceInr ?? 0,
         currentExchangeRate,
         cost.importCostInr,
       );
-      const marginError = profitType === "margin" ? validateMarginPercent(cost.profitInput) : null;
-      const suggestedPriceBhd =
-        marginError === null ? deriveSuggestedSellingPrice(finalCostBhd, profitType, cost.profitInput) : 0;
+      const marginError =
+        profitType === "margin" && cost.profitInput !== null ? validateMarginPercent(cost.profitInput) : null;
+      const suggestedPriceBhd = computeSuggestedSellingPrice(finalCostBhd, profitType, cost.profitInput, marginError);
       // Matched by id, not array position — staff removing/reordering variants during this
       // edit session must never cause this row to compare against the wrong variant's price.
       const existing = variant.id ? product?.variants.find((v) => v.id === variant.id) : undefined;
+      const oldFinalCostBhd = existing ? getValidBuyingCost(existing)?.finalUnitCostBhd : undefined;
       return {
         key: rowKeyFor(index, variant),
         optionLabel: `${variant.color} / ${variant.size}`,
@@ -332,6 +350,7 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
         // doc comment for the incident this fixes).
         currentPriceBhd: Number(variant.regularSellingPriceBhd ?? variant.sellingPrice) || 0,
         oldPriceBhd: existing ? Number(existing.regular_selling_price_bhd ?? existing.selling_price) : undefined,
+        oldFinalCostBhd,
       };
     });
   }
@@ -436,12 +455,13 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
 
     if (profitType === "margin") {
       const invalidIndex = submitValues.variants.findIndex((variant, index) => {
-        const cost = costState[index] ?? { importCostInr: 0, profitInput: 0 };
+        const cost = costState[index] ?? { importCostInr: 0, profitInput: null };
         const finalCost = deriveVariantFinalCost(variant.buyingPriceInr ?? 0, currentExchangeRate, cost.importCostInr);
-        return finalCost > 0 && validateMarginPercent(cost.profitInput) !== null;
+        return finalCost > 0 && cost.profitInput !== null && validateMarginPercent(cost.profitInput) !== null;
       });
       if (invalidIndex >= 0) {
-        setFormError(validateMarginPercent(costState[invalidIndex].profitInput));
+        const invalidProfit = costState[invalidIndex].profitInput;
+        setFormError(invalidProfit !== null ? validateMarginPercent(invalidProfit) : null);
         return;
       }
     }
@@ -635,7 +655,7 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
               <VariantPriceCost
                 index={index}
                 form={form}
-                cost={costState[index] ?? { importCostInr: 0, profitInput: 0 }}
+                cost={costState[index] ?? { importCostInr: 0, profitInput: null }}
                 onCostChange={(patch) => updateCostState(index, patch)}
                 canEnterCost={canEnterCost}
                 canViewProfit={canViewProfit}
@@ -673,7 +693,7 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div className="space-y-2">
-                <Label htmlFor="bulk-buy-inr">Buying price India (INR)</Label>
+                <Label htmlFor="bulk-buy-inr">Buy India (INR)</Label>
                 <Input
                   id="bulk-buy-inr"
                   min={0}
@@ -685,7 +705,7 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="bulk-import-inr">Import cost India (INR)</Label>
+                <Label htmlFor="bulk-import-inr">Import India (INR)</Label>
                 <Input
                   id="bulk-import-inr"
                   min={0}
@@ -708,15 +728,17 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
                 <>
                   <div className="space-y-2">
                     <Label htmlFor="bulk-profit">
-                      Desired profit {profitType === "amount" ? "(BHD)" : "(%)"}
+                      Desired profit {profitType === "amount" ? "(BHD)" : "(margin %)"}
                     </Label>
                     <Input
                       id="bulk-profit"
                       min={0}
                       step={profitType === "amount" ? "0.001" : "0.1"}
                       type="number"
-                      value={bulkProfitInput || ""}
-                      onChange={(e) => setBulkProfitInput(Number(e.target.value) || 0)}
+                      value={bulkProfitInput ?? ""}
+                      onChange={(e) =>
+                        setBulkProfitInput(e.target.value === "" ? null : Number(e.target.value))
+                      }
                     />
                     {bulkMarginError && <p className="text-xs text-destructive">{bulkMarginError}</p>}
                   </div>
@@ -753,10 +775,10 @@ export function ProductForm({ categories, product, userRole, currentExchangeRate
                   checked={bulkAlsoUpdateSellingPrice}
                   onChange={(e) => setBulkAlsoUpdateSellingPrice(e.target.checked)}
                 />
-                Also update selling price
+                Also update customer selling price using suggested price
                 <span className="text-xs font-normal text-muted-foreground">
-                  (unchecked: only cost and suggested price are updated — customer price stays
-                  the same)
+                  (Leave unchecked to update costs only. Tick this only when you want to change
+                  customer prices for all variants.)
                 </span>
               </label>
             )}
@@ -989,126 +1011,156 @@ function VariantPriceCost({
     form.setValue(`variants.${index}.sellingPrice`, value, { shouldDirty: true });
   }
 
-  const finalCostBhd = canEnterCost ? deriveVariantFinalCost(buyingPriceInr, exchangeRate, cost.importCostInr) : 0;
+  // "Landed cost Bahrain" — Total India Cost (Buy India + Import India) × exchange rate. This
+  // is a COST figure, never a price. It must never be presented to staff as a "suggested"
+  // customer price — see computeSuggestedSellingPrice's doc comment for the incident that
+  // happened when it was.
+  const totalIndiaCostInr = buyingPriceInr + cost.importCostInr;
+  const landedCostBhd = canEnterCost ? deriveVariantFinalCost(buyingPriceInr, exchangeRate, cost.importCostInr) : 0;
   const marginError =
-    canViewProfit && profitType === "margin" ? validateMarginPercent(cost.profitInput) : null;
-  const suggestedPriceBhd =
-    canViewProfit && marginError === null
-      ? deriveSuggestedSellingPrice(finalCostBhd, profitType, cost.profitInput)
-      : 0;
+    canViewProfit && profitType === "margin" && cost.profitInput !== null
+      ? validateMarginPercent(cost.profitInput)
+      : null;
+  // null = "Not calculated" — only ever a real number when staff has actually typed a desired
+  // profit (including a deliberate 0), per computeSuggestedSellingPrice's contract.
+  const suggestedPriceBhd = canViewProfit
+    ? computeSuggestedSellingPrice(landedCostBhd, profitType, cost.profitInput, marginError)
+    : null;
   const profit =
-    canViewProfit && finalCostBhd > 0 && currentPriceBhd > 0
-      ? calcEstimatedProfit(currentPriceBhd, finalCostBhd)
+    canViewProfit && landedCostBhd > 0 && currentPriceBhd > 0
+      ? calcEstimatedProfit(currentPriceBhd, landedCostBhd)
       : null;
   const margin =
-    canViewProfit && finalCostBhd > 0 && currentPriceBhd > 0
-      ? calcEstimatedMargin(currentPriceBhd, finalCostBhd)
+    canViewProfit && landedCostBhd > 0 && currentPriceBhd > 0
+      ? calcEstimatedMargin(currentPriceBhd, landedCostBhd)
       : null;
-  const belowCost = finalCostBhd > 0 && currentPriceBhd > 0 && currentPriceBhd < finalCostBhd;
-  const suggestionDiffersFromPrice = suggestedPriceBhd > 0 && suggestedPriceBhd !== currentPriceBhd;
+  const belowCost = landedCostBhd > 0 && currentPriceBhd > 0 && currentPriceBhd < landedCostBhd;
+  const suggestionDiffersFromPrice = suggestedPriceBhd !== null && suggestedPriceBhd !== currentPriceBhd;
 
   return (
     <div className="space-y-3 border-t border-dashed border-musiva-border pt-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-musiva-gold">Price &amp; Cost</p>
 
+      {/* Customer selling price — always shown first and never confused with cost or a
+          suggestion. This is the actual price the customer pays right now. */}
+      <div className="space-y-2 rounded-md border border-musiva-border bg-white p-3">
+        <Label className="text-[11px]" htmlFor={`selling-price-${index}`}>
+          Customer selling price (BHD)
+        </Label>
+        <Input
+          id={`selling-price-${index}`}
+          className="w-36"
+          min={0}
+          step="0.001"
+          type="number"
+          {...form.register(`variants.${index}.regularSellingPriceBhd`)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSellingPrice(Number(e.target.value) || 0)}
+        />
+        {profit !== null && margin !== null && (
+          <p className="text-xs text-muted-foreground">
+            Current profit: <span className="font-medium text-foreground">{formatBhd(profit)}</span>
+            {" · "}Current margin:{" "}
+            <span className="font-medium text-foreground">{margin.toFixed(2)}%</span>
+          </p>
+        )}
+        {profit === null && canViewProfit && (
+          <p className="text-xs text-muted-foreground">
+            Current profit/margin need a landed cost to calculate.
+          </p>
+        )}
+      </div>
+
       {canEnterCost && (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="space-y-2">
-              <Label className="text-[11px]">Buy India (INR)</Label>
-              <Input
-                min={0}
-                step="0.01"
-                type="number"
-                {...form.register(`variants.${index}.buyingPriceInr`)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-[11px]">Import India (INR)</Label>
-              <Input
-                min={0}
-                step="0.01"
-                type="number"
-                value={cost.importCostInr || ""}
-                onChange={(e) => onCostChange({ importCostInr: Number(e.target.value) || 0 })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-[11px]">Final Bahrain cost (BHD)</Label>
-              <div className="flex h-10 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
-                {finalCostBhd > 0 ? formatBhd(finalCostBhd) : "Not recorded"}
-              </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-2">
+            <Label className="text-[11px]">Buy India (INR)</Label>
+            <Input
+              min={0}
+              step="0.01"
+              type="number"
+              {...form.register(`variants.${index}.buyingPriceInr`)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-[11px]">Import India (INR)</Label>
+            <Input
+              min={0}
+              step="0.01"
+              type="number"
+              value={cost.importCostInr || ""}
+              onChange={(e) => onCostChange({ importCostInr: Number(e.target.value) || 0 })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-[11px]">Total India cost (INR)</Label>
+            <div className="flex h-10 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
+              {totalIndiaCostInr > 0 ? `₹${totalIndiaCostInr.toFixed(2)}` : "Not recorded"}
             </div>
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            Cost changes do not automatically change customer selling price. To change selling
-            price, edit it directly below or choose &ldquo;Use suggested price&rdquo;.
-          </p>
-        </>
+          <div className="space-y-2">
+            <Label className="text-[11px]">Landed cost Bahrain (BHD)</Label>
+            <div className="flex h-10 items-center rounded-md border border-input bg-muted px-2 text-xs text-muted-foreground">
+              {landedCostBhd > 0 ? formatBhd(landedCostBhd) : "Not recorded"}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(canEnterCost || canViewProfit) && (
+        <p className="text-[11px] text-muted-foreground">
+          Cost changes do not automatically change the customer selling price. The customer
+          price stays the same unless you edit it directly or choose &ldquo;Use suggested selling
+          price&rdquo;.
+        </p>
       )}
 
       {canViewProfit && (
-        <div className="max-w-[220px] space-y-2">
-          <Label className="text-[11px]">{profitType === "amount" ? "Profit (BHD)" : "Margin (%)"}</Label>
-          <Input
-            min={0}
-            step={profitType === "amount" ? "0.001" : "0.1"}
-            type="number"
-            value={cost.profitInput || ""}
-            onChange={(e) => onCostChange({ profitInput: Number(e.target.value) || 0 })}
-          />
-          <p className="text-[11px] text-muted-foreground">
-            Used only to calculate a suggested price below — never applied automatically.
-          </p>
+        <div className="flex flex-wrap items-end gap-3 rounded-md border border-dashed border-musiva-border p-3">
+          <div className="max-w-[180px] space-y-2">
+            <Label className="text-[11px]">
+              Desired profit {profitType === "amount" ? "(BHD)" : "(margin %)"}
+            </Label>
+            <Input
+              min={0}
+              step={profitType === "amount" ? "0.001" : "0.1"}
+              type="number"
+              value={cost.profitInput ?? ""}
+              onChange={(e) =>
+                onCostChange({ profitInput: e.target.value === "" ? null : Number(e.target.value) })
+              }
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">
+              Suggested selling price:{" "}
+              <span className="font-medium text-foreground">
+                {suggestedPriceBhd !== null ? formatBhd(suggestedPriceBhd) : "Not calculated"}
+              </span>
+            </p>
+            {suggestedPriceBhd === null && (
+              <p className="text-[11px] text-muted-foreground">
+                Enter desired profit to calculate a suggested customer price.
+              </p>
+            )}
+          </div>
+          {suggestionDiffersFromPrice && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={() => setSellingPrice(suggestedPriceBhd!)}
+            >
+              Use suggested selling price
+            </Button>
+          )}
+          {marginError && <p className="w-full text-xs text-destructive">{marginError}</p>}
         </div>
       )}
 
-      <div className="flex flex-wrap items-end gap-3 rounded-md border border-musiva-border bg-white p-3">
-        <div className="space-y-2">
-          <Label className="text-[11px]" htmlFor={`selling-price-${index}`}>
-            Selling price / customer price (BHD)
-          </Label>
-          <Input
-            id={`selling-price-${index}`}
-            className="w-36"
-            min={0}
-            step="0.001"
-            type="number"
-            {...form.register(`variants.${index}.regularSellingPriceBhd`)}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSellingPrice(Number(e.target.value) || 0)}
-          />
-        </div>
-        {suggestedPriceBhd > 0 && (
-          <div className="flex items-center gap-2">
-            <p className="text-xs text-muted-foreground">
-              Suggested:{" "}
-              <span className="font-medium text-foreground">{formatBhd(suggestedPriceBhd)}</span>
-            </p>
-            {suggestionDiffersFromPrice && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs"
-                onClick={() => setSellingPrice(suggestedPriceBhd)}
-              >
-                Use suggested price
-              </Button>
-            )}
-          </div>
-        )}
-        {profit !== null && margin !== null && (
-          <p className="text-xs text-muted-foreground">
-            Profit: <span className="font-medium text-foreground">{formatBhd(profit)}</span>
-            {margin !== null ? ` · Margin ${margin.toFixed(1)}%` : ""}
-          </p>
-        )}
-        {marginError && <p className="text-xs text-destructive">{marginError}</p>}
-      </div>
-
       {belowCost && (
         <p className="rounded border border-musiva-warning/30 bg-musiva-warning/10 px-2 py-1 text-xs text-musiva-warning-foreground">
-          Selling price is below final cost.
+          Customer selling price is below landed cost.
         </p>
       )}
     </div>

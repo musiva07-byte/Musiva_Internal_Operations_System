@@ -119,6 +119,31 @@ export function deriveSuggestedSellingPrice(
   return roundBhd(finalCostBhd / (1 - profitInput / 100));
 }
 
+/**
+ * Same inputs as deriveSuggestedSellingPrice, but treats "desired profit not entered yet"
+ * (null) as fundamentally different from "desired profit is deliberately 0" — returns null so
+ * callers show "Not calculated" instead of silently suggesting the landed cost alone as though
+ * it were a real price suggestion.
+ *
+ * Real incident this fixes: Buy India ₹1450 + Import India ₹500 → landed cost BHD 7.605. With
+ * no desired profit entered, the UI showed "Suggested: BHD 7.605" — the landed/final cost
+ * mislabeled as a suggested customer price — because the old code passed a profit input that
+ * defaulted to 0 straight into deriveSuggestedSellingPrice, and cost + 0 profit == cost. A
+ * landed cost must never be presented to staff as a suggested selling price.
+ */
+export function computeSuggestedSellingPrice(
+  finalCostBhd: number,
+  profitType: ProfitType,
+  profitInput: number | null,
+  marginError: string | null,
+): number | null {
+  if (profitInput === null) return null;
+  if (marginError !== null) return null;
+  if (finalCostBhd <= 0) return null;
+  const suggested = deriveSuggestedSellingPrice(finalCostBhd, profitType, profitInput);
+  return suggested > 0 ? suggested : null;
+}
+
 // ── centralized buying-cost validity ─────────────────────────────────────────
 // This is the ONE place that decides whether a variant's buying cost can be trusted.
 //

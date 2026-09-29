@@ -17,7 +17,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { listCategories, listProducts } from "@/lib/services/product.service";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { canPublishProducts, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
-import { formatBhd } from "@/lib/formatters/currency";
+import { formatCatalogPriceRange } from "@/lib/formatters/currency";
 import { getCostSummaryBadge } from "@/lib/utils/cost-conversion";
 import { titleize } from "@/lib/formatters/labels";
 import { withProductReturnTo } from "@/lib/utils/product-catalog-return";
@@ -298,7 +298,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                       <TableCell className="text-right">
                         <div className="flex flex-col items-end gap-1">
                           <span className="text-sm">
-                            {product.min_selling_price === null ? "—" : formatBhd(product.min_selling_price)}
+                            {formatCatalogPriceRange(product.min_selling_price, product.max_selling_price)}
                           </span>
                           {product.has_active_discount ? (
                             <Badge className="text-[10px]" variant="warning">Sale</Badge>
@@ -425,7 +425,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5">
                           <span className="text-sm font-medium text-musiva-plum">
-                            {product.min_selling_price === null ? "—" : formatBhd(product.min_selling_price)}
+                            {formatCatalogPriceRange(product.min_selling_price, product.max_selling_price)}
                           </span>
                           {product.has_active_discount ? (
                             <Badge className="text-[10px]" variant="warning">Sale</Badge>

@@ -24,6 +24,8 @@ import {
   getBuyingCostStatus,
   getCostSummaryBadge,
   computeProductCostSummary,
+  deriveVariantFinalCost,
+  computeSuggestedSellingPrice,
   type ProductVariantCostInput,
 } from "./cost-conversion";
 import { formatBhd, formatSupplierCurrency } from "@/lib/formatters/currency";
@@ -59,6 +61,48 @@ describe("convertToBhd", () => {
     const base = convertToBhd(1000, 0.004);
     const doubled = convertToBhd(1000, 0.008);
     expect(roundBhd(doubled)).toBeCloseTo(roundBhd(base) * 2, 3);
+  });
+});
+
+// ── computeSuggestedSellingPrice ─────────────────────────────────────────────
+// Real incident: Buy India ₹1450 + Import India ₹500, exchange rate 0.003900 → landed cost
+// BHD 7.605. With no desired profit entered, the UI showed "Suggested: BHD 7.605" — the landed
+// cost mislabeled as a suggested CUSTOMER price. A landed/final cost must never be presented to
+// staff as a suggested selling price.
+describe("computeSuggestedSellingPrice — landed cost must never be shown as a suggested price", () => {
+  const landedCostBhd = deriveVariantFinalCost(1450, 0.0039, 500);
+
+  it("matches the spec's landed cost example exactly (BHD 7.605)", () => {
+    expect(landedCostBhd).toBe(7.605);
+  });
+
+  it("A/B: desired profit empty (null) — suggested price is NOT calculated, never landed cost", () => {
+    const suggested = computeSuggestedSellingPrice(landedCostBhd, "amount", null, null);
+    expect(suggested).toBeNull();
+  });
+
+  it("C: desired profit BHD 5.395 — suggested price is landed cost + profit (BHD 13.000)", () => {
+    const suggested = computeSuggestedSellingPrice(landedCostBhd, "amount", 5.395, null);
+    expect(suggested).toBe(13.0);
+  });
+
+  it("treats a deliberately-entered 0 desired profit differently from null — it DOES calculate (suggested == landed cost), since the staff explicitly chose zero profit", () => {
+    const suggested = computeSuggestedSellingPrice(landedCostBhd, "amount", 0, null);
+    expect(suggested).toBe(landedCostBhd);
+  });
+
+  it("returns null when there is no landed cost yet, regardless of profit entered", () => {
+    expect(computeSuggestedSellingPrice(0, "amount", 5.395, null)).toBeNull();
+  });
+
+  it("returns null when the margin input is invalid", () => {
+    expect(computeSuggestedSellingPrice(landedCostBhd, "margin", 150, "Margin percentage must be less than 100%.")).toBeNull();
+  });
+
+  it("computes a margin-based suggestion when profit is entered and valid", () => {
+    // cost 7.605 / (1 - 0.30) = 10.864 (rounded to 3dp)
+    const suggested = computeSuggestedSellingPrice(landedCostBhd, "margin", 30, null);
+    expect(suggested).toBe(roundBhd(landedCostBhd / 0.7));
   });
 });
 
