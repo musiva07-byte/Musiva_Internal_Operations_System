@@ -152,7 +152,7 @@ describe("getStockManagementPrintColumns — image-first, all 15 columns kept, c
     expect(columns[0].fullLabel).toBe("Product image");
   });
 
-  it("keeps every required column (via fullLabel or label) in the required order — none removed", () => {
+  it("keeps every required column (via fullLabel or label), in the required print order with Rate last — none removed", () => {
     const fullLabels = getStockManagementPrintColumns(OWNER).map((c) => c.fullLabel ?? c.label);
     expect(fullLabels).toEqual([
       "Product image",
@@ -163,14 +163,19 @@ describe("getStockManagementPrintColumns — image-first, all 15 columns kept, c
       "Stock status",
       "Selling price BHD",
       "Buying price India INR",
-      "Exchange rate",
       "Buy Bahrain per piece BHD",
       "Import cost per piece BHD",
       "Final cost per piece BHD",
       "Total final cost BHD",
       "Profit per piece BHD",
       "Margin %",
+      "Exchange rate (1 INR in BHD)",
     ]);
+  });
+
+  it("Rate is the final column", () => {
+    const columns = getStockManagementPrintColumns(OWNER);
+    expect(columns[columns.length - 1].label).toBe("Rate");
   });
 
   it("has the same column count as the CSV export for every role — nothing dropped from print only", () => {
@@ -179,7 +184,7 @@ describe("getStockManagementPrintColumns — image-first, all 15 columns kept, c
     }
   });
 
-  it("renders the required compact header labels for a fully-permitted role", () => {
+  it("renders the required compact header labels, in the required print order, for a fully-permitted role", () => {
     const labels = getStockManagementPrintColumns(OWNER).map((c) => c.label);
     expect(labels).toEqual([
       "Image",
@@ -188,15 +193,15 @@ describe("getStockManagementPrintColumns — image-first, all 15 columns kept, c
       "Color",
       "Size",
       "Stock",
-      "Sell",
-      "Buy INR",
+      "Sell (BHD)",
+      "Buy (INR)",
+      "Buy (BHD)",
+      "Import (BHD)",
+      "Landed (BHD)",
+      "Total Cost (BHD)",
+      "Profit (BHD)",
+      "Margin (%)",
       "Rate",
-      "Buy BHD",
-      "Import BHD",
-      "Final BHD",
-      "Total Cost",
-      "Profit",
-      "Margin",
     ]);
   });
 
@@ -206,21 +211,39 @@ describe("getStockManagementPrintColumns — image-first, all 15 columns kept, c
     expect(productColumn?.nowrap).toBe(false);
 
     const currencyLabels = [
-      "Sell",
-      "Buy INR",
+      "Stock",
+      "Sell (BHD)",
+      "Buy (INR)",
+      "Buy (BHD)",
+      "Import (BHD)",
+      "Landed (BHD)",
+      "Total Cost (BHD)",
+      "Profit (BHD)",
+      "Margin (%)",
       "Rate",
-      "Buy BHD",
-      "Import BHD",
-      "Final BHD",
-      "Total Cost",
-      "Profit",
-      "Margin",
     ];
     for (const label of currencyLabels) {
       const column = columns.find((c) => c.label === label);
       expect(column?.align).toBe("right");
       expect(column?.nowrap).not.toBe(false);
     }
+  });
+
+  it("gives Color and Size their own separate, sufficiently wide fixed columns", () => {
+    const columns = getStockManagementPrintColumns(OWNER);
+    const color = columns.find((c) => c.label === "Color");
+    const size = columns.find((c) => c.label === "Size");
+    expect(color).not.toBe(size);
+    // Wide enough for "MUSTARD YELLOW" and "DUSTY PURPLE" without colliding with Size.
+    expect(parseInt(color!.width!, 10)).toBeGreaterThanOrEqual(100);
+    // Wide enough for "FREE SIZE" on its own.
+    expect(parseInt(size!.width!, 10)).toBeGreaterThanOrEqual(70);
+  });
+
+  it("gives Rate enough width to show the complete exchange rate", () => {
+    const columns = getStockManagementPrintColumns(OWNER);
+    const rate = columns.find((c) => c.label === "Rate");
+    expect(parseInt(rate!.width!, 10)).toBeGreaterThanOrEqual(64);
   });
 
   it("gives every column a fixed width so the wide table lays out predictably", () => {
@@ -339,10 +362,50 @@ describe("buildStockManagementPrintRow — image cell, badge cell, and row accen
     });
   });
 
-  it("renders the combined Stock Status as a tier-tagged badge cell", () => {
+  it("renders Stock as a bare, tier-tagged number cell — no unit text, no badge/pill", () => {
     const row = buildStockManagementPrintRow(makeVariant({ stock_quantity: 2 }), OWNER);
-    const badgeCell = row.cells[5];
-    expect(badgeCell).toEqual({ kind: "badge", label: "2 units — Low Stock", tier: "low_stock" });
+    const stockCell = row.cells[5];
+    expect(stockCell).toEqual({ kind: "stock-number", quantity: 2, tier: "low_stock" });
+  });
+
+  it("stock 0 renders the number 0 tagged out_of_stock (rendered red/bold by ReportTemplate)", () => {
+    const row = buildStockManagementPrintRow(makeVariant({ stock_quantity: 0 }), OWNER);
+    expect(row.cells[5]).toEqual({ kind: "stock-number", quantity: 0, tier: "out_of_stock" });
+  });
+
+  it("stock 1 and 2 render the plain number tagged low_stock (rendered as normal dark text)", () => {
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 1 }), OWNER).cells[5]).toEqual({
+      kind: "stock-number",
+      quantity: 1,
+      tier: "low_stock",
+    });
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 2 }), OWNER).cells[5]).toEqual({
+      kind: "stock-number",
+      quantity: 2,
+      tier: "low_stock",
+    });
+  });
+
+  it("stock 3+ renders the plain number tagged in_stock (rendered green/bold)", () => {
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 3 }), OWNER).cells[5]).toEqual({
+      kind: "stock-number",
+      quantity: 3,
+      tier: "in_stock",
+    });
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 42 }), OWNER).cells[5]).toEqual({
+      kind: "stock-number",
+      quantity: 42,
+      tier: "in_stock",
+    });
+  });
+
+  it('never renders "unit(s)", "Low Stock", or "Out of Stock" text in the Stock cell', () => {
+    for (const qty of [0, 1, 2, 3, 10]) {
+      const row = buildStockManagementPrintRow(makeVariant({ stock_quantity: qty }), OWNER);
+      const cell = row.cells[5];
+      const serialized = JSON.stringify(cell);
+      expect(serialized).not.toMatch(/unit|Low Stock|Out of Stock|badge/i);
+    }
   });
 
   it("sets the row accentTier to match the stock tier for the highlight border", () => {
@@ -366,6 +429,57 @@ describe("buildStockManagementPrintRow — image cell, badge cell, and row accen
         .map((c) => (typeof c === "object" && c !== null && "kind" in c ? JSON.stringify(c) : String(c ?? "")))
         .join(" | ");
       expect(flat).not.toMatch(/₹1500|0\.004520|BHD 6\.780|BHD 7\.280/);
+    }
+  });
+
+  it("pushes cost/profit/rate cells in the required print order, with the bare exchange rate last", () => {
+    const row = buildStockManagementPrintRow(makeVariant(), OWNER);
+    // Columns: Image, Code, Product, Color, Size, Stock, Sell = 7 base cells, then cost/profit/rate.
+    const tail = row.cells.slice(7);
+    expect(tail).toEqual([
+      "₹1500.00", // Buy (INR)
+      "BHD 6.780", // Buy (BHD)
+      "BHD 0.500", // Import (BHD)
+      "BHD 7.280", // Landed (BHD)
+      "BHD 36.400", // Total Cost (BHD)
+      "BHD 3.720", // Profit (BHD)
+      "33.82%", // Margin (%)
+      "0.004520", // Rate — bare number, no "1 INR = BHD" prefix, last
+    ]);
+  });
+
+  it("financial figures are unchanged from the CSV's own numbers — only the print layout/order/labels differ", () => {
+    const printRow = buildStockManagementPrintRow(makeVariant(), OWNER);
+    const csvRow = buildStockManagementCsvRow(makeVariant(), OWNER);
+    // CSV: ..., Buying INR, Exchange rate (verbose), Buy BHD, Import BHD, Final BHD, Total, Profit, Margin
+    expect(csvRow.slice(-8)).toEqual([
+      "₹1500.00",
+      "1 INR = BHD 0.004520",
+      "BHD 6.780",
+      "BHD 0.500",
+      "BHD 7.280",
+      "BHD 36.400",
+      "BHD 3.720",
+      "33.82%",
+    ]);
+    // Same underlying numbers appear in the print row too, just reordered and the rate
+    // reformatted compactly.
+    const printTail = printRow.cells.slice(7);
+    expect(printTail).toContain("₹1500.00");
+    expect(printTail).toContain("BHD 6.780");
+    expect(printTail).toContain("BHD 7.280");
+    expect(printTail).toContain("BHD 36.400");
+    expect(printTail).toContain("BHD 3.720");
+    expect(printTail).toContain("33.82%");
+    expect(printTail).toContain("0.004520");
+  });
+
+  it("never exposes the Rate column/cell to unauthorized roles", () => {
+    for (const role of [SALES_STAFF, DELIVERY_COORDINATOR]) {
+      const columns = getStockManagementPrintColumns(role);
+      expect(columns.find((c) => c.label === "Rate")).toBeUndefined();
+      const row = buildStockManagementPrintRow(makeVariant(), role);
+      expect(row.cells).not.toContain("0.004520");
     }
   });
 });

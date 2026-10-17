@@ -218,6 +218,38 @@ body {
   color: #3d3d3d;
 }
 
+/* Stock Management print report — compact Stock column: a bare number, no "unit(s)" text and
+   no pill/badge chrome (that would waste width in a 15-column table). Colored by quantity
+   tier per spec: 0 = red/bold, 1-2 = normal dark, 3+ = green/bold. print-color-adjust keeps
+   the text color intact in print/PDF even when a browser's print settings default to
+   grayscale-friendly simplification — this is text color only, never a background fill, so
+   it stays legible and ink-light in grayscale too. */
+.report-stock-number {
+  font-weight: 600;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.report-stock-number--zero {
+  color: #a34d52;
+  font-weight: 700;
+}
+
+.report-stock-number--low {
+  color: var(--brand-text);
+  font-weight: 400;
+}
+
+.report-stock-number--ok {
+  color: #2f5240;
+  font-weight: 700;
+}
+
+.report-stock-number--invalid {
+  color: #3d3d3d;
+  font-weight: 400;
+}
+
 /* Report exports: subtle left-border row accent matching the Stock Status tier. */
 .report-row-accent > td:first-child {
   border-left: 3px solid transparent;
@@ -257,19 +289,28 @@ body {
   padding: 8mm;
 }
 
-/* Compact report mode (Stock Management): smaller font/padding/thumbnail so a 15-column
-   table stays readable without any column being removed. */
+/* Compact report mode (Stock Management): still smaller than the default .print-table, but
+   sized up from the original 9.5px/8.5px — tightening column widths (removing the verbose
+   Stock badge text, moving Rate out of the cost block) freed enough width to afford a more
+   readable font instead of relying on shrinking text to avoid overflow. */
 .report-compact .print-table {
-  font-size: 9.5px;
+  font-size: 11.5px;
 }
 
 .report-compact .print-table th {
-  font-size: 8.5px;
-  padding: 4px 5px;
+  font-size: 10px;
+  padding: 5px 6px;
 }
 
 .report-compact .print-table td {
-  padding: 3px 5px;
+  padding: 4px 6px;
+  /* Safety net only — column widths are sized for realistic real-world values (see
+     stock-management-report.ts) so this should rarely actually trigger. An unusually long
+     value degrades to a clean ellipsis instead of visually overlapping the next column. Only
+     affects non-wrapping cells in practice — the Product column's own white-space: normal
+     wraps instead of truncating. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .report-compact .report-thumb {

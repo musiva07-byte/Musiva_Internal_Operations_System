@@ -16,7 +16,13 @@ export type StockTier = "in_stock" | "low_stock" | "out_of_stock" | "invalid";
 
 export type ReportImageCell = { kind: "image"; url: string | null; alt: string };
 export type ReportBadgeCell = { kind: "badge"; label: string; tier: StockTier };
-export type ReportCell = CsvCell | ReportImageCell | ReportBadgeCell;
+/** Compact stock-quantity display for Stock Management's print/PDF report — a bare number,
+ *  colored by tier, with no "unit(s)"/"Low Stock"/"Out of Stock" text and no pill/badge chrome
+ *  (that verbose form is still used elsewhere via ReportBadgeCell, e.g. other reports' Stock
+ *  Status column — this cell kind is specifically for the print layout's compact Stock
+ *  column). */
+export type ReportStockNumberCell = { kind: "stock-number"; quantity: number; tier: StockTier };
+export type ReportCell = CsvCell | ReportImageCell | ReportBadgeCell | ReportStockNumberCell;
 
 export type ReportRow = {
   cells: ReportCell[];
@@ -50,6 +56,19 @@ function isBadgeCell(cell: ReportCell): cell is ReportBadgeCell {
   return typeof cell === "object" && cell !== null && "kind" in cell && cell.kind === "badge";
 }
 
+function isStockNumberCell(cell: ReportCell): cell is ReportStockNumberCell {
+  return typeof cell === "object" && cell !== null && "kind" in cell && cell.kind === "stock-number";
+}
+
+/** 0 → red/bold, 1-2 → normal dark text, 3+ → green/bold, negative (shouldn't normally occur)
+ *  → neutral/gray so it's still visibly distinct without implying a real "low/ok" state. */
+function stockNumberTone(quantity: number): "zero" | "low" | "ok" | "invalid" {
+  if (quantity < 0) return "invalid";
+  if (quantity === 0) return "zero";
+  if (quantity <= 2) return "low";
+  return "ok";
+}
+
 function ReportCellContent({ cell }: { cell: ReportCell }) {
   if (isImageCell(cell)) {
     return (
@@ -66,6 +85,14 @@ function ReportCellContent({ cell }: { cell: ReportCell }) {
 
   if (isBadgeCell(cell)) {
     return <span className={`report-badge report-badge--${cell.tier}`}>{cell.label}</span>;
+  }
+
+  if (isStockNumberCell(cell)) {
+    return (
+      <span className={`report-stock-number report-stock-number--${stockNumberTone(cell.quantity)}`}>
+        {cell.quantity}
+      </span>
+    );
   }
 
   return <>{cell ?? "—"}</>;

@@ -44,29 +44,53 @@ const PROFIT_COLUMNS = ["Profit per piece BHD", "Margin %"];
 // Print/PDF headers — every column above is kept, only the printed label is shortened (with
 // the full name preserved via `fullLabel` as a hover tooltip) so all 15 columns fit cleanly
 // on one A3 landscape page. Width/align/nowrap are sized so BHD/INR/% values never wrap onto
-// a second line — the product name is the only column allowed to wrap.
+// a second line — the product name is the only column allowed to wrap. Column ORDER here
+// deliberately differs from the CSV (CSV order/labels are untouched — see
+// getStockManagementCsvColumns) to put Exchange Rate last and group all cost/profit figures
+// together, per the print-layout spec.
+// Widths below total ~1134px of the ~1450px usable on an A3-landscape page (420mm minus
+// margins/padding) — deliberately leaving headroom rather than packing to the edge, so the
+// larger print font (see .report-compact in globals.css) and Color/Product's extra room both
+// fit without reintroducing overflow. Removing the verbose Stock badge and moving Rate out of
+// the cost block (both used to force everything else narrower) is what freed this room.
 const PRINT_TEXT_COLUMNS: ReportColumn[] = [
-  { label: "Code / SKU", fullLabel: "Product code / SKU", width: "85px" },
-  { label: "Product", fullLabel: "Product name", width: "165px", nowrap: false },
-  { label: "Color", width: "65px" },
-  { label: "Size", width: "42px" },
-  { label: "Stock", fullLabel: "Stock status", width: "150px" },
-  { label: "Sell", fullLabel: "Selling price BHD", align: "right", width: "68px" },
+  { label: "Code / SKU", fullLabel: "Product code / SKU", width: "90px" },
+  { label: "Product", fullLabel: "Product name", width: "160px", nowrap: false },
+  // Wide enough for "MUSTARD YELLOW" / "DUSTY PURPLE" / "BOTTLE GREEN" without ever running
+  // into the Size column.
+  { label: "Color", width: "112px" },
+  // A separate fixed column (never shares space with Color) wide enough for "FREE SIZE".
+  { label: "Size", width: "76px" },
+  { label: "Stock", fullLabel: "Stock status", align: "right", width: "42px" },
+  { label: "Sell (BHD)", fullLabel: "Selling price BHD", align: "right", width: "60px" },
 ];
 
+// Cost columns, in the required print order: Buy (INR) → Buy (BHD) → Import (BHD) →
+// Landed (BHD) → Total Cost (BHD). Exchange Rate is intentionally NOT here — it's appended
+// as its own column after profit/margin (see PRINT_RATE_COLUMN) so it prints last.
 const PRINT_COST_COLUMNS: ReportColumn[] = [
-  { label: "Buy INR", fullLabel: "Buying price India INR", align: "right", width: "82px" },
-  { label: "Rate", fullLabel: "Exchange rate", align: "right", width: "128px" },
-  { label: "Buy BHD", fullLabel: "Buy Bahrain per piece BHD", align: "right", width: "68px" },
-  { label: "Import BHD", fullLabel: "Import cost per piece BHD", align: "right", width: "72px" },
-  { label: "Final BHD", fullLabel: "Final cost per piece BHD", align: "right", width: "72px" },
-  { label: "Total Cost", fullLabel: "Total final cost BHD", align: "right", width: "78px" },
+  { label: "Buy (INR)", fullLabel: "Buying price India INR", align: "right", width: "74px" },
+  { label: "Buy (BHD)", fullLabel: "Buy Bahrain per piece BHD", align: "right", width: "58px" },
+  { label: "Import (BHD)", fullLabel: "Import cost per piece BHD", align: "right", width: "62px" },
+  { label: "Landed (BHD)", fullLabel: "Final cost per piece BHD", align: "right", width: "62px" },
+  { label: "Total Cost (BHD)", fullLabel: "Total final cost BHD", align: "right", width: "68px" },
 ];
 
 const PRINT_PROFIT_COLUMNS: ReportColumn[] = [
-  { label: "Profit", fullLabel: "Profit per piece BHD", align: "right", width: "68px" },
-  { label: "Margin", fullLabel: "Margin %", align: "right", width: "58px" },
+  { label: "Profit (BHD)", fullLabel: "Profit per piece BHD", align: "right", width: "58px" },
+  { label: "Margin (%)", fullLabel: "Margin %", align: "right", width: "58px" },
 ];
+
+// Exchange rate — last column in print (moved out of the middle of the cost block per the
+// layout spec). Shown as a bare number ("0.003900"), not the verbose "1 INR = BHD ..." string
+// CSV uses — the column header already identifies what it is, so repeating that text in every
+// cell would only waste width. CSV's own "Exchange rate" column/value is untouched.
+const PRINT_RATE_COLUMN: ReportColumn = {
+  label: "Rate",
+  fullLabel: "Exchange rate (1 INR in BHD)",
+  align: "right",
+  width: "70px",
+};
 
 /** Fixed report-display thresholds — deliberately independent of the variant's own
  *  minimum_stock (used everywhere else in the app, e.g. getStockStatus()). This is a
@@ -104,7 +128,11 @@ type StockManagementRowData = {
   /** null when the viewing role isn't permitted to see buying cost. */
   cost: {
     buyingInr: string;
+    /** CSV's verbose form — "1 INR = BHD 0.004520". Print uses exchangeRatePlain instead. */
     exchangeRate: string;
+    /** Print-only — just the bare rate ("0.003900"), since the print column header already
+     *  says "Rate" and repeating "1 INR = BHD" in every cell would waste width. */
+    exchangeRatePlain: string;
     buyBahrain: string;
     importCost: string;
     finalCost: string;
@@ -140,6 +168,7 @@ function buildStockManagementRowData(
       // Same multiply-direction convention shown elsewhere in the app (e.g. the Edit Product
       // bulk-apply panel): exchangeRateToBhd = 1 INR expressed in BHD.
       exchangeRate: cost ? `1 INR = BHD ${cost.exchangeRateToBhd.toFixed(6)}` : "—",
+      exchangeRatePlain: cost ? cost.exchangeRateToBhd.toFixed(6) : "—",
       buyBahrain: cost ? formatBhd(cost.convertedUnitCostBhd) : "—",
       importCost: cost ? formatBhd(cost.importCostBhd) : "—",
       finalCost: cost ? formatBhd(cost.finalUnitCostBhd) : "—",
@@ -171,14 +200,18 @@ export function getStockManagementCsvColumns(role: StaffRole | null | undefined)
 
 /** Column layout for the print/PDF view — "Image" (Product image) renders an actual
  *  thumbnail. Every column the CSV exposes is kept here too; only the printed label is
- *  shortened to fit (see PRINT_TEXT_COLUMNS/PRINT_COST_COLUMNS/PRINT_PROFIT_COLUMNS). */
+ *  shortened to fit, and the order differs from the CSV so Exchange Rate prints last (see
+ *  PRINT_TEXT_COLUMNS/PRINT_COST_COLUMNS/PRINT_PROFIT_COLUMNS/PRINT_RATE_COLUMN). */
 export function getStockManagementPrintColumns(role: StaffRole | null | undefined): ReportColumn[] {
   const columns: ReportColumn[] = [
-    { label: "Image", fullLabel: "Product image", width: "48px" },
+    { label: "Image", fullLabel: "Product image", width: "42px" },
     ...PRINT_TEXT_COLUMNS,
   ];
   if (canViewBuyingCost(role)) columns.push(...PRINT_COST_COLUMNS);
   if (canViewCostData(role)) columns.push(...PRINT_PROFIT_COLUMNS);
+  // Rate is gated by the same canViewBuyingCost check as the other cost columns — it just
+  // prints in a different position (last) than the CSV's "Exchange rate" column.
+  if (canViewBuyingCost(role)) columns.push(PRINT_RATE_COLUMN);
   return columns;
 }
 
@@ -206,8 +239,11 @@ export function buildStockManagementCsvRow(
   return row;
 }
 
-/** One print-view row for `variant` — an image cell, a colored stock-status badge, and a
- *  row accent tier for the light print-friendly highlight (see ReportTemplate). */
+/** One print-view row for `variant` — an image cell, a bare colored stock NUMBER (no
+ *  "units"/"Low Stock" text or pill — see ReportStockNumberCell), and a row accent tier for
+ *  the light print-friendly highlight (see ReportTemplate). Cost/profit/rate cells are pushed
+ *  in the print-specific column order (Buy → Buy BHD → Import → Landed → Total Cost → Profit
+ *  → Margin → Rate last) — see getStockManagementPrintColumns for the matching column list. */
 export function buildStockManagementPrintRow(
   variant: InventoryVariantItem,
   role: StaffRole | null | undefined,
@@ -219,14 +255,17 @@ export function buildStockManagementPrintRow(
     data.productName,
     data.color,
     data.size,
-    { kind: "badge", label: data.stockStatusLabel, tier: data.stockTier },
+    { kind: "stock-number", quantity: variant.stock_quantity, tier: data.stockTier },
     data.sellingPriceBhd,
   ];
   if (data.cost) {
-    cells.push(data.cost.buyingInr, data.cost.exchangeRate, data.cost.buyBahrain, data.cost.importCost, data.cost.finalCost, data.cost.totalFinalCost);
+    cells.push(data.cost.buyingInr, data.cost.buyBahrain, data.cost.importCost, data.cost.finalCost, data.cost.totalFinalCost);
   }
   if (data.profit) {
     cells.push(data.profit.profitPerPiece, data.profit.margin);
+  }
+  if (data.cost) {
+    cells.push(data.cost.exchangeRatePlain);
   }
   return { cells, accentTier: data.stockTier };
 }
