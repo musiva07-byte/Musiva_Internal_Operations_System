@@ -12,6 +12,7 @@ import {
   getStockManagementPrintColumns,
   buildStockManagementCsvRow,
   buildStockManagementPrintRow,
+  A3_PRINTABLE_WIDTH_PX,
 } from "./stock-management-report";
 import type { InventoryVariantItem } from "@/types/app";
 import type { StaffRole } from "@/types/database";
@@ -205,10 +206,11 @@ describe("getStockManagementPrintColumns — image-first, all 15 columns kept, c
     ]);
   });
 
-  it("marks every currency/numeric column right-aligned and nowrap, except the wrapping product name", () => {
+  it("lets every text column wrap (never clip or overlap) and keeps every numeric column on one line", () => {
     const columns = getStockManagementPrintColumns(OWNER);
-    const productColumn = columns.find((c) => c.fullLabel === "Product name");
-    expect(productColumn?.nowrap).toBe(false);
+    for (const label of ["Code / SKU", "Product", "Color", "Size"]) {
+      expect(columns.find((c) => c.label === label)?.nowrap).toBe(false);
+    }
 
     const currencyLabels = [
       "Stock",
@@ -229,26 +231,73 @@ describe("getStockManagementPrintColumns — image-first, all 15 columns kept, c
     }
   });
 
-  it("gives Color and Size their own separate, sufficiently wide fixed columns", () => {
-    const columns = getStockManagementPrintColumns(OWNER);
-    const color = columns.find((c) => c.label === "Color");
-    const size = columns.find((c) => c.label === "Size");
-    expect(color).not.toBe(size);
-    // Wide enough for "MUSTARD YELLOW" and "DUSTY PURPLE" without colliding with Size.
-    expect(parseInt(color!.width!, 10)).toBeGreaterThanOrEqual(100);
-    // Wide enough for "FREE SIZE" on its own.
-    expect(parseInt(size!.width!, 10)).toBeGreaterThanOrEqual(70);
+  // Widths in px on the A3 basis (400mm printable = 1512 CSS px). The "need" figures below are
+  // the widest real values measured in Chrome and WebKit at the 14px A3 print font, including
+  // cell padding (e.g. "0.003900" = 64px, "MUSTARD YELLOW" = 126px, "FREE SIZE" = 68px).
+  // Because the table's type scales with the page (cqi units), a column that fits on the A3
+  // basis fits on every paper size.
+  const a3Px = (label: string) => {
+    const column = getStockManagementPrintColumns(OWNER).find((c) => c.label === label)!;
+    return (parseFloat(column.width!) / 100) * A3_PRINTABLE_WIDTH_PX;
+  };
+
+  it("A3 basis: the full 15-column set adds up to exactly the 1512px printable width", () => {
+    const total = getStockManagementPrintColumns(OWNER).reduce((sum, c) => sum + a3Px(c.label), 0);
+    expect(total).toBeCloseTo(A3_PRINTABLE_WIDTH_PX, 0);
   });
 
-  it("gives Rate enough width to show the complete exchange rate", () => {
+  it("gives Color and Size their own separate columns, each wide enough for its longest value", () => {
     const columns = getStockManagementPrintColumns(OWNER);
-    const rate = columns.find((c) => c.label === "Rate");
-    expect(parseInt(rate!.width!, 10)).toBeGreaterThanOrEqual(64);
+    const colorIndex = columns.findIndex((c) => c.label === "Color");
+    expect(columns[colorIndex + 1].label).toBe("Size");
+    expect(a3Px("Color")).toBeGreaterThanOrEqual(126); // "MUSTARD YELLOW"
+    expect(a3Px("Size")).toBeGreaterThanOrEqual(68); // "FREE SIZE"
   });
 
-  it("gives every column a fixed width so the wide table lays out predictably", () => {
-    for (const column of getStockManagementPrintColumns(OWNER)) {
-      expect(column.width).toMatch(/^\d+px$/);
+  it("gives Rate enough width for all six decimals of 0.003900, with headroom", () => {
+    expect(a3Px("Rate")).toBeGreaterThanOrEqual(64 * 1.15);
+  });
+
+  it("sizes every numeric column to at least its widest measured value", () => {
+    const needs: Record<string, number> = {
+      "Sell (BHD)": 57, // "125.500"
+      "Buy (INR)": 72, // "₹125000.00"
+      "Buy (BHD)": 49,
+      "Import (BHD)": 42,
+      "Landed (BHD)": 49,
+      "Total Cost (BHD)": 64, // "1140.750"
+      "Profit (BHD)": 57,
+      "Margin (%)": 66, // "-290.00%"
+      Rate: 64, // "0.003900"
+    };
+    for (const [label, need] of Object.entries(needs)) {
+      expect(a3Px(label)).toBeGreaterThanOrEqual(need);
+    }
+  });
+
+  it("gives Product the most space and keeps Image and Stock the most compact", () => {
+    const widths = getStockManagementPrintColumns(OWNER).map((c) => ({ label: c.label, px: a3Px(c.label) }));
+    widths.sort((a, b) => a.px - b.px);
+    expect(widths[widths.length - 1].label).toBe("Product");
+    expect(widths.slice(0, 2).map((w) => w.label).sort()).toEqual(["Image", "Stock"]);
+  });
+});
+
+describe("getStockManagementPrintColumns — page-width-aware widths (Safari printing)", () => {
+  // Fixed px/mm widths were the root of the Safari failure: Safari prints on the paper chosen
+  // in its dialog, so a table sized for one exact width lost its right-hand columns (Rate).
+  it("sizes every column as a percentage of the printable width — never fixed px/mm", () => {
+    for (const role of [SALES_STAFF, INVENTORY_STAFF, ACCOUNTANT, OWNER, null]) {
+      for (const column of getStockManagementPrintColumns(role)) {
+        expect(column.width).toMatch(/^\d+(\.\d+)?%$/);
+      }
+    }
+  });
+
+  it("the visible columns total 100% of the page width for every role, so nothing overflows", () => {
+    for (const role of [SALES_STAFF, DELIVERY_COORDINATOR, INVENTORY_STAFF, ACCOUNTANT, OWNER, null]) {
+      const total = getStockManagementPrintColumns(role).reduce((sum, c) => sum + parseFloat(c.width!), 0);
+      expect(total).toBeCloseTo(100, 1);
     }
   });
 });
@@ -435,23 +484,88 @@ describe("buildStockManagementPrintRow — image cell, badge cell, and row accen
   it("pushes cost/profit/rate cells in the required print order, with the bare exchange rate last", () => {
     const row = buildStockManagementPrintRow(makeVariant(), OWNER);
     // Columns: Image, Code, Product, Color, Size, Stock, Sell = 7 base cells, then cost/profit/rate.
-    const tail = row.cells.slice(7);
-    expect(tail).toEqual([
+    expect(row.cells[6]).toBe("11.000"); // Sell (BHD)
+    expect(row.cells.slice(7)).toEqual([
       "₹1500.00", // Buy (INR)
-      "BHD 6.780", // Buy (BHD)
-      "BHD 0.500", // Import (BHD)
-      "BHD 7.280", // Landed (BHD)
-      "BHD 36.400", // Total Cost (BHD)
-      "BHD 3.720", // Profit (BHD)
+      "6.780", // Buy (BHD)
+      "0.500", // Import (BHD)
+      "7.280", // Landed (BHD)
+      "36.400", // Total Cost (BHD)
+      "3.720", // Profit (BHD)
       "33.82%", // Margin (%)
-      "0.004520", // Rate — bare number, no "1 INR = BHD" prefix, last
+      "0.004520", // Rate — bare number, last
     ]);
   });
 
-  it("financial figures are unchanged from the CSV's own numbers — only the print layout/order/labels differ", () => {
+  it("Rate regression: an exchange rate of 0.0039 prints as exactly 0.003900 — last cell, all six decimals, never rounded to 0", () => {
+    const row = buildStockManagementPrintRow(makeVariant({ latest_exchange_rate_to_bhd: 0.0039 }), OWNER);
+    const rate = row.cells[row.cells.length - 1];
+    expect(rate).toBe("0.003900");
+    expect(rate).not.toBe("0");
+    expect(String(rate).split(".")[1]).toHaveLength(6);
+  });
+
+  it("Rate keeps every recorded decimal for other realistic rates too", () => {
+    for (const [stored, printed] of [
+      [0.00452, "0.004520"],
+      [0.004567, "0.004567"],
+      [0.003, "0.003000"],
+    ] as const) {
+      const row = buildStockManagementPrintRow(makeVariant({ latest_exchange_rate_to_bhd: stored }), OWNER);
+      expect(row.cells[row.cells.length - 1]).toBe(printed);
+    }
+  });
+
+  it('never repeats a "BHD" prefix in print cells — the column headers already name the currency', () => {
+    for (const role of [SALES_STAFF, INVENTORY_STAFF, ACCOUNTANT, OWNER]) {
+      const row = buildStockManagementPrintRow(makeVariant(), role);
+      for (const cell of row.cells) {
+        if (typeof cell === "string") expect(cell).not.toMatch(/BHD/);
+      }
+    }
+  });
+
+  it("matches the spec's worked example exactly (₹1450 + import → landed 7.605, sell 13.000)", () => {
+    const row = buildStockManagementPrintRow(
+      makeVariant({
+        selling_price: 13,
+        regular_selling_price_bhd: 13,
+        stock_quantity: 1,
+        latest_supplier_unit_cost_inr: 1450,
+        latest_exchange_rate_to_bhd: 0.0039,
+        latest_additional_landed_cost_bhd: 1.95,
+      }),
+      OWNER,
+    );
+    expect(row.cells.slice(6)).toEqual([
+      "13.000",
+      "₹1450.00",
+      "5.655",
+      "1.950",
+      "7.605",
+      "7.605",
+      "5.395",
+      "41.50%",
+      "0.003900",
+    ]);
+  });
+
+  it("keeps a Total Cost of 0.000 for zero stock (existing calculation preserved)", () => {
+    const columns = getStockManagementPrintColumns(OWNER);
+    const row = buildStockManagementPrintRow(makeVariant({ stock_quantity: 0 }), OWNER);
+    expect(row.cells[columns.findIndex((c) => c.label === "Total Cost (BHD)")]).toBe("0.000");
+  });
+
+  it('shows "—" in every cost/profit/rate cell when the variant has no recorded buying cost', () => {
+    const variant = makeVariant({ latest_supplier_unit_cost_inr: null, latest_exchange_rate_to_bhd: null });
+    const row = buildStockManagementPrintRow(variant, OWNER);
+    expect(row.cells.slice(7)).toEqual(["—", "—", "—", "—", "—", "—", "—", "—"]);
+  });
+
+  it("financial figures are unchanged from the CSV's own numbers — only the print layout/order/format differ", () => {
     const printRow = buildStockManagementPrintRow(makeVariant(), OWNER);
     const csvRow = buildStockManagementCsvRow(makeVariant(), OWNER);
-    // CSV: ..., Buying INR, Exchange rate (verbose), Buy BHD, Import BHD, Final BHD, Total, Profit, Margin
+    // CSV (unchanged): ..., Buying INR, Exchange rate (verbose), Buy BHD, Import, Final, Total, Profit, Margin
     expect(csvRow.slice(-8)).toEqual([
       "₹1500.00",
       "1 INR = BHD 0.004520",
@@ -462,16 +576,13 @@ describe("buildStockManagementPrintRow — image cell, badge cell, and row accen
       "BHD 3.720",
       "33.82%",
     ]);
-    // Same underlying numbers appear in the print row too, just reordered and the rate
-    // reformatted compactly.
+    // Every CSV figure appears in the print row with the same precision, only without the
+    // "BHD " / "1 INR = BHD " labels.
     const printTail = printRow.cells.slice(7);
-    expect(printTail).toContain("₹1500.00");
-    expect(printTail).toContain("BHD 6.780");
-    expect(printTail).toContain("BHD 7.280");
-    expect(printTail).toContain("BHD 36.400");
-    expect(printTail).toContain("BHD 3.720");
-    expect(printTail).toContain("33.82%");
-    expect(printTail).toContain("0.004520");
+    for (const csvValue of csvRow.slice(-8)) {
+      const bare = String(csvValue).replace("1 INR = BHD ", "").replace("BHD ", "");
+      expect(printTail).toContain(bare);
+    }
   });
 
   it("never exposes the Rate column/cell to unauthorized roles", () => {

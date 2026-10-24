@@ -3,6 +3,12 @@ export function formatBhd(value: number | string | null | undefined) {
   return `BHD ${amount.toFixed(3)}`;
 }
 
+/** Same 3-decimal BHD precision as formatBhd, without the "BHD " prefix — for dense report
+ *  tables whose column header already names the currency (e.g. "Sell (BHD)"). */
+export function formatBhdAmount(value: number | string | null | undefined) {
+  return Number(value ?? 0).toFixed(3);
+}
+
 /** Product Catalog's "Price" column: always the customer-facing selling price, never a cost
  *  figure. When a product's active variants all share one price, show it plainly; when they
  *  differ, show "From BHD X.XXX" using the lowest active price — never the highest, and never

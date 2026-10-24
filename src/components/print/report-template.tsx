@@ -74,8 +74,10 @@ function ReportCellContent({ cell }: { cell: ReportCell }) {
     return (
       <span className="report-thumb">
         {cell.url ? (
+          // Plain <img>, explicitly eager + synchronous decode: a print snapshot (Safari in
+          // particular) can't wait on lazy loading, so a deferred image prints blank.
           // eslint-disable-next-line @next/next/no-img-element -- print output, not a Next <Image> route
-          <img alt={cell.alt} className="report-thumb-img" src={cell.url} />
+          <img alt={cell.alt} className="report-thumb-img" decoding="sync" loading="eager" src={cell.url} />
         ) : (
           <span className="report-thumb-placeholder" aria-hidden />
         )}
@@ -117,6 +119,11 @@ type ReportTemplateProps = {
   /** Smaller font/padding/thumbnail for reports with many columns — keeps a wide table
    *  readable without cutting any column. */
   compact?: boolean;
+  /** Where the "N rows" summary prints. "footer" (default) after the table; "header" under the
+   *  generated date instead, with no trailing footer — for long multi-page reports, where a
+   *  footer can spill alone onto an otherwise empty final page (browsers don't reliably honor
+   *  break-before: avoid after a table). */
+  rowCountPlacement?: "footer" | "header";
 };
 
 /** Shared A4/A3 print layout for report exports (Product Catalog, Stock Management) — reuses
@@ -132,6 +139,7 @@ export function ReportTemplate({
   emptyMessage,
   pageSize,
   compact = false,
+  rowCountPlacement = "footer",
 }: ReportTemplateProps) {
   const pageSizeClass =
     pageSize === "a3-landscape" ? "print-a3-landscape" : pageSize === "a4-landscape" ? "print-landscape" : "";
@@ -139,6 +147,7 @@ export function ReportTemplate({
     .filter(Boolean)
     .join(" ");
   const hasFixedWidths = columns.some((column) => column.width);
+  const rowCountLabel = `${rows.length} row${rows.length !== 1 ? "s" : ""}`;
 
   return (
     <section className={sectionClassName}>
@@ -147,6 +156,9 @@ export function ReportTemplate({
         <div className="text-right">
           <p className="text-xl font-semibold text-musiva-mauve">{title}</p>
           <p className="mt-0.5 text-xs text-musiva-muted">Generated {formatDateTime(generatedAt)}</p>
+          {rowCountPlacement === "header" && (
+            <p className="mt-0.5 text-xs text-musiva-muted">{rowCountLabel}</p>
+          )}
         </div>
       </header>
 
@@ -211,9 +223,11 @@ export function ReportTemplate({
         </table>
       )}
 
-      <footer className="mt-5 border-t border-musiva-border pt-3 text-center text-xs text-musiva-muted">
-        {rows.length} row{rows.length !== 1 ? "s" : ""} · Moosiva Internal Operations System
-      </footer>
+      {rowCountPlacement === "footer" && (
+        <footer className="mt-5 border-t border-musiva-border pt-3 text-center text-xs text-musiva-muted">
+          {rowCountLabel} · Moosiva Internal Operations System
+        </footer>
+      )}
     </section>
   );
 }

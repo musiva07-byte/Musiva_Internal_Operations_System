@@ -79,3 +79,114 @@ describe("Print Inventory page — CSS backs the A3 landscape layout", () => {
     expect(cssSource).toContain(".report-compact .report-thumb {");
   });
 });
+
+describe("Print Inventory page — Safari-safe print setup", () => {
+  const cssSource = readFileSync(join(__dirname, "..", "..", "globals.css"), "utf-8");
+  const printBlock = cssSource.slice(cssSource.indexOf("@media print {"));
+
+  it("does not rely solely on the named @page: renders its own unnamed A3-landscape @page", () => {
+    expect(source).toMatch(/STOCK_REPORT_PAGE_CSS = `@media print \{ @page \{ size: A3 landscape; margin: 10mm; \} \}`/);
+    expect(source).toContain("<style>{STOCK_REPORT_PAGE_CSS}</style>");
+  });
+
+  it("keeps the A3 @page rule out of globals.css's unnamed default, so invoices/labels stay A4 portrait", () => {
+    expect(printBlock).toMatch(/@page\s*\{\s*size:\s*A4 portrait/);
+    expect(printBlock).not.toMatch(/@page\s*\{\s*size:\s*A3/);
+  });
+
+  it("prints fluid — 100% of the printable area, never the fixed 420mm desktop box", () => {
+    expect(printBlock).toMatch(/\.print-a3-landscape\.print-page\s*\{\s*width:\s*auto;\s*min-height:\s*0;/);
+    expect(printBlock).not.toMatch(/\.print-a3-landscape\.print-page\s*\{\s*width:\s*420mm/);
+    expect(printBlock).toMatch(/\.print-a3-landscape \.print-table\s*\{\s*width:\s*100%;/);
+  });
+
+  it("resets the app-wide html/body overflow clipping for this report only (scoped via :has)", () => {
+    expect(printBlock).toMatch(
+      /html:has\(\.print-a3-landscape\),\s*html:has\(\.print-a3-landscape\) body\s*\{[^}]*overflow:\s*visible/,
+    );
+  });
+
+  it("removes the screen wrapper's min-height/padding in print (Safari blank-last-page source)", () => {
+    expect(source).toContain('className="report-print-root');
+    expect(printBlock).toMatch(/\.report-print-root\s*\{\s*min-height:\s*0;\s*padding:\s*0;/);
+  });
+
+  it("repeats the table header and avoids splitting rows, with legacy page-break-* for WebKit", () => {
+    expect(printBlock).toMatch(/\.print-table thead\s*\{\s*display:\s*table-header-group;/);
+    expect(printBlock).toMatch(/\.print-a3-landscape \.print-table tr\s*\{\s*page-break-inside:\s*avoid;\s*break-inside:\s*avoid;/);
+  });
+
+  it("keeps the row count in the header so no footer can orphan onto a blank last page", () => {
+    expect(source).toContain('rowCountPlacement="header"');
+  });
+
+  it("keeps the missing-image placeholder visible in Safari print", () => {
+    expect(printBlock).toMatch(/\.print-a3-landscape \.report-thumb-placeholder\s*\{[^}]*-webkit-print-color-adjust:\s*exact/);
+  });
+
+  it("uses no transforms or zoom hacks to force the table to fit", () => {
+    expect(printBlock).not.toMatch(/\btransform\s*:|\bzoom\s*:/);
+  });
+
+  it("waits for product images before opening the print dialog", () => {
+    expect(source).toMatch(/<AutoPrint enabled=\{!exportResult\.error\} waitForAssets \/>/);
+  });
+
+  it("shows the paper-size hint, including the A4 guidance, without removing columns", () => {
+    expect(source).toContain("Recommended: A3 • Landscape • Fit to page");
+    expect(source).toContain("Only A4 paper available?");
+    expect(source).toContain("all 15");
+    expect(source).toContain("hint={<PrintSetupHint />}");
+  });
+});
+
+describe("Print Inventory page — compact columns never clip", () => {
+  const cssSource = readFileSync(join(__dirname, "..", "..", "globals.css"), "utf-8");
+
+  it("text cells wrap long words instead of overflowing into the next column", () => {
+    expect(cssSource).toMatch(/\.report-compact \.print-table td\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  });
+
+  it("the thumbnail is a square that scales with the table, never stretched or wider than its cell", () => {
+    expect(cssSource).toMatch(
+      /\.report-compact \.report-thumb\s*\{\s*width:\s*2\.646cqi;\s*max-width:\s*100%;\s*height:\s*auto;\s*aspect-ratio:\s*1 \/ 1;/,
+    );
+    expect(cssSource).toMatch(/\.report-thumb-img\s*\{[^}]*object-fit:\s*cover/);
+  });
+
+  it("never hides overflow as a workaround — no hidden overflow or ellipsis on table cells", () => {
+    const tdRule = /\.report-compact \.print-table td\s*\{([^}]*)\}/.exec(cssSource)![1];
+    expect(tdRule).not.toMatch(/overflow:\s*hidden/);
+    expect(tdRule).not.toMatch(/text-overflow/);
+  });
+});
+
+describe("Print Inventory page — type scales with the page (fits every paper, Safari-safe)", () => {
+  const cssSource = readFileSync(join(__dirname, "..", "..", "globals.css"), "utf-8");
+
+  it("makes the report sheet the size container for the table's type", () => {
+    expect(cssSource).toMatch(/\.report-compact\s*\{\s*container-type:\s*inline-size;/);
+  });
+
+  it("sizes table text, headers and padding in container units calibrated to 14px / 12px on the A3 basis", () => {
+    expect(cssSource).toMatch(/\.report-compact \.print-table\s*\{\s*font-size:\s*0\.926cqi;/);
+    expect(cssSource).toMatch(/\.report-compact \.print-table th\s*\{\s*font-size:\s*0\.794cqi;/);
+    expect(cssSource).toMatch(/\.report-compact \.print-table td\s*\{\s*padding:\s*0\.265cqi;/);
+    // 0.926% of the 1512px A3 printable width ≈ 14px; 0.794% ≈ 12px.
+    expect(0.00926 * 1512).toBeCloseTo(14, 0);
+    expect(0.00794 * 1512).toBeCloseTo(12, 0);
+  });
+
+  it("keeps the header inside the sheet: brand and title shrink/wrap instead of overflowing", () => {
+    expect(cssSource).toMatch(/\.report-compact \.print-header > \*\s*\{\s*min-width:\s*0;/);
+  });
+
+  it("does not force breaks after the header (avoid-breaks there can leave page 1 half-empty)", () => {
+    expect(cssSource).not.toMatch(/\.print-a3-landscape \.print-header\s*\{[^}]*break-after/);
+  });
+
+  it("tells staff how to turn off Safari's own headers and footers (the site cannot)", () => {
+    expect(source).toContain("click Show Details and turn off");
+    expect(source).toContain("Print headers and");
+  });
+});

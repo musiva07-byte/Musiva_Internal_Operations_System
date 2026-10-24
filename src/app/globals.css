@@ -289,37 +289,71 @@ body {
   padding: 8mm;
 }
 
-/* Compact report mode (Stock Management): still smaller than the default .print-table, but
-   sized up from the original 9.5px/8.5px — tightening column widths (removing the verbose
-   Stock badge text, moving Rate out of the cost block) freed enough width to afford a more
-   readable font instead of relying on shrinking text to avoid overflow. */
+/* Compact report mode (Stock Management) — type scales WITH the report's width.
+   Column widths are percentages of the sheet (stock-management-report.ts), and the table's
+   type and padding are sized in container query units (cqi = 1% of the sheet's width), so the
+   whole table is one proportional unit: if it fits on A3 it fits on any paper, in any engine,
+   with nothing wrapping differently, overflowing, or clipped. Values are calibrated on the A3
+   basis — 1512px of printable width — where 0.926cqi = 14px body text and 0.794cqi = 12px
+   headers (~10.5pt / 9pt on paper).
+   This also neutralizes Safari's print shrink: WebKit lays a printed page out at 1.25x the
+   printable width, then scales it to 80% (PrintContext's printingMinimumShrinkFactor). Fixed
+   px text therefore printed ~20% smaller in Safari than in Chrome; cqi text grows 1.25x with
+   that wider layout, so after the 0.8 scale it prints the same size as in Chrome.
+   Container units need Safari 16 / Chrome 105 (2022+); an older browser ignores these
+   declarations and keeps the base .print-table sizes. No transform/zoom is involved — this is
+   ordinary layout. */
+.report-compact {
+  container-type: inline-size;
+}
+
 .report-compact .print-table {
-  font-size: 11.5px;
+  font-size: 0.926cqi;
+  line-height: 1.3;
 }
 
 .report-compact .print-table th {
-  font-size: 10px;
-  padding: 5px 6px;
+  font-size: 0.794cqi;
+  line-height: 1.25;
+  padding: 0.331cqi 0.265cqi;
+  /* Headers that wrap onto two lines stay aligned along the bottom rule. */
+  vertical-align: bottom;
 }
 
 .report-compact .print-table td {
-  padding: 4px 6px;
-  /* Safety net only — column widths are sized for realistic real-world values (see
-     stock-management-report.ts) so this should rarely actually trigger. An unusually long
-     value degrades to a clean ellipsis instead of visually overlapping the next column. Only
-     affects non-wrapping cells in practice — the Product column's own white-space: normal
-     wraps instead of truncating. */
-  overflow: hidden;
-  text-overflow: ellipsis;
+  padding: 0.265cqi;
+  font-variant-numeric: tabular-nums;
+  /* Text columns (Code, Product, Color, Size) wrap — including a single long word — so a long
+     value can never run into the next column. Numeric columns never wrap; their widths are
+     sized from measured content so they always fit (nothing is hidden or ellipsized — a
+     truncated "0.003900" printing as "0…" was a real failure). */
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
 }
 
+/* 40px square on the A3 basis (2.646cqi), scaling with the table like the text does; never
+   wider than its cell. aspect-ratio keeps it square; object-fit on the img keeps the photo
+   from stretching. */
 .report-compact .report-thumb {
-  width: 42px;
-  height: 42px;
+  width: 2.646cqi;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
 }
 
 .report-compact .print-header {
   padding-bottom: 10px;
+}
+
+/* Brand left, title/date right — both shrink and wrap inside the sheet rather than pushing the
+   title past the right edge. */
+.report-compact .print-header > * {
+  min-width: 0;
+}
+
+.report-compact .print-header > :last-child {
+  flex-shrink: 1;
+  overflow-wrap: anywhere;
 }
 
 /* Screen print-preview safety net: a wide A3 report can exceed a laptop viewport — scope the
@@ -414,9 +448,62 @@ body {
     min-height: 210mm;
   }
 
+  /* Stock Management (the only A3 report) prints FLUID: the sheet fills exactly the printable
+     area of whatever paper staff choose in the print dialog. It used to be a fixed 420mm box,
+     which Safari — printing on its own chosen paper and margins rather than the CSS @page
+     size — cut off on the right, losing the Rate/Margin columns. Percentage column widths
+     (stock-management-report.ts) then divide that real width between all 15 columns.
+     min-height is dropped too: a forced 297mm minimum pushed short reports onto a blank
+     second page. */
   .print-a3-landscape.print-page {
-    width: 420mm;
-    min-height: 297mm;
+    width: auto;
+    min-height: 0;
+  }
+
+  /* Page margins come from @page (10mm); extra sheet padding would only shrink the table. */
+  .print-a3-landscape.print-sheet {
+    padding: 0;
+  }
+
+  /* The app-wide html/body overflow-x: hidden (a screen-layout guard) would clip anything
+     past the page edge instead of letting it print — and body's 100vh min-height can add a
+     trailing blank page in Safari. Reset both, scoped via :has() so invoices, labels, and the
+     Product Catalog report keep their existing print behavior untouched. */
+  html:has(.print-a3-landscape),
+  html:has(.print-a3-landscape) body {
+    overflow: visible;
+    width: auto;
+    height: auto;
+    min-height: 0;
+  }
+
+  /* The page's <main> wrapper: its screen min-height (100vh) and vertical padding would
+     otherwise add a blank last page, and its tinted background wastes ink. */
+  .report-print-root {
+    min-height: 0;
+    padding: 0;
+    background: none;
+  }
+
+  .print-a3-landscape .print-table {
+    width: 100%;
+  }
+
+  /* Legacy page-break-* alongside the modern break-* property: older WebKit (Safari) honors
+     the former more reliably on table rows. Rows are the ONLY thing kept unbroken — no
+     break-after/before rules elsewhere, so the engine paginates naturally and fills each page
+     (an unsatisfiable avoid-break can push content down and leave a gap on page 1). */
+  .print-a3-landscape .print-table tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Safari omits background colors/images in print unless told to keep them — keeps the
+     missing-image placeholder visible instead of printing as an empty box. */
+  .print-a3-landscape .report-thumb,
+  .print-a3-landscape .report-thumb-placeholder {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   /* The screen-only horizontal-scroll safety net (see .print-preview-scroll above) must not

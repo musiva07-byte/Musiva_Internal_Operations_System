@@ -32,6 +32,37 @@ const PRODUCT_STATUS_LABELS: Record<string, string> = {
   all: "All products",
 };
 
+/**
+ * Page-scoped print setup for this report only. globals.css gives every printed document an
+ * unnamed `@page { size: A4 portrait }` default and opts this report into A3 landscape through
+ * a NAMED page (`page: report-landscape-a3`). A browser that doesn't apply named pages would
+ * fall back to A4 portrait — so this unnamed rule, rendered later in the document than
+ * globals.css (and so winning the cascade), sets A3 landscape for this route as well. It
+ * lives in the page rather than globals.css so it is removed from the document when staff
+ * navigate away and can never leak into invoice or label printing.
+ *
+ * This is only a preference: Safari prints on the paper chosen in its print dialog, which is
+ * why the report layout itself is fluid (see globals.css, .print-a3-landscape) and fits any
+ * paper rather than relying on this rule.
+ */
+const STOCK_REPORT_PAGE_CSS = `@media print { @page { size: A3 landscape; margin: 10mm; } }`;
+
+function PrintSetupHint() {
+  return (
+    <>
+      <p className="font-medium text-musiva-ink">Recommended: A3 • Landscape • Fit to page</p>
+      <p className="mt-0.5">
+        Only A4 paper available? Choose Landscape and a smaller scale (or Fit to page) — all 15
+        columns still print, just smaller. A3 landscape is recommended for readability.
+      </p>
+      <p className="mt-0.5">
+        Safari: in the Print dialog, click Show Details and turn off &ldquo;Print headers and
+        footers&rdquo; to remove the page title, web address and date Safari adds.
+      </p>
+    </>
+  );
+}
+
 export default async function PrintInventoryPage({ searchParams }: PrintInventoryPageProps) {
   const params = await searchParams;
   const q = getParam(params, "q") ?? "";
@@ -64,9 +95,10 @@ export default async function PrintInventoryPage({ searchParams }: PrintInventor
   const rows = exportResult.rows.map((variant) => buildStockManagementPrintRow(variant, role));
 
   return (
-    <main className="min-h-screen bg-musiva-ivory py-6">
-      <ReportPrintToolbar backHref={backHref} />
-      <AutoPrint enabled={!exportResult.error} />
+    <main className="report-print-root min-h-screen bg-musiva-ivory py-6">
+      <style>{STOCK_REPORT_PAGE_CSS}</style>
+      <ReportPrintToolbar backHref={backHref} hint={<PrintSetupHint />} />
+      <AutoPrint enabled={!exportResult.error} waitForAssets />
       {exportResult.error ? (
         <section className="print-page print-sheet">
           <p className="text-center text-sm text-destructive">{exportResult.error}</p>
@@ -80,6 +112,7 @@ export default async function PrintInventoryPage({ searchParams }: PrintInventor
             filters={filters}
             generatedAt={new Date()}
             pageSize="a3-landscape"
+            rowCountPlacement="header"
             rows={rows}
             title="Stock Management Report"
             truncatedNotice={

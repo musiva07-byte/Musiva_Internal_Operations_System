@@ -30,6 +30,16 @@ describe("ReportTemplate — stock-number cell (compact Stock column)", () => {
     expect(source).not.toMatch(/stock-number[^}]*report-badge/);
   });
 
+  it("thumbnails load eagerly and decode synchronously so a print snapshot never catches a blank image", () => {
+    expect(source).toMatch(/<img[^>]*decoding="sync"[^>]*loading="eager"/);
+  });
+
+  it("row count can print in the header instead of a trailing footer (opt-in, footer stays the default)", () => {
+    expect(source).toContain('rowCountPlacement = "footer"');
+    expect(source).toMatch(/rowCountPlacement === "header" && \(/);
+    expect(source).toMatch(/rowCountPlacement === "footer" && \(\s*<footer/);
+  });
+
   it("stock-number cells are a distinct branch from the badge-cell branch (badge wording kept for other reports)", () => {
     const badgeIdx = source.indexOf("isBadgeCell(cell)");
     const stockIdx = source.indexOf("isStockNumberCell(cell)");
