@@ -11,26 +11,15 @@ import { join } from "node:path";
 const autoPrintSource = readFileSync(join(__dirname, "auto-print.tsx"), "utf-8");
 const toolbarSource = readFileSync(join(__dirname, "report-print-toolbar.tsx"), "utf-8");
 
-describe("AutoPrint — waits for images before printing (Safari prints blank images otherwise)", () => {
-  it("keeps the original quick-print behavior as the default", () => {
-    expect(autoPrintSource).toContain("waitForAssets = false");
+describe("AutoPrint — opens the native print dialog once the report renders", () => {
+  it("prints shortly after render, with no image-loading dependency (neither report waits on images)", () => {
     expect(autoPrintSource).toMatch(/setTimeout\(\(\) => window\.print\(\), 150\)/);
+    expect(autoPrintSource).not.toContain("document.images");
+    expect(autoPrintSource).not.toContain("waitForAssets");
   });
 
-  it("waits for every image to decode and for fonts, when opted in", () => {
-    expect(autoPrintSource).toContain("Array.from(document.images)");
-    expect(autoPrintSource).toContain("image.decode()");
-    expect(autoPrintSource).toContain("document.fonts?.ready");
-  });
-
-  it("never lets a broken or slow image block printing", () => {
-    expect(autoPrintSource).toContain(".catch(() => undefined)");
-    expect(autoPrintSource).toMatch(/Promise\.race\(/);
-    expect(autoPrintSource).toContain("maxWaitMs = 5000");
-  });
-
-  it("does not print after the page has been left", () => {
-    expect(autoPrintSource).toMatch(/if \(!cancelled\) window\.print\(\)/);
+  it("can be disabled (e.g. when the report failed to load)", () => {
+    expect(autoPrintSource).toMatch(/if \(!enabled\) return;/);
   });
 });
 

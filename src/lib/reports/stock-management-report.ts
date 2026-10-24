@@ -53,26 +53,28 @@ const PROFIT_COLUMNS = ["Profit per piece BHD", "Margin %"];
 // and are never clipped or ellipsized — their widths are sized from measured content instead.
 //
 // WEIGHTS ARE PIXELS ON THE A3 BASIS: A3 landscape is 420mm; minus 2 × 10mm @page margins
-// leaves 400mm = 1512 CSS px of printable width, and the full 15-column weights below sum to
-// exactly 1512. Each numeric column is its widest measured value at the 14px print font
-// (headers wrap to two lines where needed) plus headroom — Rate gets ~20% over "0.003900" so
-// it can never be clipped. Product takes the space the numbers don't need, so long names fit
-// on one line instead of three, keeping rows short and pages full. The percentages then
-// apply to whatever paper is actually chosen (Safari prints on the paper picked in its dialog).
+// leaves 400mm = 1512 CSS px of printable width, and the full 14-column weights below sum to
+// exactly 1512. Each numeric column is its widest measured value at the 14px print font, or
+// its widest header word (headers wrap to two lines), plus a little headroom — Rate gets ~20%
+// over "0.003900" so it can never be clipped. Product takes the space the numbers don't need,
+// so long names fit on one line, keeping rows short and pages full. The percentages then apply
+// to whatever paper is actually chosen (Safari prints on the paper picked in its dialog).
+//
+// There is deliberately no product-image column in print (client decision): images added row
+// height and a loading dependency without helping a stock count on paper. The CSV export keeps
+// its "Image URL" column unchanged.
 type WeightedColumn = Omit<ReportColumn, "width"> & { weight: number };
-
-const PRINT_IMAGE_COLUMN: WeightedColumn = { label: "Image", fullLabel: "Product image", weight: 50 };
 
 const PRINT_TEXT_COLUMNS: WeightedColumn[] = [
   { label: "Code / SKU", fullLabel: "Product code / SKU", nowrap: false, weight: 88 },
-  { label: "Product", fullLabel: "Product name", nowrap: false, weight: 468 },
-  // "MUSTARD YELLOW" / "DUSTY PURPLE" / "BOTTLE GREEN" on one line; wraps inside its own cell
-  // (never overlaps Size) on narrower paper.
-  { label: "Color", nowrap: false, weight: 132 },
+  { label: "Product", fullLabel: "Product name", nowrap: false, weight: 514 },
+  // Comfortably wider than "MUSTARD YELLOW" / "DUSTY PURPLE" / "BOTTLE GREEN", so color names
+  // stay on one line and well clear of Size; still wraps inside its own cell if ever needed.
+  { label: "Color", nowrap: false, weight: 160 },
   // Always its own cell — "FREE SIZE", "XXL", "3XL", numeric sizes.
   { label: "Size", nowrap: false, weight: 74 },
   { label: "Stock", fullLabel: "Stock status", align: "right", weight: 54 },
-  { label: "Sell (BHD)", fullLabel: "Selling price BHD", align: "right", weight: 66 },
+  { label: "Sell (BHD)", fullLabel: "Selling price BHD", align: "right", weight: 62 },
 ];
 
 // Cost columns in the required print order: Buy (INR) → Buy (BHD) → Import (BHD) →
@@ -80,14 +82,14 @@ const PRINT_TEXT_COLUMNS: WeightedColumn[] = [
 // profit/margin (see PRINT_RATE_COLUMN).
 const PRINT_COST_COLUMNS: WeightedColumn[] = [
   { label: "Buy (INR)", fullLabel: "Buying price India INR", align: "right", weight: 80 },
-  { label: "Buy (BHD)", fullLabel: "Buy Bahrain per piece BHD", align: "right", weight: 66 },
-  { label: "Import (BHD)", fullLabel: "Import cost per piece BHD", align: "right", weight: 66 },
-  { label: "Landed (BHD)", fullLabel: "Final cost per piece BHD", align: "right", weight: 70 },
+  { label: "Buy (BHD)", fullLabel: "Buy Bahrain per piece BHD", align: "right", weight: 60 },
+  { label: "Import (BHD)", fullLabel: "Import cost per piece BHD", align: "right", weight: 62 },
+  { label: "Landed (BHD)", fullLabel: "Final cost per piece BHD", align: "right", weight: 64 },
   { label: "Total Cost (BHD)", fullLabel: "Total final cost BHD", align: "right", weight: 84 },
 ];
 
 const PRINT_PROFIT_COLUMNS: WeightedColumn[] = [
-  { label: "Profit (BHD)", fullLabel: "Profit per piece BHD", align: "right", weight: 66 },
+  { label: "Profit (BHD)", fullLabel: "Profit per piece BHD", align: "right", weight: 62 },
   { label: "Margin (%)", fullLabel: "Margin %", align: "right", weight: 70 },
 ];
 
@@ -101,7 +103,7 @@ const PRINT_RATE_COLUMN: WeightedColumn = {
 };
 
 /** A3 landscape printable width in CSS px: (420mm − 2 × 10mm margins) = 400mm at 96 px/inch.
- *  The full 15-column weight set sums to exactly this. */
+ *  The full 14-column weight set sums to exactly this. */
 export const A3_PRINTABLE_WIDTH_PX = 1512;
 
 /** Normalizes weights so the visible columns always total exactly 100% of the printable
@@ -226,11 +228,11 @@ export function getStockManagementCsvColumns(role: StaffRole | null | undefined)
   return columns;
 }
 
-/** Column layout for the print/PDF view, in the required order with Rate last. Every column
- *  the CSV exposes is kept; only the printed label is shortened. Widths are percentages of the
- *  printable page width (see withPercentWidths for why). */
+/** Column layout for the print/PDF view, in the required order with Rate last. Every CSV
+ *  column is kept except "Image URL" (print has no image column); only the printed label is
+ *  shortened. Widths are percentages of the printable page width (see withPercentWidths). */
 export function getStockManagementPrintColumns(role: StaffRole | null | undefined): ReportColumn[] {
-  const columns: WeightedColumn[] = [PRINT_IMAGE_COLUMN, ...PRINT_TEXT_COLUMNS];
+  const columns: WeightedColumn[] = [...PRINT_TEXT_COLUMNS];
   if (canViewBuyingCost(role)) columns.push(...PRINT_COST_COLUMNS);
   if (canViewCostData(role)) columns.push(...PRINT_PROFIT_COLUMNS);
   // Same canViewBuyingCost gate as the other cost columns — it only prints in a different
@@ -271,7 +273,7 @@ export function buildStockManagementCsvRow(
   return row;
 }
 
-/** One print-view row for `variant` — an image cell, a bare colored stock NUMBER (no
+/** One print-view row for `variant` — no image cell, a bare colored stock NUMBER (no
  *  "units"/"Low Stock" text or pill — see ReportStockNumberCell), compact numbers with no
  *  repeated "BHD" prefix, and Rate last. Cell order matches getStockManagementPrintColumns. */
 export function buildStockManagementPrintRow(
@@ -280,7 +282,6 @@ export function buildStockManagementPrintRow(
 ): ReportRow {
   const data = buildStockManagementRowData(variant, role);
   const cells: ReportCell[] = [
-    { kind: "image", url: data.imageUrl, alt: `${data.productName} — ${data.color}` },
     data.productSku,
     data.productName,
     data.color,

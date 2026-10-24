@@ -74,9 +74,10 @@ describe("Print Inventory page — CSS backs the A3 landscape layout", () => {
     expect(cssSource).toMatch(/\.print-a3-landscape\.print-page\s*\{[^}]*width:\s*420mm/);
   });
 
-  it("defines the compact report mode (smaller font/padding/thumbnail)", () => {
+  it("defines the compact report mode, with no thumbnail rules (print has no product images)", () => {
     expect(cssSource).toContain(".report-compact .print-table {");
-    expect(cssSource).toContain(".report-compact .report-thumb {");
+    expect(cssSource).not.toContain(".report-compact .report-thumb");
+    expect(cssSource).not.toContain(".print-a3-landscape .report-thumb");
   });
 });
 
@@ -120,22 +121,19 @@ describe("Print Inventory page — Safari-safe print setup", () => {
     expect(source).toContain('rowCountPlacement="header"');
   });
 
-  it("keeps the missing-image placeholder visible in Safari print", () => {
-    expect(printBlock).toMatch(/\.print-a3-landscape \.report-thumb-placeholder\s*\{[^}]*-webkit-print-color-adjust:\s*exact/);
-  });
-
   it("uses no transforms or zoom hacks to force the table to fit", () => {
     expect(printBlock).not.toMatch(/\btransform\s*:|\bzoom\s*:/);
   });
 
-  it("waits for product images before opening the print dialog", () => {
-    expect(source).toMatch(/<AutoPrint enabled=\{!exportResult\.error\} waitForAssets \/>/);
+  it("has no image-loading dependency: the default auto-print, nothing waiting on product images", () => {
+    expect(source).toMatch(/<AutoPrint enabled=\{!exportResult\.error\} \/>/);
+    expect(source).not.toContain("waitForAssets");
   });
 
   it("shows the paper-size hint, including the A4 guidance, without removing columns", () => {
     expect(source).toContain("Recommended: A3 • Landscape • Fit to page");
     expect(source).toContain("Only A4 paper available?");
-    expect(source).toContain("all 15");
+    expect(source).toContain("all 14");
     expect(source).toContain("hint={<PrintSetupHint />}");
   });
 });
@@ -147,10 +145,7 @@ describe("Print Inventory page — compact columns never clip", () => {
     expect(cssSource).toMatch(/\.report-compact \.print-table td\s*\{[^}]*overflow-wrap:\s*anywhere/);
   });
 
-  it("the thumbnail is a square that scales with the table, never stretched or wider than its cell", () => {
-    expect(cssSource).toMatch(
-      /\.report-compact \.report-thumb\s*\{\s*width:\s*2\.646cqi;\s*max-width:\s*100%;\s*height:\s*auto;\s*aspect-ratio:\s*1 \/ 1;/,
-    );
+  it("leaves the shared thumbnail styles in place for the Product Catalog report", () => {
     expect(cssSource).toMatch(/\.report-thumb-img\s*\{[^}]*object-fit:\s*cover/);
   });
 

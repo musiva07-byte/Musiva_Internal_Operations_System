@@ -219,7 +219,7 @@ body {
 }
 
 /* Stock Management print report — compact Stock column: a bare number, no "unit(s)" text and
-   no pill/badge chrome (that would waste width in a 15-column table). Colored by quantity
+   no pill/badge chrome (that would waste width in a 14-column table). Colored by quantity
    tier per spec: 0 = red/bold, 1-2 = normal dark, 3+ = green/bold. print-color-adjust keeps
    the text color intact in print/PDF even when a browser's print settings default to
    grayscale-friendly simplification — this is text color only, never a background fill, so
@@ -278,7 +278,7 @@ body {
   min-height: 210mm;
 }
 
-/* Stock Management keeps all 15 columns (including the full cost/profit breakdown), which
+/* Stock Management keeps all 14 columns (including the full cost/profit breakdown), which
    doesn't fit cleanly in A4 landscape without cramming — A3 landscape gives it room. */
 .print-a3-landscape.print-page {
   width: 420mm;
@@ -329,16 +329,6 @@ body {
      truncated "0.003900" printing as "0…" was a real failure). */
   overflow-wrap: anywhere;
   word-wrap: break-word;
-}
-
-/* 40px square on the A3 basis (2.646cqi), scaling with the table like the text does; never
-   wider than its cell. aspect-ratio keeps it square; object-fit on the img keeps the photo
-   from stretching. */
-.report-compact .report-thumb {
-  width: 2.646cqi;
-  max-width: 100%;
-  height: auto;
-  aspect-ratio: 1 / 1;
 }
 
 .report-compact .print-header {
@@ -452,7 +442,7 @@ body {
      area of whatever paper staff choose in the print dialog. It used to be a fixed 420mm box,
      which Safari — printing on its own chosen paper and margins rather than the CSS @page
      size — cut off on the right, losing the Rate/Margin columns. Percentage column widths
-     (stock-management-report.ts) then divide that real width between all 15 columns.
+     (stock-management-report.ts) then divide that real width between all 14 columns.
      min-height is dropped too: a forced 297mm minimum pushed short reports onto a blank
      second page. */
   .print-a3-landscape.print-page {
@@ -498,13 +488,6 @@ body {
     break-inside: avoid;
   }
 
-  /* Safari omits background colors/images in print unless told to keep them — keeps the
-     missing-image placeholder visible instead of printing as an empty box. */
-  .print-a3-landscape .report-thumb,
-  .print-a3-landscape .report-thumb-placeholder {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
 
   /* The screen-only horizontal-scroll safety net (see .print-preview-scroll above) must not
      clip or scroll the actual printed/PDF output. */
@@ -545,7 +528,7 @@ body {
     page: report-landscape;
   }
 
-  /* Stock Management's full 15-column report (all cost/profit columns kept) needs A3
+  /* Stock Management's full 14-column report (all cost/profit columns kept) needs A3
      landscape to stay readable without removing anything — see .print-a3-landscape.print-page
      above for the matching page box size. */
   @page report-landscape-a3 {

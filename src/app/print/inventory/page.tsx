@@ -52,7 +52,7 @@ function PrintSetupHint() {
     <>
       <p className="font-medium text-musiva-ink">Recommended: A3 • Landscape • Fit to page</p>
       <p className="mt-0.5">
-        Only A4 paper available? Choose Landscape and a smaller scale (or Fit to page) — all 15
+        Only A4 paper available? Choose Landscape and a smaller scale (or Fit to page) — all 14
         columns still print, just smaller. A3 landscape is recommended for readability.
       </p>
       <p className="mt-0.5">
@@ -98,7 +98,7 @@ export default async function PrintInventoryPage({ searchParams }: PrintInventor
     <main className="report-print-root min-h-screen bg-musiva-ivory py-6">
       <style>{STOCK_REPORT_PAGE_CSS}</style>
       <ReportPrintToolbar backHref={backHref} hint={<PrintSetupHint />} />
-      <AutoPrint enabled={!exportResult.error} waitForAssets />
+      <AutoPrint enabled={!exportResult.error} />
       {exportResult.error ? (
         <section className="print-page print-sheet">
           <p className="text-center text-sm text-destructive">{exportResult.error}</p>
