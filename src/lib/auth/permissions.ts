@@ -139,6 +139,17 @@ export function canViewBuyingCost(userRole: StaffRole | null | undefined) {
   return canEnterBuyingCost(userRole) || canViewCostData(userRole);
 }
 
+/** Read stock movement history. Must match stock_movements' read policy and the role check in
+ *  get_variant_stock_movement_groups, so a role the database refuses never sees a false 0. */
+export function canViewStockHistory(userRole: StaffRole | null | undefined) {
+  return (
+    userRole === STAFF_ROLES.owner ||
+    userRole === STAFF_ROLES.manager ||
+    userRole === STAFF_ROLES.inventoryStaff ||
+    userRole === STAFF_ROLES.accountant
+  );
+}
+
 /** Archive and restore products. Owner and manager only. */
 export function canArchiveProducts(userRole: StaffRole | null | undefined) {
   return userRole === STAFF_ROLES.owner || userRole === STAFF_ROLES.manager;

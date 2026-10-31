@@ -110,6 +110,10 @@ type ReportTemplateProps = {
   rows: ReportRow[];
   /** Shown when the export hit its safety row cap — the report is not the complete set. */
   truncatedNotice?: string | null;
+  /** Printed once, above the table — a footer can spill alone onto an empty last page. */
+  notes?: string[];
+  /** Same placement as notes, styled as a warning: figures in the report can't be relied on. */
+  warnings?: string[];
   emptyMessage: string;
   /** Omit for portrait A4 (this template is only used by the two wide list reports, not the
    *  invoice/label templates, so every caller here picks a landscape size). "a3-landscape"
@@ -136,6 +140,8 @@ export function ReportTemplate({
   columns,
   rows,
   truncatedNotice,
+  notes = [],
+  warnings = [],
   emptyMessage,
   pageSize,
   compact = false,
@@ -177,6 +183,23 @@ export function ReportTemplate({
         <p className="mt-3 rounded border border-musiva-warning/40 bg-musiva-warning/10 px-2 py-1.5 text-xs text-musiva-warning-foreground">
           {truncatedNotice}
         </p>
+      )}
+
+      {warnings.map((warning) => (
+        <p
+          key={warning}
+          className="mt-3 rounded border border-musiva-warning/40 bg-musiva-warning/10 px-2 py-1.5 text-xs text-musiva-warning-foreground"
+        >
+          {warning}
+        </p>
+      ))}
+
+      {notes.length > 0 && (
+        <div className="mt-3 space-y-0.5 text-xs text-musiva-muted">
+          {notes.map((note) => (
+            <p key={note}>{note}</p>
+          ))}
+        </div>
       )}
 
       {rows.length === 0 ? (

@@ -13,7 +13,7 @@
  * print compactly ("11.000", "0.004520") because the print column headers already name the
  * currency. Neither adapter calculates anything, so the two outputs can never disagree.
  */
-import { canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
+import { canViewBuyingCost, canViewCostData, canViewStockHistory } from "@/lib/auth/permissions";
 import { formatBhd, formatBhdAmount } from "@/lib/formatters/currency";
 import {
   calcEstimatedMargin,
@@ -21,6 +21,7 @@ import {
   formatInr,
   getValidBuyingCost,
 } from "@/lib/utils/cost-conversion";
+import type { VariantStockSummary } from "@/lib/utils/stock-history";
 import type { StaffRole } from "@/types/database";
 import type { InventoryVariantItem } from "@/types/app";
 import type { CsvCell } from "@/lib/utils/csv";
@@ -53,7 +54,7 @@ const PROFIT_COLUMNS = ["Profit per piece BHD", "Margin %"];
 // and are never clipped or ellipsized — their widths are sized from measured content instead.
 //
 // WEIGHTS ARE PIXELS ON THE A3 BASIS: A3 landscape is 420mm; minus 2 × 10mm @page margins
-// leaves 400mm = 1512 CSS px of printable width, and the full 15-column weights below sum to
+// leaves 400mm = 1512 CSS px of printable width, and the full 17-column weights below sum to
 // exactly 1512. Each numeric column is its widest measured value at the 14px print font, or
 // its widest header word (headers wrap to two lines), plus headroom — Rate gets ~30% over
 // "0.003900" so it can never be clipped. Product is deliberately narrower than its longest
@@ -73,16 +74,35 @@ const PRINT_IMAGE_COLUMN: WeightedColumn = {
 
 const PRINT_TEXT_COLUMNS: WeightedColumn[] = [
   { label: "Code / SKU", fullLabel: "Product code / SKU", nowrap: false, weight: 94 },
-  { label: "Product", fullLabel: "Product name", nowrap: false, weight: 360 },
+  { label: "Product", fullLabel: "Product name", nowrap: false, weight: 260 },
   // Comfortably wider than "MUSTARD YELLOW" / "DUSTY PURPLE" / "BOTTLE GREEN", so color names
   // stay on one line and well clear of Size; still wraps inside its own cell if ever needed.
   { label: "Color", nowrap: false, weight: 178 },
   // Always its own cell, set apart from Color by a divider (globals.css) — "FREE SIZE", "XXL",
   // "3XL", numeric sizes.
-  { label: "Size", nowrap: false, weight: 86 },
-  { label: "Stock", fullLabel: "Stock status", align: "right", weight: 58 },
-  { label: "Sell (BHD)", fullLabel: "Selling price BHD", align: "right", weight: 70 },
+  { label: "Size", nowrap: false, weight: 78 },
 ];
+
+// Total Stock and Sold print only for roles that can read stock history (see canViewStockHistory);
+// every other role gets In Stock alone rather than figures the database won't give them.
+const PRINT_HISTORY_COLUMNS: WeightedColumn[] = [
+  { label: "Total Stock", fullLabel: "Opening stock plus received stock", align: "center", weight: 62 },
+  { label: "Sold", fullLabel: "Net pieces sold", align: "center", weight: 50 },
+];
+
+const PRINT_IN_STOCK_COLUMN: WeightedColumn = {
+  label: "In Stock",
+  fullLabel: "Current stock",
+  align: "center",
+  weight: 56,
+};
+
+const PRINT_SELL_COLUMN: WeightedColumn = {
+  label: "Sell (BHD)",
+  fullLabel: "Selling price BHD",
+  align: "right",
+  weight: 70,
+};
 
 // Cost columns in the required print order: Buy (INR) → Buy (BHD) → Import (BHD) →
 // Landed (BHD) → Total Cost (BHD). Exchange Rate is NOT here — it prints last, after
@@ -110,11 +130,11 @@ const PRINT_RATE_COLUMN: WeightedColumn = {
 };
 
 /** A3 landscape printable width in CSS px: (420mm − 2 × 10mm margins) = 400mm at 96 px/inch.
- *  The full 15-column weight set sums to exactly this. */
+ *  The full 17-column weight set sums to exactly this. */
 export const A3_PRINTABLE_WIDTH_PX = 1512;
 
 /** Normalizes weights so the visible columns always total exactly 100% of the printable
- *  width — for the full 15-column owner view and for roles that see fewer columns alike. */
+ *  width — for the full 17-column owner view and for roles that see fewer columns alike. */
 function withPercentWidths(columns: WeightedColumn[]): ReportColumn[] {
   const totalWeight = columns.reduce((sum, column) => sum + column.weight, 0);
   return columns.map(({ weight, ...column }) => ({
@@ -240,6 +260,8 @@ export function getStockManagementCsvColumns(role: StaffRole | null | undefined)
  *  percentages of the printable page width (see withPercentWidths). */
 export function getStockManagementPrintColumns(role: StaffRole | null | undefined): ReportColumn[] {
   const columns: WeightedColumn[] = [PRINT_IMAGE_COLUMN, ...PRINT_TEXT_COLUMNS];
+  if (canViewStockHistory(role)) columns.push(...PRINT_HISTORY_COLUMNS);
+  columns.push(PRINT_IN_STOCK_COLUMN, PRINT_SELL_COLUMN);
   if (canViewBuyingCost(role)) columns.push(...PRINT_COST_COLUMNS);
   if (canViewCostData(role)) columns.push(...PRINT_PROFIT_COLUMNS);
   // Same canViewBuyingCost gate as the other cost columns — it only prints in a different
@@ -280,12 +302,15 @@ export function buildStockManagementCsvRow(
   return row;
 }
 
-/** One print-view row for `variant` — a thumbnail cell, a bare colored stock NUMBER (no
- *  "units"/"Low Stock" text or pill — see ReportStockNumberCell), compact numbers with no
- *  repeated "BHD" prefix, and Rate last. Cell order matches getStockManagementPrintColumns. */
+/** One print-view row for `variant` — a thumbnail cell, plain Total Stock and Sold figures, a
+ *  bare colored In Stock NUMBER (no "units"/"Low Stock" text or pill — see ReportStockNumberCell),
+ *  compact numbers with no repeated "BHD" prefix, and Rate last. Cell order matches
+ *  getStockManagementPrintColumns. `stockSummary` is undefined when history couldn't be loaded:
+ *  those cells show "—", never 0. */
 export function buildStockManagementPrintRow(
   variant: InventoryVariantItem,
   role: StaffRole | null | undefined,
+  stockSummary?: VariantStockSummary,
 ): ReportRow {
   const data = buildStockManagementRowData(variant, role);
   const cells: ReportCell[] = [
@@ -294,9 +319,17 @@ export function buildStockManagementPrintRow(
     data.productName,
     data.color,
     data.size,
+  ];
+  if (canViewStockHistory(role)) {
+    cells.push(
+      orMissing(stockSummary?.total_stock_quantity, String),
+      orMissing(stockSummary?.net_sold_quantity, String),
+    );
+  }
+  cells.push(
     { kind: "stock-number", quantity: data.stockQuantity, tier: data.stockTier },
     formatBhdAmount(data.sellingPriceBhd),
-  ];
+  );
   const cost = data.cost;
   if (data.showCost) {
     cells.push(
@@ -314,4 +347,63 @@ export function buildStockManagementPrintRow(
     cells.push(orMissing(cost?.exchangeRateToBhd, (rate) => rate.toFixed(6)));
   }
   return { cells, accentTier: data.stockTier };
+}
+
+const pieces = (count: number) => `${count} piece${count === 1 ? "" : "s"}`;
+const variantCount = (count: number) => `${count} variant${count === 1 ? "" : "s"}`;
+
+/** The lines printed above the table: what the figures mean, every reason a row's Total Stock −
+ *  Sold won't equal its In Stock, and warnings for figures that can't be verified. Null
+ *  `summaries` means history failed to load. */
+export function buildStockManagementNotes(
+  role: StaffRole | null | undefined,
+  summaries: VariantStockSummary[] | null,
+): { notes: string[]; warnings: string[] } {
+  if (!canViewStockHistory(role)) return { notes: [], warnings: [] };
+  if (!summaries) {
+    return {
+      notes: [],
+      warnings: [
+        "Stock history could not be loaded, so Total Stock and Sold are not shown. In Stock is correct. Please try again or contact the administrator.",
+      ],
+    };
+  }
+
+  const notes = [
+    "Total Stock = opening stock + received stock. Sold = sales less cancelled and returned pieces. In Stock = the current balance.",
+  ];
+
+  const corrected = summaries.filter((summary) => summary.corrections_quantity !== 0);
+  if (corrected.length > 0) {
+    const net = corrected.reduce((sum, summary) => sum + summary.corrections_quantity, 0);
+    notes.push(
+      `${variantCount(corrected.length)} also had quantity corrections (net ${net > 0 ? "+" : ""}${pieces(net)}), so Total Stock − Sold differs from In Stock on those rows.`,
+    );
+  }
+
+  const unrestored = summaries.filter((summary) => summary.cancelled_not_restored_quantity > 0);
+  if (unrestored.length > 0) {
+    const total = unrestored.reduce((sum, summary) => sum + summary.cancelled_not_restored_quantity, 0);
+    notes.push(
+      `${variantCount(unrestored.length)} had cancelled orders with ${pieces(total)} not returned to stock. These are not counted as Sold.`,
+    );
+  }
+
+  const warnings: string[] = [];
+
+  const incomplete = summaries.filter((summary) => summary.history_status === "incomplete");
+  if (incomplete.length > 0) {
+    warnings.push(
+      `History incomplete: ${variantCount(incomplete.length)} ${incomplete.length === 1 ? "has" : "have"} stock movements that don't add up to the current balance, so Total Stock and Sold show "—".`,
+    );
+  }
+
+  const noHistory = summaries.filter((summary) => summary.history_status === "no_history");
+  if (noHistory.length > 0) {
+    warnings.push(
+      `No stock history: ${variantCount(noHistory.length)} ${noHistory.length === 1 ? "has" : "have"} stock but no recorded movements, so Total Stock and Sold show "—".`,
+    );
+  }
+
+  return { notes, warnings };
 }

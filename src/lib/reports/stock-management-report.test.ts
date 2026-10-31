@@ -12,8 +12,10 @@ import {
   getStockManagementPrintColumns,
   buildStockManagementCsvRow,
   buildStockManagementPrintRow,
+  buildStockManagementNotes,
   A3_PRINTABLE_WIDTH_PX,
 } from "./stock-management-report";
+import { summarizeVariantStock, type StockMovementGroup } from "@/lib/utils/stock-history";
 import type { InventoryVariantItem } from "@/types/app";
 import type { StaffRole } from "@/types/database";
 
@@ -146,9 +148,9 @@ describe("getStockManagementCsvColumns — removed columns + role gating", () =>
   });
 });
 
-describe("getStockManagementPrintColumns — 15 columns, image first, compact labels", () => {
-  it("has exactly 15 print columns for a fully-authorized role", () => {
-    expect(getStockManagementPrintColumns(OWNER)).toHaveLength(15);
+describe("getStockManagementPrintColumns — 17 columns, image first, compact labels", () => {
+  it("has exactly 17 print columns for a fully-authorized role", () => {
+    expect(getStockManagementPrintColumns(OWNER)).toHaveLength(17);
   });
 
   it("leads with a centered Image column for every role", () => {
@@ -168,7 +170,9 @@ describe("getStockManagementPrintColumns — 15 columns, image first, compact la
       "Product name",
       "Color",
       "Size",
-      "Stock status",
+      "Opening stock plus received stock",
+      "Net pieces sold",
+      "Current stock",
       "Selling price BHD",
       "Buying price India INR",
       "Buy Bahrain per piece BHD",
@@ -186,12 +190,22 @@ describe("getStockManagementPrintColumns — 15 columns, image first, compact la
     expect(columns[columns.length - 1].label).toBe("Rate");
   });
 
-  it("has the same column count as the CSV export for every role — nothing dropped from print only", () => {
-    for (const role of [SALES_STAFF, INVENTORY_STAFF, ACCOUNTANT, OWNER, null]) {
-      const csv = getStockManagementCsvColumns(role);
-      expect(csv[0]).toBe("Image URL"); // CSV unchanged
-      expect(getStockManagementPrintColumns(role)).toHaveLength(csv.length);
+  it("prints every CSV column, plus Total Stock and Sold for roles that can read stock history", () => {
+    for (const role of [SALES_STAFF, DELIVERY_COORDINATOR, null]) {
+      expect(getStockManagementPrintColumns(role)).toHaveLength(getStockManagementCsvColumns(role).length);
     }
+    for (const role of [INVENTORY_STAFF, ACCOUNTANT, OWNER]) {
+      expect(getStockManagementPrintColumns(role)).toHaveLength(getStockManagementCsvColumns(role).length + 2);
+    }
+  });
+
+  it("leaves the CSV format unchanged: one Stock status column and no Total Stock or Sold", () => {
+    const csv = getStockManagementCsvColumns(OWNER);
+    expect(csv).toContain("Stock status");
+    expect(csv).not.toContain("Total Stock");
+    expect(csv).not.toContain("Sold");
+    expect(csv).not.toContain("In Stock");
+    expect(buildStockManagementCsvRow(makeVariant(), OWNER)[5]).toBe("5 units — In Stock");
   });
 
   it("renders the required compact header labels, in the required print order, for a fully-permitted role", () => {
@@ -202,7 +216,9 @@ describe("getStockManagementPrintColumns — 15 columns, image first, compact la
       "Product",
       "Color",
       "Size",
-      "Stock",
+      "Total Stock",
+      "Sold",
+      "In Stock",
       "Sell (BHD)",
       "Buy (INR)",
       "Buy (BHD)",
@@ -215,6 +231,13 @@ describe("getStockManagementPrintColumns — 15 columns, image first, compact la
     ]);
   });
 
+  it("centers the three stock columns", () => {
+    const columns = getStockManagementPrintColumns(OWNER);
+    for (const label of ["Total Stock", "Sold", "In Stock"]) {
+      expect(columns.find((c) => c.label === label)?.align).toBe("center");
+    }
+  });
+
   it("lets every text column wrap (never clip or overlap) and keeps every numeric column on one line", () => {
     const columns = getStockManagementPrintColumns(OWNER);
     for (const label of ["Code / SKU", "Product", "Color", "Size"]) {
@@ -222,7 +245,6 @@ describe("getStockManagementPrintColumns — 15 columns, image first, compact la
     }
 
     const currencyLabels = [
-      "Stock",
       "Sell (BHD)",
       "Buy (INR)",
       "Buy (BHD)",
@@ -250,7 +272,7 @@ describe("getStockManagementPrintColumns — 15 columns, image first, compact la
     return (parseFloat(column.width!) / 100) * A3_PRINTABLE_WIDTH_PX;
   };
 
-  it("A3 basis: the full 15-column set adds up to exactly the 1512px printable width", () => {
+  it("A3 basis: the full 17-column set adds up to exactly the 1512px printable width", () => {
     const total = getStockManagementPrintColumns(OWNER).reduce((sum, c) => sum + a3Px(c.label), 0);
     expect(total).toBeCloseTo(A3_PRINTABLE_WIDTH_PX, 0);
   });
@@ -293,7 +315,9 @@ describe("getStockManagementPrintColumns — 15 columns, image first, compact la
       Product: 65,
       Color: 48,
       Size: 33,
-      Stock: 46,
+      "Total Stock": 46, // "STOCK"
+      Sold: 41,
+      "In Stock": 46,
       "Sell (BHD)": 43,
       "Buy (INR)": 38,
       "Buy (BHD)": 43,
@@ -309,7 +333,9 @@ describe("getStockManagementPrintColumns — 15 columns, image first, compact la
       "Code / SKU": 81, // "MSV-10001"
       Color: 126, // "MUSTARD YELLOW"
       Size: 68, // "FREE SIZE"
-      Stock: 31,
+      "Total Stock": 31,
+      Sold: 31,
+      "In Stock": 31,
     };
     for (const [label, header] of Object.entries(headerWord)) {
       expect(a3Px(label)).toBeGreaterThanOrEqual(Math.max(header, value[label] ?? 0));
@@ -326,12 +352,15 @@ describe("getStockManagementPrintColumns — 15 columns, image first, compact la
     expect(a3Px("Color")).toBeGreaterThanOrEqual(150);
   });
 
-  it("gives Product the most space and keeps Image, Code / SKU, Size and Stock compact", () => {
+  it("cuts the Product width that left the gap before Color", () => {
+    expect(a3Px("Product")).toBeLessThanOrEqual(270);
+  });
+
+  it("gives Product the most space and keeps Image, Code / SKU, Size and the stock columns compact", () => {
     const widths = getStockManagementPrintColumns(OWNER).map((c) => ({ label: c.label, px: a3Px(c.label) }));
     widths.sort((a, b) => a.px - b.px);
     expect(widths[widths.length - 1].label).toBe("Product");
-    expect(widths[0].label).toBe("Image");
-    for (const label of ["Image", "Size", "Stock"]) {
+    for (const label of ["Image", "Size", "Total Stock", "Sold", "In Stock"]) {
       expect(a3Px(label)).toBeLessThanOrEqual(90);
     }
     expect(a3Px("Code / SKU")).toBeLessThanOrEqual(100);
@@ -468,22 +497,22 @@ describe("buildStockManagementPrintRow — image cell, stock number cell, and ro
 
   it("renders Stock as a bare, tier-tagged number cell — no unit text, no badge/pill", () => {
     const row = buildStockManagementPrintRow(makeVariant({ stock_quantity: 2 }), OWNER);
-    const stockCell = row.cells[5];
+    const stockCell = row.cells[7];
     expect(stockCell).toEqual({ kind: "stock-number", quantity: 2, tier: "low_stock" });
   });
 
   it("stock 0 renders the number 0 tagged out_of_stock (rendered red/bold by ReportTemplate)", () => {
     const row = buildStockManagementPrintRow(makeVariant({ stock_quantity: 0 }), OWNER);
-    expect(row.cells[5]).toEqual({ kind: "stock-number", quantity: 0, tier: "out_of_stock" });
+    expect(row.cells[7]).toEqual({ kind: "stock-number", quantity: 0, tier: "out_of_stock" });
   });
 
   it("stock 1 and 2 render the plain number tagged low_stock (rendered as normal dark text)", () => {
-    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 1 }), OWNER).cells[5]).toEqual({
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 1 }), OWNER).cells[7]).toEqual({
       kind: "stock-number",
       quantity: 1,
       tier: "low_stock",
     });
-    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 2 }), OWNER).cells[5]).toEqual({
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 2 }), OWNER).cells[7]).toEqual({
       kind: "stock-number",
       quantity: 2,
       tier: "low_stock",
@@ -491,12 +520,12 @@ describe("buildStockManagementPrintRow — image cell, stock number cell, and ro
   });
 
   it("stock 3+ renders the plain number tagged in_stock (rendered green/bold)", () => {
-    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 3 }), OWNER).cells[5]).toEqual({
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 3 }), OWNER).cells[7]).toEqual({
       kind: "stock-number",
       quantity: 3,
       tier: "in_stock",
     });
-    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 42 }), OWNER).cells[5]).toEqual({
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 42 }), OWNER).cells[7]).toEqual({
       kind: "stock-number",
       quantity: 42,
       tier: "in_stock",
@@ -506,7 +535,7 @@ describe("buildStockManagementPrintRow — image cell, stock number cell, and ro
   it('never renders "unit(s)", "Low Stock", or "Out of Stock" text in the Stock cell', () => {
     for (const qty of [0, 1, 2, 3, 10]) {
       const row = buildStockManagementPrintRow(makeVariant({ stock_quantity: qty }), OWNER);
-      const cell = row.cells[5];
+      const cell = row.cells[7];
       const serialized = JSON.stringify(cell);
       expect(serialized).not.toMatch(/unit|Low Stock|Out of Stock|badge/i);
     }
@@ -538,9 +567,9 @@ describe("buildStockManagementPrintRow — image cell, stock number cell, and ro
 
   it("pushes cost/profit/rate cells in the required print order, with the bare exchange rate last", () => {
     const row = buildStockManagementPrintRow(makeVariant(), OWNER);
-    // Columns: Image, Code, Product, Color, Size, Stock, Sell = 7 base cells, then cost/profit/rate.
-    expect(row.cells[6]).toBe("11.000"); // Sell (BHD)
-    expect(row.cells.slice(7)).toEqual([
+    // Image, Code, Product, Color, Size, Total, Sold, In Stock, Sell = 9 cells, then cost/profit/rate.
+    expect(row.cells[8]).toBe("11.000"); // Sell (BHD)
+    expect(row.cells.slice(9)).toEqual([
       "₹1500.00", // Buy (INR)
       "6.780", // Buy (BHD)
       "0.500", // Import (BHD)
@@ -592,7 +621,7 @@ describe("buildStockManagementPrintRow — image cell, stock number cell, and ro
       }),
       OWNER,
     );
-    expect(row.cells.slice(6)).toEqual([
+    expect(row.cells.slice(8)).toEqual([
       "13.000",
       "₹1450.00",
       "5.655",
@@ -614,7 +643,7 @@ describe("buildStockManagementPrintRow — image cell, stock number cell, and ro
   it('shows "—" in every cost/profit/rate cell when the variant has no recorded buying cost', () => {
     const variant = makeVariant({ latest_supplier_unit_cost_inr: null, latest_exchange_rate_to_bhd: null });
     const row = buildStockManagementPrintRow(variant, OWNER);
-    expect(row.cells.slice(7)).toEqual(["—", "—", "—", "—", "—", "—", "—", "—"]);
+    expect(row.cells.slice(9)).toEqual(["—", "—", "—", "—", "—", "—", "—", "—"]);
   });
 
   it("financial figures are unchanged from the CSV's own numbers — only the print layout/order/format differ", () => {
@@ -633,7 +662,7 @@ describe("buildStockManagementPrintRow — image cell, stock number cell, and ro
     ]);
     // Every CSV figure appears in the print row with the same precision, only without the
     // "BHD " / "1 INR = BHD " labels.
-    const printTail = printRow.cells.slice(7);
+    const printTail = printRow.cells.slice(9);
     for (const csvValue of csvRow.slice(-8)) {
       const bare = String(csvValue).replace("1 INR = BHD ", "").replace("BHD ", "");
       expect(printTail).toContain(bare);
@@ -656,5 +685,126 @@ describe("buildStockManagementCsvRow / buildStockManagementPrintRow — no mock/
     const rowB = buildStockManagementCsvRow(makeVariant({ color: "Blue", size: "L" }), OWNER);
     expect(rowA[3]).toBe("Red");
     expect(rowB[3]).toBe("Blue");
+  });
+});
+
+describe("Total Stock, Sold and In Stock in the print report", () => {
+  const group = (movement_type: StockMovementGroup["movement_type"], balance_change: number): StockMovementGroup => ({
+    variant_id: "variant-1",
+    movement_type,
+    order_cancelled: false,
+    balance_change,
+  });
+  const brown3xl = makeVariant({ color: "BROWN", size: "3XL", stock_quantity: 3 });
+  const summary = summarizeVariantStock("variant-1", 3, [group("opening_stock", 10), group("sale_deduction", -7)]);
+
+  it("prints that exact variant's figures, in Total / Sold / In Stock order", () => {
+    const { cells } = buildStockManagementPrintRow(brown3xl, OWNER, summary);
+    expect(cells.slice(3, 8)).toEqual([
+      "BROWN",
+      "3XL",
+      "10",
+      "7",
+      { kind: "stock-number", quantity: 3, tier: "in_stock" },
+    ]);
+  });
+
+  it("In Stock always comes from the variant's balance, whatever the summary says", () => {
+    const { cells } = buildStockManagementPrintRow(brown3xl, OWNER, { ...summary, current_stock_quantity: 99 });
+    expect(cells[7]).toMatchObject({ quantity: 3 });
+  });
+
+  it("shows zero as 0, but unavailable figures as — and never as 0", () => {
+    const zero = summarizeVariantStock("variant-1", 0, []);
+    expect(buildStockManagementPrintRow(makeVariant({ stock_quantity: 0 }), OWNER, zero).cells.slice(5, 7)).toEqual(["0", "0"]);
+    expect(buildStockManagementPrintRow(makeVariant(), OWNER).cells.slice(5, 7)).toEqual(["—", "—"]);
+  });
+
+  it("shows — for both Total Stock and Sold when history is incomplete", () => {
+    const incomplete = summarizeVariantStock("variant-1", 5, [group("sale_deduction", -2)]);
+    expect(buildStockManagementPrintRow(makeVariant(), OWNER, incomplete).cells.slice(5, 7)).toEqual(["—", "—"]);
+  });
+
+  it("changes no financial figure", () => {
+    const withSummary = buildStockManagementPrintRow(makeVariant(), OWNER, summary).cells.slice(8);
+    const without = buildStockManagementPrintRow(makeVariant(), OWNER).cells.slice(8);
+    expect(withSummary).toEqual(without);
+    expect(withSummary).toEqual(["11.000", "₹1500.00", "6.780", "0.500", "7.280", "36.400", "3.720", "33.82%", "0.004520"]);
+  });
+
+  it("Total Cost still uses the current balance, not Total Stock", () => {
+    const columns = getStockManagementPrintColumns(OWNER);
+    const { cells } = buildStockManagementPrintRow(makeVariant({ stock_quantity: 5 }), OWNER, summary);
+    expect(cells[columns.findIndex((c) => c.label === "Total Cost (BHD)")]).toBe("36.400");
+  });
+
+  it("gives sales staff and delivery coordinators In Stock only, with no history or financial cells", () => {
+    for (const role of [SALES_STAFF, DELIVERY_COORDINATOR, null]) {
+      const labels = getStockManagementPrintColumns(role).map((c) => c.label);
+      expect(labels).toEqual(["Image", "Code / SKU", "Product", "Color", "Size", "In Stock", "Sell (BHD)"]);
+      expect(buildStockManagementPrintRow(makeVariant(), role, summary).cells).toHaveLength(7);
+    }
+  });
+
+  it("keeps financial gates per role: accountant gets all 17, inventory staff no profit", () => {
+    expect(getStockManagementPrintColumns(ACCOUNTANT)).toHaveLength(17);
+    const inventory = getStockManagementPrintColumns(INVENTORY_STAFF).map((c) => c.label);
+    expect(inventory).toContain("Total Stock");
+    expect(inventory).toContain("Rate");
+    expect(inventory).not.toContain("Profit (BHD)");
+    expect(inventory).not.toContain("Margin (%)");
+  });
+
+  it("every role's cells line up with its columns", () => {
+    for (const role of [SALES_STAFF, DELIVERY_COORDINATOR, INVENTORY_STAFF, ACCOUNTANT, OWNER, null]) {
+      const row = buildStockManagementPrintRow(makeVariant(), role, summary);
+      expect(row.cells).toHaveLength(getStockManagementPrintColumns(role).length);
+    }
+  });
+});
+
+describe("buildStockManagementNotes", () => {
+  const history = (overrides: Partial<ReturnType<typeof summarizeVariantStock>>) => ({
+    ...summarizeVariantStock("v", 0, []),
+    ...overrides,
+  });
+
+  it("defines the figures, with nothing else when every row adds up", () => {
+    const { notes, warnings } = buildStockManagementNotes(OWNER, [history({})]);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("Total Stock = opening stock + received stock");
+    expect(warnings).toEqual([]);
+  });
+
+  it("reports corrections and unrestored cancellations", () => {
+    const { notes } = buildStockManagementNotes(OWNER, [
+      history({ corrections_quantity: 2 }),
+      history({ corrections_quantity: 1 }),
+      history({ cancelled_not_restored_quantity: 1 }),
+    ]);
+    expect(notes[1]).toContain("2 variants also had quantity corrections (net +3 pieces)");
+    expect(notes[2]).toContain("1 variant had cancelled orders with 1 piece not returned to stock");
+  });
+
+  it("warns separately about incomplete history and no history", () => {
+    const { warnings } = buildStockManagementNotes(OWNER, [
+      history({ history_status: "incomplete" }),
+      history({ history_status: "incomplete" }),
+      history({ history_status: "no_history" }),
+    ]);
+    expect(warnings[0]).toContain("History incomplete: 2 variants have");
+    expect(warnings[1]).toContain("No stock history: 1 variant has");
+  });
+
+  it("says so when history failed to load", () => {
+    const { notes, warnings } = buildStockManagementNotes(OWNER, null);
+    expect(notes).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("Stock history could not be loaded");
+    expect(warnings[0]).not.toMatch(/get_variant|PGRST|function/i);
+  });
+
+  it("prints nothing for roles that don't get the columns", () => {
+    expect(buildStockManagementNotes(SALES_STAFF, null)).toEqual({ notes: [], warnings: [] });
   });
 });

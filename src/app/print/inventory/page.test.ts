@@ -37,7 +37,15 @@ describe("Print Inventory page — real data, correct report identity", () => {
 
   it("gates columns through the shared permission-aware print builder, not ad-hoc logic", () => {
     expect(source).toContain("getStockManagementPrintColumns(role)");
-    expect(source).toContain("buildStockManagementPrintRow(variant, role)");
+    expect(source).toContain("buildStockManagementPrintRow(variant, role, stockSummaries?.get(variant.id))");
+  });
+
+  it("prints the history warnings", () => {
+    expect(source).toContain("warnings={warnings}");
+  });
+
+  it("only requests stock history for roles allowed to read it", () => {
+    expect(source).toContain("canViewStockHistory(role) ? await getVariantStockSummaries(exportResult.rows) : null");
   });
 
   it("shows generated date/time and active filters", () => {
@@ -45,7 +53,7 @@ describe("Print Inventory page — real data, correct report identity", () => {
     expect(source).toContain("filters={filters}");
   });
 
-  it("renders in A3 landscape so all 15 columns fit without cramming", () => {
+  it("renders in A3 landscape so all 17 columns fit without cramming", () => {
     expect(source).toContain('pageSize="a3-landscape"');
   });
 
@@ -135,7 +143,7 @@ describe("Print Inventory page — Safari-safe print setup", () => {
   it("shows the paper-size hint, including the A4 guidance, without removing columns", () => {
     expect(source).toContain("Recommended: A3 • Landscape • Fit to page");
     expect(source).toContain("Only A4 paper available?");
-    expect(source).toContain("all 15");
+    expect(source).toContain("all 17");
     expect(source).toContain("hint={<PrintSetupHint />}");
   });
 });

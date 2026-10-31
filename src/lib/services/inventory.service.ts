@@ -14,6 +14,11 @@ import {
   getStockStatus,
 } from "@/lib/pricing/calculations";
 import { resolveDisplayImageUrl } from "@/lib/utils/product-image";
+import {
+  summarizeVariantStocks,
+  type StockMovementGroup,
+  type VariantStockSummary,
+} from "@/lib/utils/stock-history";
 import { serviceError, serviceSuccess, type ServiceResult } from "./service-result";
 import type { InventoryVariantItem, PaginatedResult, StockMovementItem } from "@/types/app";
 import type { ProductVariantRow, StockMovementRow, StockMovementType } from "@/types/database";
@@ -24,6 +29,7 @@ const LOAD_ERROR = "Unable to load data. Please try again or contact the adminis
 /** Safety cap for print/export — see EXPORT_ROW_LIMIT in product.service.ts for the same
  *  convention on the Product Catalog side. */
 const EXPORT_ROW_LIMIT = 3000;
+const EXPORT_PAGE_SIZE = 1000;
 
 type InventoryFilters = {
   q?: string;
@@ -267,6 +273,39 @@ export type InventoryExportResult = {
  * what product_variants itself stores) so permission checks stay in one place, the export
  * route, rather than duplicated into every data-fetch path.
  */
+/**
+ * Total Stock / Sold / In Stock per variant for the Stock Management print report, aggregated in
+ * the database. Returns null if it can't be loaded (including before migration
+ * 202610310001_variant_stock_movement_groups.sql is applied), so the report shows "—" rather
+ * than zeros.
+ */
+export async function getVariantStockSummaries(
+  variants: { id: string; stock_quantity: number }[],
+): Promise<Map<string, VariantStockSummary> | null> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return null;
+  if (variants.length === 0) return new Map();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any).rpc("get_variant_stock_movement_groups", {
+    p_variant_ids: variants.map((variant) => variant.id),
+  });
+
+  if (error || !Array.isArray(data)) {
+    console.error("[inventory.service] getVariantStockSummaries: get_variant_stock_movement_groups failed:", {
+      variantCount: variants.length,
+      code: error?.code,
+      message: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+      unexpectedResult: error ? undefined : typeof data,
+    });
+    return null;
+  }
+
+  return summarizeVariantStocks(variants, data as StockMovementGroup[]);
+}
+
 export async function listInventoryVariantsForExport(
   filters: Omit<InventoryFilters, "page"> = {},
 ): Promise<InventoryExportResult> {
@@ -275,37 +314,51 @@ export async function listInventoryVariantsForExport(
     return { rows: [], truncated: false, error: LOAD_ERROR };
   }
 
-  let query = supabase
-    .from("product_variants")
-    .select("*, products!inner(name, sku, categories(name))")
-    .order("updated_at", { ascending: false })
-    .limit(EXPORT_ROW_LIMIT);
+  // Read in pages: the API returns at most its configured row cap per request however high
+  // .limit() is set, which would silently shorten the report. id keeps the pages stable when
+  // rows share an updated_at.
+  const buildQuery = () => {
+    let query = supabase
+      .from("product_variants")
+      .select("*, products!inner(name, sku, categories(name))")
+      .order("updated_at", { ascending: false })
+      .order("id", { ascending: true });
 
-  if (filters.q?.trim()) {
-    const search = filters.q.trim();
-    query = query.or(`variant_sku.ilike.%${search}%,barcode.ilike.%${search}%,color.ilike.%${search}%,size.ilike.%${search}%`);
-  }
+    if (filters.q?.trim()) {
+      const search = filters.q.trim();
+      query = query.or(`variant_sku.ilike.%${search}%,barcode.ilike.%${search}%,color.ilike.%${search}%,size.ilike.%${search}%`);
+    }
 
-  if (filters.stock === "low") {
-    query = query.gt("stock_quantity", 0).filter("stock_quantity", "lte", "minimum_stock");
-  }
+    if (filters.stock === "low") {
+      query = query.gt("stock_quantity", 0).filter("stock_quantity", "lte", "minimum_stock");
+    }
 
-  if (filters.stock === "out") {
-    query = query.eq("stock_quantity", 0);
-  }
+    if (filters.stock === "out") {
+      query = query.eq("stock_quantity", 0);
+    }
 
-  if (!filters.productStatus || filters.productStatus === "active") {
-    query = query.neq("status", "archived");
-  } else if (filters.productStatus === "archived") {
-    query = query.eq("status", "archived");
-  }
+    if (!filters.productStatus || filters.productStatus === "active") {
+      query = query.neq("status", "archived");
+    } else if (filters.productStatus === "archived") {
+      query = query.eq("status", "archived");
+    }
 
-  const { data, error } = await query;
-  if (error) {
-    console.error("[inventory.service] listInventoryVariantsForExport: product_variants query failed:", error);
-    return { rows: [], truncated: false, error: LOAD_ERROR };
+    return query;
+  };
+
+  const rows: VariantRelationRow[] = [];
+  while (rows.length < EXPORT_ROW_LIMIT) {
+    const from = rows.length;
+    const to = Math.min(from + EXPORT_PAGE_SIZE, EXPORT_ROW_LIMIT) - 1;
+    const { data, error } = await buildQuery().range(from, to);
+    if (error) {
+      console.error("[inventory.service] listInventoryVariantsForExport: product_variants query failed:", error);
+      return { rows: [], truncated: false, error: LOAD_ERROR };
+    }
+    const page = (data ?? []) as unknown as VariantRelationRow[];
+    rows.push(...page);
+    if (page.length < to - from + 1) break;
   }
-  const rows = (data ?? []) as unknown as VariantRelationRow[];
   const productIds = [...new Set(rows.map((row) => row.product_id))];
 
   const { imagesByProduct, error: imagesError } = await fetchImagesByProduct(supabase, productIds);

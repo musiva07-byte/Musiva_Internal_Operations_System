@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import { AutoPrint } from "@/components/print/auto-print";
 import { ReportPrintToolbar } from "@/components/print/report-print-toolbar";
 import { ReportTemplate, type ReportFilterSummary } from "@/components/print/report-template";
-import { listInventoryVariantsForExport } from "@/lib/services/inventory.service";
+import { getVariantStockSummaries, listInventoryVariantsForExport } from "@/lib/services/inventory.service";
+import { canViewStockHistory } from "@/lib/auth/permissions";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import {
+  buildStockManagementNotes,
   getStockManagementPrintColumns,
   buildStockManagementPrintRow,
 } from "@/lib/reports/stock-management-report";
@@ -52,7 +54,7 @@ function PrintSetupHint() {
     <>
       <p className="font-medium text-musiva-ink">Recommended: A3 • Landscape • Fit to page</p>
       <p className="mt-0.5">
-        Only A4 paper available? Choose Landscape and a smaller scale (or Fit to page) — all 15
+        Only A4 paper available? Choose Landscape and a smaller scale (or Fit to page) — all 17
         columns still print, just smaller. A3 landscape is recommended for readability.
       </p>
       <p className="mt-0.5">
@@ -91,8 +93,13 @@ export default async function PrintInventoryPage({ searchParams }: PrintInventor
     filters.push({ label: "Products", value: PRODUCT_STATUS_LABELS[productStatus] });
   }
 
+  const stockSummaries = canViewStockHistory(role) ? await getVariantStockSummaries(exportResult.rows) : null;
+
   const columns = getStockManagementPrintColumns(role);
-  const rows = exportResult.rows.map((variant) => buildStockManagementPrintRow(variant, role));
+  const rows = exportResult.rows.map((variant) =>
+    buildStockManagementPrintRow(variant, role, stockSummaries?.get(variant.id)),
+  );
+  const { notes, warnings } = buildStockManagementNotes(role, stockSummaries && [...stockSummaries.values()]);
 
   return (
     <main className="report-print-root min-h-screen bg-musiva-ivory py-6">
@@ -111,10 +118,12 @@ export default async function PrintInventoryPage({ searchParams }: PrintInventor
             emptyMessage="No stock records match the current filters."
             filters={filters}
             generatedAt={new Date()}
+            notes={notes}
             pageSize="a3-landscape"
             rowCountPlacement="header"
             rows={rows}
             title="Stock Management Report"
+            warnings={warnings}
             truncatedNotice={
               exportResult.truncated
                 ? "This report only includes the first 3,000 matching stock records. Narrow your filters to see the rest."
