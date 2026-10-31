@@ -1,9 +1,28 @@
 "use server";
 
-import { uploadProductImage, removeProductImage } from "@/lib/services/product-image.service";
+import {
+  getProductImagesSnapshot,
+  removeProductImage,
+  setProductCoverImage,
+  uploadProductImage,
+} from "@/lib/services/product-image.service";
+import type { ProductImageRow } from "@/types/database";
 
-const FRIENDLY_UPLOAD_ERROR = "Could not upload image. Please try again.";
-const FRIENDLY_REMOVE_ERROR = "Could not remove image. Please try again.";
+const FRIENDLY_UPLOAD_ERROR = "Could not upload this photo. Please try again.";
+const FRIENDLY_REMOVE_ERROR = "Could not remove this photo. Please try again.";
+const FRIENDLY_COVER_ERROR = "Could not change the cover photo. Please try again.";
+
+/** `images` is the product's full image list after the change, so a removal or upload that also
+ *  moved the cover shows correctly straight away. Omitted if that refresh failed. */
+type ImageActionResult = {
+  ok: boolean;
+  error?: string | null;
+  images?: ProductImageRow[];
+};
+
+async function currentImages(productId: string) {
+  return (await getProductImagesSnapshot(productId)) ?? undefined;
+}
 
 /**
  * Upload or replace a product image. Expects FormData with a "file" field containing the
@@ -20,7 +39,7 @@ export async function uploadProductImageAction(
   productId: string,
   formData: FormData,
   color?: string | null,
-): Promise<{ ok: boolean; error?: string | null; url?: string | null }> {
+): Promise<ImageActionResult & { url?: string | null }> {
   try {
     const file = formData.get("file");
 
@@ -34,7 +53,7 @@ export async function uploadProductImageAction(
       return { ok: false, error: result.error };
     }
 
-    return { ok: true, error: null, url: result.data.url };
+    return { ok: true, error: null, url: result.data.url, images: await currentImages(productId) };
   } catch (err) {
     console.error("[image-actions] uploadProductImageAction: unexpected exception", {
       productId,
@@ -52,7 +71,7 @@ export async function uploadProductImageAction(
 export async function removeProductImageAction(
   productId: string,
   color?: string | null,
-): Promise<{ ok: boolean; error?: string | null }> {
+): Promise<ImageActionResult> {
   try {
     const result = await removeProductImage(productId, color);
 
@@ -60,7 +79,7 @@ export async function removeProductImageAction(
       return { ok: false, error: result.error };
     }
 
-    return { ok: true, error: null };
+    return { ok: true, error: null, images: await currentImages(productId) };
   } catch (err) {
     console.error("[image-actions] removeProductImageAction: unexpected exception", {
       productId,
@@ -68,5 +87,27 @@ export async function removeProductImageAction(
       error: err instanceof Error ? err.message : String(err),
     });
     return { ok: false, error: FRIENDLY_REMOVE_ERROR };
+  }
+}
+
+/** Make an existing photo the product's listing cover. Same never-throws contract. */
+export async function setProductCoverImageAction(
+  productId: string,
+  imageId: string,
+): Promise<ImageActionResult> {
+  try {
+    const result = await setProductCoverImage(productId, imageId);
+
+    if (result.error) {
+      return { ok: false, error: result.error };
+    }
+
+    return { ok: true, error: null, images: await currentImages(productId) };
+  } catch (err) {
+    console.error("[image-actions] setProductCoverImageAction: unexpected exception", {
+      productId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { ok: false, error: FRIENDLY_COVER_ERROR };
   }
 }

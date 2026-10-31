@@ -21,6 +21,7 @@ import {
   type WebsiteFilterValue,
 } from "@/lib/validations/product-publishing";
 import { convertToBhd, roundBhd } from "@/lib/utils/cost-conversion";
+import { resolveCoverImage } from "@/lib/utils/product-image";
 import { generateUniqueProductSlug, slugify } from "@/lib/utils/slug";
 import { generateProductSku, generateVariantSku, resolveUniqueSku } from "@/lib/utils/sku";
 import { createAuditLog } from "./audit.service";
@@ -243,6 +244,44 @@ function toPage(value: number | undefined) {
 
 function normalizeSearch(value: string | undefined) {
   return value?.trim() || undefined;
+}
+
+/**
+ * Each product's listing image, at most one row per product. The cover rows come from a single
+ * is_primary query (an export can span thousands of products, more than one query's row cap if
+ * every color photo were fetched); only products with no cover need their photos read.
+ */
+async function fetchCoverImages(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  productIds: string[],
+): Promise<{ data: ProductImageRow[]; error: unknown }> {
+  if (productIds.length === 0) return { data: [], error: null };
+
+  const { data: covers, error } = await supabase
+    .from("product_images")
+    .select("id, product_id, url, color, is_primary, sort_order")
+    .in("product_id", productIds)
+    .eq("is_primary", true)
+    .order("sort_order", { ascending: true });
+  if (error) return { data: [], error };
+
+  const coverRows = (covers ?? []) as ProductImageRow[];
+  const covered = new Set(coverRows.map((row) => row.product_id));
+  const uncovered = productIds.filter((id) => !covered.has(id));
+  if (uncovered.length === 0) return { data: coverRows, error: null };
+
+  const { data: others, error: othersError } = await supabase
+    .from("product_images")
+    .select("id, product_id, url, color, is_primary, sort_order")
+    .in("product_id", uncovered);
+  if (othersError) return { data: [], error: othersError };
+
+  const fallbacks = uncovered.flatMap((id) => {
+    const cover = resolveCoverImage(((others ?? []) as ProductImageRow[]).filter((row) => row.product_id === id));
+    return cover ? [cover] : [];
+  });
+  return { data: [...coverRows, ...fallbacks], error: null };
 }
 
 /**
@@ -478,14 +517,7 @@ export async function listProducts(
           .select("id, product_id, variant_sku, color, size, stock_quantity, minimum_stock, selling_price, discount_price, discount_price_bhd, discount_start_at, discount_end_at, status, regular_selling_price_bhd, latest_supplier_unit_cost_inr, latest_exchange_rate_to_bhd")
           .in("product_id", productIds)
       : Promise.resolve({ data: [] as ProductVariantRow[] })) as unknown as Promise<{ data: ProductVariantRow[] | null }>,
-    productIds.length
-      ? supabase
-          .from("product_images")
-          .select("id, product_id, url, is_primary, sort_order")
-          .in("product_id", productIds)
-          .eq("is_primary", true)
-          .order("sort_order", { ascending: true })
-      : Promise.resolve({ data: [] as ProductImageRow[] }),
+    fetchCoverImages(supabase, productIds),
   ]);
 
   if ("error" in variantResult && variantResult.error) {
@@ -590,14 +622,7 @@ export async function listProductsForExport(
       data: ProductVariantRow[] | null;
       error: unknown;
     }>,
-    productIds.length
-      ? supabase
-          .from("product_images")
-          .select("id, product_id, url, is_primary, sort_order")
-          .in("product_id", productIds)
-          .eq("is_primary", true)
-          .order("sort_order", { ascending: true })
-      : Promise.resolve({ data: [] as ProductImageRow[], error: null }),
+    fetchCoverImages(supabase, productIds),
   ]);
 
   if (variantResult.error) {

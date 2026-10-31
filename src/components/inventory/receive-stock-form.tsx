@@ -46,7 +46,10 @@ function groupByProduct(variants: InventoryVariantItem[]): GroupedProduct[] {
         variants: [],
       });
     }
-    map.get(key)!.variants.push(v);
+    const group = map.get(key)!;
+    group.variants.push(v);
+    // A variant's image can be null when only some colors have photos.
+    group.primaryImageUrl ??= v.primary_image_url;
   }
 
   return Array.from(map.values()).sort((a, b) =>

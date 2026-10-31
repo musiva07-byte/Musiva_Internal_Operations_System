@@ -311,20 +311,15 @@ describe("Edit Product — success feedback", () => {
 });
 
 describe("Edit Product — image section", () => {
-  it("shows a main product image control", () => {
-    expect(editPageSource).toContain("Main product image");
+  it("shows one Product Images section with the staff helper text", () => {
+    expect(editPageSource).toContain("Product Images");
+    expect(editPageSource).toContain("Add a photo for each available color.");
+    expect(editPageSource).toMatch(/Customers will see the photo matching their\s+selected color\./);
   });
 
-  it("shows a color image control per distinct variant color", () => {
-    expect(editPageSource).toContain("Color images");
-    expect(editPageSource).toContain("distinctColors.map");
-  });
-
-  it("shows 'Using main image' when a color has no image of its own", () => {
-    expect(editPageSource).toContain("Using main image");
-  });
-
-  it("passes color through to ProductImageWidget for replace/remove", () => {
-    expect(editPageSource).toMatch(/<ProductImageWidget[\s\S]{0,120}color=\{color\}/);
+  it("uses the color manager, given every variant's color and the product's images", () => {
+    expect(editPageSource).toContain("<ProductColorImageManager");
+    expect(editPageSource).toContain("colors={product.variants.map((variant) => variant.color)}");
+    expect(editPageSource).toContain("images={product.images}");
   });
 });

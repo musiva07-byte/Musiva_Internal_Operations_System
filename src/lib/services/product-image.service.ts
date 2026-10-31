@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireStaffPermission } from "@/lib/auth/authorization";
 import { canManageProducts } from "@/lib/auth/permissions";
+import { normalizeImageColor } from "@/lib/utils/product-image";
 import { serviceError, serviceSuccess, type ServiceResult } from "./service-result";
 import type { ProductImageRow } from "@/types/database";
 
@@ -19,8 +20,9 @@ const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const FRIENDLY_TYPE_ERROR = "Please upload a JPG, PNG, or WebP image.";
 const FRIENDLY_SIZE_ERROR = "Image is too large. Please upload an image under 4 MB.";
 const FRIENDLY_STORAGE_UNAVAILABLE = "Image storage is not available. Please contact the administrator.";
-const FRIENDLY_UPLOAD_ERROR = "Could not upload image. Please try again.";
-const FRIENDLY_REMOVE_ERROR = "Could not remove image. Please try again.";
+const FRIENDLY_UPLOAD_ERROR = "Could not upload this photo. Please try again.";
+const FRIENDLY_REMOVE_ERROR = "Could not remove this photo. Please try again.";
+const FRIENDLY_COVER_ERROR = "Could not change the cover photo. Please try again.";
 
 function fileExtension(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() ?? "";
@@ -30,68 +32,69 @@ function storagePath(productId: string, filename: string): string {
   return `${productId}/${Date.now()}-${filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
 }
 
-/** Fetch the product's main image (color IS NULL) — null if none. */
-export async function getProductImage(productId: string): Promise<ProductImageRow | null> {
+/** Every image row for a product, or null if the query failed — lets a caller tell "no images"
+ *  apart from "couldn't load them" so a failed refresh never blanks the Product Images section. */
+export async function getProductImagesSnapshot(productId: string): Promise<ProductImageRow[] | null> {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return null;
 
-  const { data } = await supabase
-    .from("product_images")
-    .select("*")
-    .eq("product_id", productId)
-    .is("color", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return data ?? null;
-}
-
-/** Fetch every image row for a product — the main image (color null) plus any color
- *  images. Used by the Edit Product image section and by display-side fallback
- *  resolution (see resolveDisplayImageUrl in lib/utils/product-image.ts). */
-export async function listProductImages(productId: string): Promise<ProductImageRow[]> {
-  const supabase = await createSupabaseServerClient();
-  if (!supabase) return [];
-
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("product_images")
     .select("*")
     .eq("product_id", productId)
     .order("color", { ascending: true, nullsFirst: true });
 
-  return data ?? [];
+  return error ? null : (data ?? []);
 }
 
-/** Find the existing image row for a product's main image (color null) or a specific
- *  color (color set) — the one row the new upload/remove call should replace. `limit(1)`
- *  is defense in depth: the DB already enforces at most one row per (product, color-or-null)
- *  via partial unique indexes (uniq_product_images_main / uniq_product_images_color), but
- *  capping the query here means a `.maybeSingle()` can never itself error out with "multiple
- *  rows returned" even if that guarantee were ever violated in a given environment. */
-async function findExistingImage(
+async function loadImageRows(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
   productId: string,
-  color: string | null,
-): Promise<ProductImageRow | null> {
-  let query = supabase.from("product_images").select("*").eq("product_id", productId);
-  query = color ? query.eq("color", color) : query.is("color", null);
-  const { data } = await query.limit(1).maybeSingle();
-  return data ?? null;
+): Promise<ProductImageRow[]> {
+  const { data, error } = await supabase.from("product_images").select("*").eq("product_id", productId);
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+/** Matched on normalized color: the unique index is case-sensitive, so an exact match would let
+ *  "BROWN" and "Brown" become two rows for what staff see as one color. */
+function findImageForColor(rows: ProductImageRow[], color: string | null): ProductImageRow | null {
+  const target = normalizeImageColor(color);
+  return rows.find((row) => normalizeImageColor(row.color) === target) ?? null;
+}
+
+/** Fire-and-forget, and only once no other row points at the file. */
+function removeStorageObjectIfUnreferenced(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: any,
+  path: string,
+  otherRows: ProductImageRow[],
+) {
+  if (!path || otherRows.some((row) => row.path === path)) return;
+  admin.storage.from(STORAGE_BUCKET).remove([path]).catch(() => undefined);
+}
+
+function revalidateImageViews(productId: string) {
+  revalidatePath("/admin/products");
+  revalidatePath(`/admin/products/${productId}`);
+  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidatePath("/admin/inventory");
 }
 
 /**
  * Upload a new product image (or replace the existing one). Pass `color` to manage that
- * color's image instead of the product's main image — e.g. "Black" for the Black variants'
- * shared photo. Omit or pass null/undefined for the main image (unchanged default).
+ * color's image instead of the legacy main image — e.g. "Black" for the Black variants' shared
+ * photo.
  *
  * Flow:
  *   1. Validate permission
  *   2. Validate file type and size
  *   3. Upload new file to Supabase Storage
- *   4. Delete old DB record and storage file (if any) — AFTER new upload succeeds
- *   5. Insert new DB record
+ *   4. Replace: repoint the existing row at the new file, keeping its id and cover status, so
+ *      a failure leaves the old photo fully intact. New: insert a row, which becomes the cover
+ *      only if the product has none.
+ *   5. Remove the old storage file, only after the row is updated and only if unreferenced
  *
  * Every expected failure (permission, validation, storage, DB) returns a structured
  * ServiceResult with a friendly message — this function never throws for those cases. Only a
@@ -161,7 +164,8 @@ async function uploadProductImageInternal(
   }
 
   // ── Load existing image record (before upload, so we know what to clean up) ──
-  const existing = await findExistingImage(auth.supabase, productId, normalizedColor);
+  const rows = await loadImageRows(auth.supabase, productId);
+  const existing = findImageForColor(rows, normalizedColor);
 
   // ── Upload new file ───────────────────────────────────────────────────────────
   const path = storagePath(productId, file.name);
@@ -201,30 +205,30 @@ async function uploadProductImageInternal(
     return serviceError(FRIENDLY_UPLOAD_ERROR);
   }
 
-  // ── Delete old record from DB (after new upload succeeds) ────────────────────
-  if (existing) {
-    await auth.supabase.from("product_images").delete().eq("id", existing.id);
-    // Clean up old storage file — fire-and-forget; don't fail if this fails
-    admin.storage.from(STORAGE_BUCKET).remove([existing.path]).catch(() => undefined);
-  }
-
-  // ── Insert new DB record ──────────────────────────────────────────────────────
-  const { data: imageRecord, error: dbError } = await auth.supabase
-    .from("product_images")
-    .insert({
-      product_id: productId,
-      variant_id: null,
-      color: normalizedColor,
-      url: publicUrl,
-      path,
-      is_primary: normalizedColor === null,
-      sort_order: 0,
-    })
-    .select()
-    .single();
+  // ── Save the database reference ───────────────────────────────────────────────
+  const { data: imageRecord, error: dbError } = existing
+    ? await auth.supabase
+        .from("product_images")
+        .update({ url: publicUrl, path })
+        .eq("id", existing.id)
+        .select()
+        .single()
+    : await auth.supabase
+        .from("product_images")
+        .insert({
+          product_id: productId,
+          variant_id: null,
+          color: normalizedColor,
+          url: publicUrl,
+          path,
+          is_primary: !rows.some((row) => row.is_primary),
+          sort_order: 0,
+        })
+        .select()
+        .single();
 
   if (dbError || !imageRecord) {
-    console.error("[product-image] upload: DB insert error", {
+    console.error("[product-image] upload: DB save error", {
       action: "upload",
       productId,
       imageType: normalizedColor ? "color" : "main",
@@ -233,12 +237,18 @@ async function uploadProductImageInternal(
     });
     // New file is uploaded but DB record failed — try to clean up the orphaned file
     admin.storage.from(STORAGE_BUCKET).remove([path]).catch(() => undefined);
-    return serviceError("Image was uploaded but could not be saved. Please try again.");
+    return serviceError(FRIENDLY_UPLOAD_ERROR);
   }
 
-  revalidatePath("/admin/products");
-  revalidatePath(`/admin/products/${productId}`);
-  revalidatePath(`/admin/products/${productId}/edit`);
+  if (existing) {
+    removeStorageObjectIfUnreferenced(
+      admin,
+      existing.path,
+      rows.filter((row) => row.id !== existing.id),
+    );
+  }
+
+  revalidateImageViews(productId);
   return serviceSuccess(imageRecord);
 }
 
@@ -261,14 +271,16 @@ export async function uploadProductImage(
 }
 
 /**
- * Remove a product's image. Pass `color` to remove that color's image instead of the
- * main image (unchanged default).
+ * Remove a product's image. Pass `color` to remove that color's image instead of the legacy
+ * main image. Only ever deletes the one row for that color.
  *
  * Flow:
  *   1. Validate permission
- *   2. Load existing record
- *   3. Delete DB record
- *   4. Delete storage file
+ *   2. Load the product's records
+ *   3. If this is the cover, move the cover to another color photo, else the legacy main image
+ *      — first, so a failure leaves the product with a working cover
+ *   4. Delete DB record
+ *   5. Delete storage file, if no other row references it
  *
  * See uploadProductImage()'s doc comment — the same "never throw for expected failures,
  * catch and log the rest" contract applies here via the removeProductImage() wrapper below.
@@ -283,9 +295,34 @@ async function removeProductImageInternal(
   }
 
   const normalizedColor = color?.trim() || null;
-  const existing = await findExistingImage(auth.supabase, productId, normalizedColor);
+  const rows = await loadImageRows(auth.supabase, productId);
+  const existing = findImageForColor(rows, normalizedColor);
   if (!existing) {
     return serviceError("This product has no image to remove.");
+  }
+
+  const otherRows = rows.filter((row) => row.id !== existing.id);
+  const nextCover = existing.is_primary
+    ? ([...otherRows]
+        .filter((row) => row.color)
+        .sort((a, b) => (a.color ?? "").localeCompare(b.color ?? ""))[0] ??
+      otherRows.find((row) => !row.color) ??
+      null)
+    : null;
+
+  if (nextCover) {
+    const { error: promoteError } = await auth.supabase
+      .from("product_images")
+      .update({ is_primary: true })
+      .eq("id", nextCover.id);
+    if (promoteError) {
+      console.error("[product-image] remove: cover fallback error", {
+        action: "remove",
+        productId,
+        error: promoteError.message,
+      });
+      return serviceError(FRIENDLY_REMOVE_ERROR);
+    }
   }
 
   const { error: dbError } = await auth.supabase
@@ -301,18 +338,18 @@ async function removeProductImageInternal(
       error: dbError.message,
       code: dbError.code,
     });
+    if (nextCover) {
+      await auth.supabase.from("product_images").update({ is_primary: false }).eq("id", nextCover.id);
+    }
     return serviceError(FRIENDLY_REMOVE_ERROR);
   }
 
-  // Delete from storage — fire-and-forget
   const admin = createSupabaseAdminClient();
   if (admin) {
-    admin.storage.from(STORAGE_BUCKET).remove([existing.path]).catch(() => undefined);
+    removeStorageObjectIfUnreferenced(admin, existing.path, otherRows);
   }
 
-  revalidatePath("/admin/products");
-  revalidatePath(`/admin/products/${productId}`);
-  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidateImageViews(productId);
   return serviceSuccess({ productId });
 }
 
@@ -330,5 +367,72 @@ export async function removeProductImage(
       error: err instanceof Error ? err.message : String(err),
     });
     return serviceError(FRIENDLY_REMOVE_ERROR);
+  }
+}
+
+/**
+ * Make one of the product's existing photos its listing cover. Reuses the photo — no upload, no
+ * duplicate row — and only ever touches is_primary, so it can't affect price, stock, or
+ * publishing. The new cover is set before the old one is cleared, so the product is never
+ * without a cover; if clearing fails the change is undone.
+ */
+async function setProductCoverImageInternal(
+  productId: string,
+  imageId: string,
+): Promise<ServiceResult<{ productId: string }>> {
+  const auth = await requireStaffPermission(canManageProducts, "change the cover photo");
+  if (auth.error || !auth.supabase || !auth.userId) {
+    return serviceError(auth.error ?? "You do not have permission to change the cover photo.");
+  }
+
+  const rows = await loadImageRows(auth.supabase, productId);
+  const target = rows.find((row) => row.id === imageId);
+  if (!target) {
+    return serviceError(FRIENDLY_COVER_ERROR);
+  }
+
+  const previousCovers = rows.filter((row) => row.is_primary && row.id !== imageId);
+
+  if (!target.is_primary) {
+    const { error } = await auth.supabase
+      .from("product_images")
+      .update({ is_primary: true })
+      .eq("id", imageId);
+    if (error) {
+      console.error("[product-image] cover: set error", { productId, error: error.message });
+      return serviceError(FRIENDLY_COVER_ERROR);
+    }
+  }
+
+  if (previousCovers.length > 0) {
+    const { error } = await auth.supabase
+      .from("product_images")
+      .update({ is_primary: false })
+      .in("id", previousCovers.map((row) => row.id));
+    if (error) {
+      console.error("[product-image] cover: clear error", { productId, error: error.message });
+      if (!target.is_primary) {
+        await auth.supabase.from("product_images").update({ is_primary: false }).eq("id", imageId);
+      }
+      return serviceError(FRIENDLY_COVER_ERROR);
+    }
+  }
+
+  revalidateImageViews(productId);
+  return serviceSuccess({ productId });
+}
+
+export async function setProductCoverImage(
+  productId: string,
+  imageId: string,
+): Promise<ServiceResult<{ productId: string }>> {
+  try {
+    return await setProductCoverImageInternal(productId, imageId);
+  } catch (err) {
+    console.error("[product-image] cover: unexpected exception", {
+      productId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return serviceError(FRIENDLY_COVER_ERROR);
   }
 }

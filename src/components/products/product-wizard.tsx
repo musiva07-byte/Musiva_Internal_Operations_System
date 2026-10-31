@@ -1,16 +1,13 @@
 "use client";
 
-import { useState, useTransition, useCallback, useRef } from "react";
+import { useState, useTransition, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   Check,
   ChevronRight,
-  ImageOff,
   Info,
-  Loader2,
   Plus,
   Trash2,
-  Upload,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CategorySelect } from "@/components/products/category-select";
-import { ProductImageWidget } from "@/components/products/product-image-widget";
+import { ProductColorImageManager } from "@/components/products/product-color-image-manager";
 import {
   PriceConfirmationDialog,
   type PriceConfirmationRow,
@@ -29,7 +26,6 @@ import {
 import { generateProductSku } from "@/lib/utils/sku";
 import { generateVariants, type GeneratedVariant } from "@/lib/utils/variant-generator";
 import { createProductAction } from "@/app/admin/products/actions";
-import { uploadProductImageAction } from "@/app/admin/products/image-actions";
 import { formatBhd } from "@/lib/formatters/currency";
 import {
   calcEstimatedProfit,
@@ -55,15 +51,6 @@ type ProductWizardProps = {
   currentExchangeRateDate: string | null;
   currentExchangeRateSource: string | null;
 };
-
-// Vercel Functions hard-cap every request body at 4.5 MB (infrastructure-level, not
-// configurable) — this must stay comfortably under that. Same 4 MB limit as
-// product-image-widget.tsx/product-image.service.ts, since both submit to the same
-// uploadProductImageAction.
-const MAX_IMAGE_MB = 4;
-const MAX_IMAGE_BYTES = MAX_IMAGE_MB * 1024 * 1024;
-const IMAGE_ACCEPT = ".jpg,.jpeg,.png,.webp";
-const IMAGE_ACCEPT_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
@@ -289,13 +276,8 @@ export function ProductWizard({
       : null;
   const hasEffectiveRate = effectiveExchangeRate !== null && effectiveExchangeRate > 0;
 
-  // step 4 — image upload after product creation
+  // step 4 — color photos after product creation
   const [createdProductId, setCreatedProductId] = useState<string | null>(null);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [imageError, setImageError] = useState<string | null>(null);
-  const [imageUploading, startImageTransition] = useTransition();
-  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // step data
   const [step1, setStep1] = useState<Step1Data>({
@@ -686,70 +668,12 @@ export function ProductWizard({
     handleSubmit(finalVariants);
   }
 
-  // ── step 4 — image ───────────────────────────────────────────────────────────
-
-  function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    setImageError(null);
-
-    if (!file) {
-      clearImageSelection();
-      return;
-    }
-    if (!IMAGE_ACCEPT_MIME.includes(file.type)) {
-      setImageError("Please upload a JPG, PNG, or WebP image.");
-      clearImageSelection();
-      return;
-    }
-    if (file.size > MAX_IMAGE_BYTES) {
-      setImageError(
-        `Image is too large. Please upload an image under ${MAX_IMAGE_MB} MB. Selected file is ${(file.size / 1024 / 1024).toFixed(1)} MB.`,
-      );
-      clearImageSelection();
-      return;
-    }
-    if (file.size === 0) {
-      setImageError("The selected file is empty.");
-      clearImageSelection();
-      return;
-    }
-    if (imagePreview) URL.revokeObjectURL(imagePreview);
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
-  }
-
-  function clearImageSelection() {
-    if (imagePreview) URL.revokeObjectURL(imagePreview);
-    setImageFile(null);
-    setImagePreview(null);
-    if (imageInputRef.current) imageInputRef.current.value = "";
-  }
-
-  function handleImageUpload() {
-    if (!imageFile || !createdProductId) return;
-    setImageError(null);
-
-    startImageTransition(async () => {
-      const fd = new FormData();
-      fd.append("file", imageFile);
-      const result = await uploadProductImageAction(createdProductId, fd);
-
-      if (!result.ok) {
-        setImageError(result.error ?? "Upload failed. Please try again.");
-        return;
-      }
-
-      router.push(`/admin/products/${createdProductId}`);
-      router.refresh();
-    });
-  }
-
-  function skipImageAndFinish() {
+  function finishProduct() {
     router.push(`/admin/products/${createdProductId}`);
     router.refresh();
   }
 
-  const STEPS = ["Basic details", "Colors & sizes", "Price & stock", "Add image"];
+  const STEPS = ["Basic details", "Colors & sizes", "Price & stock", "Add photos"];
   const minPrice =
     step3.variants.length > 0
       ? Math.min(...step3.variants.map((v) => v.regularSellingPriceBhd))
@@ -1673,82 +1597,23 @@ export function ProductWizard({
         </Card>
       )}
 
-      {/* ── Step 4 — Add image (optional) ────────────────────────── */}
-      {step === 4 && (
+      {/* ── Step 4 — Add photos (optional) ───────────────────────── */}
+      {step === 4 && createdProductId && (
         <Card className="shadow-soft">
           <CardHeader>
-            <CardTitle>Add product image</CardTitle>
+            <CardTitle>Product Images</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              Optional. You can add or change the image at any time from the product page.
+              Add a photo for each available color. Customers will see the photo matching their
+              selected color. Optional — you can add or change photos any time from Edit Product.
             </p>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {imagePreview ? (
-              <div className="relative mx-auto w-fit">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  alt="Preview"
-                  className="h-52 w-40 rounded-lg border border-musiva-border object-cover object-top"
-                  src={imagePreview}
-                />
-                <button
-                  aria-label="Remove selected image"
-                  className="absolute right-0 top-0 rounded-full bg-white p-1 shadow hover:bg-red-50"
-                  type="button"
-                  onClick={clearImageSelection}
-                >
-                  <X aria-hidden className="h-4 w-4 text-destructive" />
-                </button>
-                <p className="mt-2 text-center text-xs text-muted-foreground">{imageFile?.name}</p>
-              </div>
-            ) : (
-              <label className="flex cursor-pointer flex-col items-center gap-3 rounded-lg border-2 border-dashed border-musiva-border bg-musiva-blush/20 px-4 py-10 text-center transition-colors hover:border-musiva-plum/40 hover:bg-musiva-blush/40">
-                <ImageOff aria-hidden className="h-8 w-8 text-muted-foreground/40" />
-                <span className="text-sm font-medium text-musiva-plum">Choose image</span>
-                <span className="text-xs text-muted-foreground">
-                  JPEG · PNG · WebP · max {MAX_IMAGE_MB} MB
-                </span>
-                <input
-                  ref={imageInputRef}
-                  accept={IMAGE_ACCEPT}
-                  className="sr-only"
-                  type="file"
-                  onChange={handleImageFileChange}
-                />
-              </label>
-            )}
-            {imageError && (
-              <p className="text-sm text-destructive">{imageError}</p>
-            )}
-
-            {step2.colors.length > 0 && createdProductId && (
-              <div className="space-y-3 border-t border-dashed border-musiva-border pt-4">
-                <div>
-                  <p className="text-sm font-medium text-musiva-plum">Color images (optional)</p>
-                  <p className="text-xs text-muted-foreground">
-                    Give a color its own photo if it looks different from the main image —
-                    every option in that color uses it automatically. Colors left blank use
-                    the main product image instead.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-4">
-                  {step2.colors.map((color) => (
-                    <div key={color} className="flex flex-col items-center gap-1.5">
-                      <ProductImageWidget
-                        canEdit
-                        color={color}
-                        currentUrl={null}
-                        productId={createdProductId}
-                        size="sm"
-                      />
-                      <span className="max-w-[8rem] truncate text-xs font-medium text-musiva-plum">
-                        {color}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+          <CardContent>
+            <ProductColorImageManager
+              canEdit
+              colors={step2.colors}
+              images={[]}
+              productId={createdProductId}
+            />
           </CardContent>
         </Card>
       )}
@@ -1801,30 +1666,9 @@ export function ProductWizard({
             </Button>
           )}
           {step === 4 && (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={skipImageAndFinish}
-                disabled={imageUploading}
-              >
-                Skip for now
-              </Button>
-              {imageFile && (
-                <Button
-                  type="button"
-                  onClick={handleImageUpload}
-                  disabled={imageUploading}
-                >
-                  {imageUploading ? (
-                    <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Upload aria-hidden className="mr-2 h-4 w-4" />
-                  )}
-                  Upload &amp; finish
-                </Button>
-              )}
-            </>
+            <Button type="button" onClick={finishProduct}>
+              Finish
+            </Button>
           )}
         </div>
       </StickyActionBar>

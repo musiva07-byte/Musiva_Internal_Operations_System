@@ -1,6 +1,6 @@
 /**
  * Tests for the image-fallback wiring in listInventoryVariants() (Stock Management rows).
- * The fallback rule itself (color image → main image → null) is already exhaustively
+ * The fallback rule itself (color image → main image only without color photos → null) is exhaustively
  * tested in lib/utils/product-image.test.ts — this covers only that the service actually
  * calls it per row using that row's own color, rather than always showing the main image.
  */
@@ -45,13 +45,14 @@ const variantRows = [
   },
 ];
 
-const imageRows = [
-  { product_id: "product-1", url: "https://cdn/main.jpg", color: null },
-  { product_id: "product-1", url: "https://cdn/black.jpg", color: "Black" },
-];
+let imageRows: { product_id: string; url: string; color: string | null }[] = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  imageRows = [
+    { product_id: "product-1", url: "https://cdn/main.jpg", color: null },
+    { product_id: "product-1", url: "https://cdn/black.jpg", color: "Black" },
+  ];
   mockFrom.mockImplementation((table: string) => {
     if (table === "product_variants") {
       // Supabase's query builder is "thenable": every filter method returns the same
@@ -90,9 +91,21 @@ describe("listInventoryVariants — image fallback", () => {
     expect(black?.primary_image_url).toBe("https://cdn/black.jpg");
   });
 
-  it("falls back to the main image for a variant whose color has no image", async () => {
+  it("shows no image for a variant whose color has no photo, instead of another photo", async () => {
     const result = await listInventoryVariants();
     const white = result.data.find((v) => v.color === "White");
-    expect(white?.primary_image_url).toBe("https://cdn/main.jpg");
+    expect(white?.primary_image_url).toBeNull();
+  });
+
+  it("gives each color its own photo, not one cover for every row", async () => {
+    imageRows.push({ product_id: "product-1", url: "https://cdn/white.jpg", color: "White" });
+    const result = await listInventoryVariants();
+    expect(result.data.map((v) => v.primary_image_url)).toEqual(["https://cdn/black.jpg", "https://cdn/white.jpg"]);
+  });
+
+  it("keeps showing the main image for a legacy product with no color photos", async () => {
+    imageRows = [{ product_id: "product-1", url: "https://cdn/main.jpg", color: null }];
+    const result = await listInventoryVariants();
+    expect(result.data.map((v) => v.primary_image_url)).toEqual(["https://cdn/main.jpg", "https://cdn/main.jpg"]);
   });
 });

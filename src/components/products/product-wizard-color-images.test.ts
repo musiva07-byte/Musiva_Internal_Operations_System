@@ -1,7 +1,7 @@
 /**
- * Structural regression guard for New Product → Add Image → color images (section 8 of the
- * spec). Same source-text-guard pattern used throughout this project for components with
- * no rendering harness — see product-cost-dialog.test.ts.
+ * Structural regression guard for New Product → Add photos. Same source-text-guard pattern used
+ * throughout this project for components with no rendering harness — see
+ * product-cost-dialog.test.ts.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -9,30 +9,26 @@ import { join } from "node:path";
 
 const wizardSource = readFileSync(join(__dirname, "product-wizard.tsx"), "utf-8");
 
-describe("New Product — Add Image step", () => {
-  it("keeps the main product image picker", () => {
-    expect(wizardSource).toContain("Choose image");
+describe("New Product — Add photos step", () => {
+  it("uses the same color manager as Edit Product, one card per color from Step 2", () => {
+    expect(wizardSource).toContain("<ProductColorImageManager");
+    expect(wizardSource).toContain("colors={step2.colors}");
+    expect(wizardSource).toContain("productId={createdProductId}");
   });
 
-  it("shows an optional color-images section", () => {
-    expect(wizardSource).toContain("Color images (optional)");
+  it("starts with no photos and needs a saved product to attach them to", () => {
+    expect(wizardSource).toContain("images={[]}");
+    expect(wizardSource).toMatch(/step === 4 && createdProductId &&[\s\S]{0,600}<ProductColorImageManager/);
   });
 
-  it("renders one image control per color entered in Step 2", () => {
-    expect(wizardSource).toMatch(/step2\.colors\.map\(\(color\) =>/);
+  it("no longer has a separate main-image picker", () => {
+    expect(wizardSource).not.toContain("Choose image");
+    expect(wizardSource).not.toContain("imageFile");
+    expect(wizardSource).not.toContain("ProductImageWidget");
   });
 
-  it("does not force staff to upload every color — the section only appears once a product exists, and each control is independently optional", () => {
-    // Gated on createdProductId (i.e. only shown post-creation, alongside the optional main
-    // image step) and each ProductImageWidget already supports leaving currentUrl null.
-    expect(wizardSource).toMatch(/step2\.colors\.length > 0 && createdProductId &&/);
-  });
-
-  it("uses ProductImageWidget (immediate upload) for color images, scoped by color", () => {
-    expect(wizardSource).toMatch(/<ProductImageWidget[\s\S]{0,120}color=\{color\}/);
-  });
-
-  it("explains the fallback rule to staff in plain language", () => {
-    expect(wizardSource).toMatch(/main product image instead/i);
+  it("lets staff finish without adding any photo", () => {
+    expect(wizardSource).toContain("finishProduct");
+    expect(wizardSource).not.toMatch(/disabled=\{[^}]*images/);
   });
 });

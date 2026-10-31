@@ -39,7 +39,7 @@ export type ReportColumn = {
   label: string;
   /** Full label shown via the header's title attribute (hover tooltip) when label is abbreviated. */
   fullLabel?: string;
-  align?: "left" | "right";
+  align?: "left" | "right" | "center";
   /** Default true (most report columns are short codes/currency that must never wrap or split
    *  across lines). Set false only for the one column meant to wrap — the product name. */
   nowrap?: boolean;

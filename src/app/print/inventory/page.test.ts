@@ -74,10 +74,9 @@ describe("Print Inventory page — CSS backs the A3 landscape layout", () => {
     expect(cssSource).toMatch(/\.print-a3-landscape\.print-page\s*\{[^}]*width:\s*420mm/);
   });
 
-  it("defines the compact report mode, with no thumbnail rules (print has no product images)", () => {
+  it("defines the compact report mode (scaled type, padding and thumbnail)", () => {
     expect(cssSource).toContain(".report-compact .print-table {");
-    expect(cssSource).not.toContain(".report-compact .report-thumb");
-    expect(cssSource).not.toContain(".print-a3-landscape .report-thumb");
+    expect(cssSource).toContain(".report-compact .report-thumb {");
   });
 });
 
@@ -121,19 +120,22 @@ describe("Print Inventory page — Safari-safe print setup", () => {
     expect(source).toContain('rowCountPlacement="header"');
   });
 
+  it("keeps the missing-image placeholder visible in Safari print", () => {
+    expect(printBlock).toMatch(/\.print-a3-landscape \.report-thumb-placeholder\s*\{[^}]*-webkit-print-color-adjust:\s*exact/);
+  });
+
   it("uses no transforms or zoom hacks to force the table to fit", () => {
     expect(printBlock).not.toMatch(/\btransform\s*:|\bzoom\s*:/);
   });
 
-  it("has no image-loading dependency: the default auto-print, nothing waiting on product images", () => {
-    expect(source).toMatch(/<AutoPrint enabled=\{!exportResult\.error\} \/>/);
-    expect(source).not.toContain("waitForAssets");
+  it("waits for product images before opening the print dialog", () => {
+    expect(source).toMatch(/<AutoPrint enabled=\{!exportResult\.error\} waitForAssets \/>/);
   });
 
   it("shows the paper-size hint, including the A4 guidance, without removing columns", () => {
     expect(source).toContain("Recommended: A3 • Landscape • Fit to page");
     expect(source).toContain("Only A4 paper available?");
-    expect(source).toContain("all 14");
+    expect(source).toContain("all 15");
     expect(source).toContain("hint={<PrintSetupHint />}");
   });
 });
@@ -145,8 +147,29 @@ describe("Print Inventory page — compact columns never clip", () => {
     expect(cssSource).toMatch(/\.report-compact \.print-table td\s*\{[^}]*overflow-wrap:\s*anywhere/);
   });
 
-  it("leaves the shared thumbnail styles in place for the Product Catalog report", () => {
+  it("prints the thumbnail at 38×48px on the A3 basis, scaled with the page, centered and never wider than its cell", () => {
+    const rule = /\.report-compact \.report-thumb\s*\{([^}]*)\}/.exec(cssSource)![1];
+    const cqi = (name: string) => parseFloat(new RegExp(`\\b${name}:\\s*([\\d.]+)cqi`).exec(rule)![1]);
+    const widthPx = (cqi("width") / 100) * 1512;
+    const heightPx = (cqi("height") / 100) * 1512;
+    expect(widthPx).toBeCloseTo(38, 0);
+    expect(heightPx).toBeCloseTo(48, 0);
+    expect(widthPx).toBeGreaterThanOrEqual(32);
+    expect(widthPx).toBeLessThanOrEqual(40);
+    expect(heightPx).toBeGreaterThanOrEqual(42);
+    expect(heightPx).toBeLessThanOrEqual(52);
+    expect(rule).toMatch(/max-width:\s*100%/);
+    expect(rule).toMatch(/margin-inline:\s*auto/);
+  });
+
+  it("crops photos to the thumbnail instead of stretching them", () => {
     expect(cssSource).toMatch(/\.report-thumb-img\s*\{[^}]*object-fit:\s*cover/);
+  });
+
+  it("separates Color and Size with a divider on the Size column", () => {
+    expect(cssSource).toMatch(
+      /\.report-compact \.print-table th:nth-child\(5\),\s*\.report-compact \.print-table td:nth-child\(5\)\s*\{\s*border-left:\s*1px solid/,
+    );
   });
 
   it("never hides overflow as a workaround — no hidden overflow or ellipsis on table cells", () => {
@@ -166,7 +189,7 @@ describe("Print Inventory page — type scales with the page (fits every paper, 
   it("sizes table text, headers and padding in container units calibrated to 14px / 12px on the A3 basis", () => {
     expect(cssSource).toMatch(/\.report-compact \.print-table\s*\{\s*font-size:\s*0\.926cqi;/);
     expect(cssSource).toMatch(/\.report-compact \.print-table th\s*\{\s*font-size:\s*0\.794cqi;/);
-    expect(cssSource).toMatch(/\.report-compact \.print-table td\s*\{\s*padding:\s*0\.265cqi;/);
+    expect(cssSource).toMatch(/\.report-compact \.print-table td\s*\{\s*padding:\s*0\.265cqi 0\.2cqi;/);
     // 0.926% of the 1512px A3 printable width ≈ 14px; 0.794% ≈ 12px.
     expect(0.00926 * 1512).toBeCloseTo(14, 0);
     expect(0.00794 * 1512).toBeCloseTo(12, 0);

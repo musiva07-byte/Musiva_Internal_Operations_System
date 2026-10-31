@@ -8,17 +8,21 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockUploadProductImage, mockRemoveProductImage } = vi.hoisted(() => ({
+const { mockUploadProductImage, mockRemoveProductImage, mockSetCover, mockSnapshot } = vi.hoisted(() => ({
   mockUploadProductImage: vi.fn(),
   mockRemoveProductImage: vi.fn(),
+  mockSetCover: vi.fn(),
+  mockSnapshot: vi.fn(),
 }));
 
 vi.mock("@/lib/services/product-image.service", () => ({
   uploadProductImage: mockUploadProductImage,
   removeProductImage: mockRemoveProductImage,
+  setProductCoverImage: mockSetCover,
+  getProductImagesSnapshot: mockSnapshot,
 }));
 
-import { uploadProductImageAction, removeProductImageAction } from "./image-actions";
+import { uploadProductImageAction, removeProductImageAction, setProductCoverImageAction } from "./image-actions";
 
 function makeFormData(file: File | null): FormData {
   const fd = new FormData();
@@ -30,8 +34,11 @@ function makeFile(name = "dress.jpg", type = "image/jpeg", size = 1024): File {
   return new File([new Uint8Array(size)], name, { type });
 }
 
+const refreshedImages = [{ id: "img-1", color: "Brown", is_primary: true }];
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSnapshot.mockResolvedValue(refreshedImages);
 });
 
 describe("uploadProductImageAction", () => {
@@ -45,7 +52,14 @@ describe("uploadProductImageAction", () => {
   it("passes through a successful result with the new URL", async () => {
     mockUploadProductImage.mockResolvedValue({ data: { url: "https://cdn/img.jpg" }, error: null });
     const result = await uploadProductImageAction("product-1", makeFormData(makeFile()));
-    expect(result).toEqual({ ok: true, error: null, url: "https://cdn/img.jpg" });
+    expect(result).toEqual({ ok: true, error: null, url: "https://cdn/img.jpg", images: refreshedImages });
+  });
+
+  it("still reports success if the refreshed list can't be loaded, leaving the screen as it was", async () => {
+    mockUploadProductImage.mockResolvedValue({ data: { url: "https://cdn/img.jpg" }, error: null });
+    mockSnapshot.mockResolvedValue(null);
+    const result = await uploadProductImageAction("product-1", makeFormData(makeFile()), "Brown");
+    expect(result).toMatchObject({ ok: true, images: undefined });
   });
 
   it("passes through a friendly failure result instead of throwing", async () => {
@@ -60,7 +74,7 @@ describe("uploadProductImageAction", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(uploadProductImageAction("product-1", makeFormData(makeFile()))).resolves.toEqual(
-      expect.objectContaining({ ok: false, error: expect.stringMatching(/could not upload image/i) }),
+      expect.objectContaining({ ok: false, error: "Could not upload this photo. Please try again." }),
     );
 
     expect(consoleSpy).toHaveBeenCalled();
@@ -72,7 +86,7 @@ describe("removeProductImageAction", () => {
   it("passes through a successful result", async () => {
     mockRemoveProductImage.mockResolvedValue({ data: { productId: "product-1" }, error: null });
     const result = await removeProductImageAction("product-1");
-    expect(result).toEqual({ ok: true, error: null });
+    expect(result).toEqual({ ok: true, error: null, images: refreshedImages });
   });
 
   it("passes through a friendly failure result instead of throwing", async () => {
@@ -86,7 +100,34 @@ describe("removeProductImageAction", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(removeProductImageAction("product-1")).resolves.toEqual(
-      expect.objectContaining({ ok: false, error: expect.stringMatching(/could not remove image/i) }),
+      expect.objectContaining({ ok: false, error: "Could not remove this photo. Please try again." }),
+    );
+
+    expect(consoleSpy).toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+});
+
+describe("setProductCoverImageAction", () => {
+  it("passes through success with the refreshed images", async () => {
+    mockSetCover.mockResolvedValue({ data: { productId: "product-1" }, error: null });
+    const result = await setProductCoverImageAction("product-1", "img-1");
+    expect(mockSetCover).toHaveBeenCalledWith("product-1", "img-1");
+    expect(result).toEqual({ ok: true, error: null, images: refreshedImages });
+  });
+
+  it("passes through a friendly failure result instead of throwing", async () => {
+    mockSetCover.mockResolvedValue({ data: null, error: "You do not have permission to perform this action." });
+    const result = await setProductCoverImageAction("product-1", "img-1");
+    expect(result).toEqual({ ok: false, error: "You do not have permission to perform this action." });
+  });
+
+  it("never rejects even if the underlying service throws unexpectedly", async () => {
+    mockSetCover.mockRejectedValue(new Error("unexpected"));
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(setProductCoverImageAction("product-1", "img-1")).resolves.toEqual(
+      expect.objectContaining({ ok: false, error: "Could not change the cover photo. Please try again." }),
     );
 
     expect(consoleSpy).toHaveBeenCalled();

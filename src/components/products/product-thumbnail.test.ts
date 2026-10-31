@@ -10,8 +10,8 @@ import { join } from "node:path";
 const source = readFileSync(join(__dirname, "product-thumbnail.tsx"), "utf-8");
 
 describe("ProductThumbnail — placeholder for missing/invalid image URL", () => {
-  it("returns a placeholder before ever reaching the <Image> element when url is falsy", () => {
-    expect(source).toMatch(/if \(!url\) \{[\s\S]*?return \([\s\S]*?ImageOff/);
+  it("returns a placeholder before ever reaching the <Image> element when url is unusable", () => {
+    expect(source).toMatch(/if \(!isUsableImageUrl\(url\)\) \{[\s\S]*?return \([\s\S]*?ImageOff/);
   });
 
   it("only renders <Image src={url}> after that falsy-url guard, never with a fallback to an empty string", () => {

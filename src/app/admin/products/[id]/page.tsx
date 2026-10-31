@@ -5,13 +5,13 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StockBadge } from "@/components/products/stock-badge";
-import { ProductImageWidget } from "@/components/products/product-image-widget";
+import { ProductThumbnail } from "@/components/products/product-thumbnail";
 import { QuickAddStockDialog } from "@/components/products/quick-add-stock-dialog";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { BackLink } from "@/components/layout/back-link";
 import { PreviousNextNav } from "@/components/layout/previous-next-nav";
 import { getProduct, getAdjacentProducts } from "@/lib/services/product.service";
-import { getProductImage } from "@/lib/services/product-image.service";
+import { resolveCoverImage } from "@/lib/utils/product-image";
 import { getCurrentAuthState } from "@/lib/auth/session";
 import { canManageProducts, canViewBuyingCost, canViewCostData } from "@/lib/auth/permissions";
 import { formatBhd } from "@/lib/formatters/currency";
@@ -34,9 +34,8 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
   const returnTo = Array.isArray(rawReturnTo) ? rawReturnTo[0] : rawReturnTo;
   const safeReturnTo = getSafeProductCatalogReturnUrl(returnTo);
 
-  const [product, image, auth] = await Promise.all([
+  const [product, auth] = await Promise.all([
     getProduct(id),
-    getProductImage(id),
     getCurrentAuthState(),
   ]);
 
@@ -81,12 +80,17 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
       {/* ── Top product header ──────────────────────────────────────────── */}
       <header className="flex flex-col gap-5 rounded-lg border border-musiva-border bg-card p-5 shadow-soft sm:flex-row sm:items-start sm:justify-between">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-          <ProductImageWidget
-            canEdit={canEdit}
-            currentUrl={image?.url ?? null}
-            productId={product.id}
-            size="lg"
-          />
+          <div className="flex shrink-0 flex-col items-center gap-1.5">
+            <ProductThumbnail name={product.name} size="lg" url={resolveCoverImage(product.images)?.url ?? null} />
+            {canEdit && (
+              <Link
+                className="text-xs font-medium text-musiva-plum underline-offset-2 hover:underline"
+                href={withProductReturnTo(`/admin/products/${product.id}/edit`, returnTo)}
+              >
+                Manage photos
+              </Link>
+            )}
+          </div>
           <div>
             <Breadcrumb
               segments={[{ label: "Product Catalog", href: "/admin/products" }, { label: product.name }]}
